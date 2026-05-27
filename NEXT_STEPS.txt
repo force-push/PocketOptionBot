@@ -1,0 +1,173 @@
+═══════════════════════════════════════════════════════════════════════════════
+  POCKETOPTIONBOT — NEXT STEPS
+═══════════════════════════════════════════════════════════════════════════════
+
+Project Status: ✅ COMPLETE & READY FOR TESTING
+
+Location: ~/code/openclaw/projects/PocketOptionBot/
+
+Current Setup:
+  • .env: DEMO mode ✓, DRY_RUN enabled ✓
+  • Selectors: Real PocketOption classes verified 2026-05-25 ✓
+  • Dependencies: requirements.txt ready ✓
+
+═══════════════════════════════════════════════════════════════════════════════
+IMMEDIATE (Next 30 minutes):
+═══════════════════════════════════════════════════════════════════════════════
+
+1. READ QUICKSTART.md
+   → Understand 5-minute setup flow
+   → See how to launch Chrome with debugging
+   
+2. INSTALL DEPENDENCIES
+   $ cd ~/code/openclaw/projects/PocketOptionBot
+   $ pip3 install -r requirements.txt
+   
+3. RUN SELECTOR VERIFICATION
+   $ python3 verify_selectors.py
+   Expected output:
+     ✓ price      = 1.06325
+     ✓ timer      = 45
+     ✓ balance    = $1000.00
+     ✓ asset      = EURUSD
+     ✓ is_demo    = True
+   
+   If any fail → DOM changed, contact me to update selectors
+
+4. TEST DRY-RUN MODE (10 minutes)
+   $ python3 main.py
+   Expected behavior:
+     - Connects to CDP
+     - Starts polling prices
+     - Builds candles every 60s
+     - Evaluates signals
+     - Logs simulated trades (no real clicks)
+   
+   Let it run for 5-10 min. Watch logs:
+   $ tail -f logs/bot.log
+
+═══════════════════════════════════════════════════════════════════════════════
+AFTER INITIAL TEST (if working):
+═══════════════════════════════════════════════════════════════════════════════
+
+5. REVIEW TRADES LOG
+   $ cat data/trades.jsonl | python3 -m json.tool | head -20
+   
+   Check:
+     • Are signals evaluating correctly?
+     • Do confluence scores make sense?
+     • Any obvious bugs or crashes?
+
+6. CONFIGURE FOR YOUR RISK TOLERANCE
+   Edit .env with one of these:
+   
+   CONSERVATIVE (low risk):
+     MIN_CONFLUENCE_SCORE=0.80
+     MAX_TRADES_PER_HOUR=5
+     MAX_DAILY_LOSS_USD=10.0
+     TRADE_AMOUNT=0.5
+     
+   STANDARD (medium risk):
+     (keep defaults from .env)
+     
+   AGGRESSIVE (high risk):
+     MIN_CONFLUENCE_SCORE=0.65
+     MAX_TRADES_PER_HOUR=20
+     MAX_DAILY_LOSS_USD=50.0
+     TRADE_AMOUNT=5.0
+
+═══════════════════════════════════════════════════════════════════════════════
+TESTING PHASES:
+═══════════════════════════════════════════════════════════════════════════════
+
+Phase 1: DRY RUN (Active, ~10 min)
+  • TRADE_MODE=DEMO
+  • DRY_RUN=true
+  • Purpose: Verify signals work, no real DOM clicks
+  • Success: Signals evaluate, trades logged, no crashes
+
+Phase 2: DEMO MODE (Optional, 1-7 days)
+  • TRADE_MODE=DEMO
+  • DRY_RUN=false  ← change this
+  • Purpose: Real demo account, real clicks, see outcomes
+  • Success: Profitable for 1+ weeks OR identify signal issues
+  • How to switch: Edit .env, restart bot
+
+Phase 3: LIVE TRADING (Optional, only after Phase 2 success)
+  • TRADE_MODE=LIVE
+  • DRY_RUN=false
+  • ⚠️ ONLY after consistent Phase 2 profit
+  • ⚠️ Start with 1/10th of max size
+  • ⚠️ Monitor closely
+  • How to switch: Edit .env, restart bot
+
+═══════════════════════════════════════════════════════════════════════════════
+TROUBLESHOOTING:
+═══════════════════════════════════════════════════════════════════════════════
+
+"Failed to connect"
+  → Chrome not listening on 9222
+  $ pkill -f "chrome.*remote-debugging"
+  $ google-chrome --remote-debugging-port=9222 &
+  $ sleep 2 && curl http://localhost:9222/json/version
+
+"No active PocketOption page"
+  → Need to open PocketOption tab in the Chrome instance with debugging
+
+"Selectors returning None"
+  → DOM changed
+  → Run verify_selectors.py to debug
+  → Inspect page manually, find working selectors
+  → Update SELECTORS dict in broker/scraper.py
+
+"Trade blocked by risk manager"
+  → Check reason in logs (max trades/hour, balance too low, etc.)
+  → Adjust .env constraints as needed
+
+═══════════════════════════════════════════════════════════════════════════════
+KEY FILES TO KNOW:
+═══════════════════════════════════════════════════════════════════════════════
+
+TO START:
+  • QUICKSTART.md          ← Read this first
+  • verify_selectors.py    ← Run this first
+  • .env                   ← Configure this
+  
+TO UNDERSTAND:
+  • README.md              ← Full architecture
+  • main.py                ← Entry point
+  • signals/confluence.py  ← Signal logic
+  • broker/executor.py     ← Trade execution (DEMO guard here)
+  
+TO MONITOR:
+  • logs/bot.log           ← Live logs (rotates daily)
+  • data/trades.jsonl      ← All trades as JSON
+  
+TO DEBUG:
+  • broker/scraper.py      ← Selectors
+  • strategy/risk.py       ← Risk constraints
+  • signals/*.py           ← Individual indicators
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️  RISK DISCLAIMER:
+═══════════════════════════════════════════════════════════════════════════════
+
+Binary options are EXTREMELY RISKY.
+
+This bot is for EDUCATIONAL/RESEARCH purposes only.
+
+• You can lose 100% of your capital
+• Past performance ≠ future results
+• Use demo mode extensively before any live trading
+• Only risk money you can afford to lose
+• Verify legal compliance in your jurisdiction
+
+═══════════════════════════════════════════════════════════════════════════════
+Ready? Start with:
+
+  1. cd ~/code/openclaw/projects/PocketOptionBot
+  2. pip3 install -r requirements.txt
+  3. python3 verify_selectors.py
+  4. python3 main.py
+
+═══════════════════════════════════════════════════════════════════════════════
