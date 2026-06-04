@@ -15,6 +15,12 @@ import asyncio
 from telegram_feed.pair_norm import normalize_pair
 from utils.logger import log
 
+try:
+    from telethon.errors import FloodWaitError  # type: ignore
+except Exception:  # pragma: no cover - telethon optional at import time
+    class FloodWaitError(Exception):  # type: ignore
+        seconds = 0
+
 _NAG_MARKERS = ("tokens running low", "trade anyway")
 _DIR_MARKERS = ("direction:", "select trade amount", "setup detected")
 
@@ -67,6 +73,10 @@ class Navigator:
                         try:
                             await m.click(i, j)
                             return b.text
+                        except FloodWaitError as e:
+                            log.warning("FloodWait during click: sleeping %ss", getattr(e, "seconds", 0))
+                            await asyncio.sleep(getattr(e, "seconds", 0) or 1)
+                            raise
                         except Exception as e:
                             log.debug("click failed: %s", e)
         return None
@@ -83,7 +93,7 @@ class Navigator:
         if not self._click_anyway:
             return False
         for _ in range(3):
-            t = await self._click(lambda x: "trade anyway" in x.lower() or "anyway" in x.lower(), limit=8)
+            t = await self._click(lambda x: "trade anyway" in x.lower(), limit=8)
             if t:
                 await asyncio.sleep(2.5)
                 return True
