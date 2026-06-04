@@ -1,250 +1,337 @@
-# PocketOption Trading Bot
+# PocketOptionBot v2
 
-Modular, production-grade trading bot for PocketOption with technical analysis, risk management, and browser automation via Chrome DevTools Protocol.
+**Telegram-driven binary options bot.** Reads trade signals from `po_broker_bot` via Telegram, confirms with internal technical analysis, then places independent CALL/PUT trades via the PocketOption WebSocket API.
 
-## ⚠️ Risk Disclaimer
+> ⚠️ **Risk Disclaimer:** Binary options carry extreme risk of capital loss. Both the unofficial PocketOption API and the Telethon user session violate the respective platforms' Terms of Service. This project is for **educational and research purposes only.** Always use DEMO mode. Never risk money you cannot afford to lose.
 
-**Binary options carry extreme risk of capital loss.** This bot is for **educational and research purposes only**.
+---
 
-- Always test in DEMO mode before any live use
-- Never risk money you cannot afford to lose
-- Past performance does not guarantee future results
-- Verify regulatory compliance in your jurisdiction
-
-## 🏗️ Architecture
+## How It Works
 
 ```
-pocketoption-bot/
-├── broker/               # CDP connection, scraping, execution
-│   ├── connector.py      # Playwright CDP manager
-│   ├── scraper.py        # DOM data extraction
-│   └── executor.py       # Trade placement (with demo guard)
-├── data/                 # Price feed & candle management
-│   └── feed.py           # OHLCV builder, tick aggregation
-├── signals/              # Technical analysis
-│   ├── base.py           # Abstract Signal class
-│   ├── rsi.py            # RSI (oversold/overbought)
-│   ├── macd.py           # MACD crossover
-│   ├── bollinger.py      # Bollinger Bands mean reversion
-│   ├── ema_cross.py      # EMA golden/death cross
-│   ├── candle_pattern.py # Candlestick patterns
-│   └── confluence.py     # Signal aggregator & scoring
-├── strategy/             # Decision-making
-│   ├── risk.py           # Risk manager (limits, cooldowns, guards)
-│   └── manager.py        # Main trading loop
+po_broker_bot (Telegram)
+        │
+        │  Telethon user session reads DMs
+        ▼
+  Navigator drives po_broker_bot menus
+        │  → top pair + win rate (prediction screen)
+        │  → CALL/PUT direction (direction screen)
+        ▼
+  Pair quality gate
+        │  win rate ≥ PAIR_SELECT_MIN_WIN_RATE (default 0.82)
+        ▼
+  Internal TA Confluence Engine (5 signals)
+        │  RSI · MACD · Bollinger · EMA Cross · Candle Patterns
+        │  ≥ 3 signals must agree on same direction
+        ▼
+  Decision logic
+        │  bot direction must match our TA direction
+        │  combined probability = (bot win% + our confluence score) / 2
+        ▼
+  Risk Manager gates
+        │  min balance · max trades/hr · daily loss limit · cooldown
+        ▼
+  PocketOption API (binaryoptionstoolsv2)
+        │  buy/sell(pair, $1.50, expiry)
+        │  Never clicks the martingale bot's amount button
+        ▼
+  check_win(trade_id) → WIN / LOSS / DRAW
+        │
+        ▼
+  decisions.jsonl  +  WinRateTracker  +  RiskManager
+```
+
+---
+
+## Architecture
+
+```
+PocketOptionBot/
+├── main_v2.py                    # v2 entrypoint (--cycles N)
+├── main.py                       # legacy entrypoint (unwired, kept)
+│
 ├── config/
-│   └── settings.py       # Pydantic config from .env
+│   └── settings.py               # All config via .env (Pydantic)
+│
+├── telegram_feed/
+│   ├── client.py                 # TelegramSignalFeed (legacy listener)
+│   ├── navigator.py              # Button-drives po_broker_bot menus
+│   ├── prediction_parser.py      # Parses pair/win-rate screen
+│   ├── direction_parser.py       # Parses CALL/PUT direction screen
+│   ├── pair_norm.py              # Normalises pair labels → API symbols
+│   └── parser.py                 # Legacy signal parser (kept)
+│
+├── broker/
+│   └── po_api.py                 # PocketOptionAPIClient (buy/sell/check_win)
+│   └── [connector/scraper/executor.py]  # Legacy CDP modules (unwired)
+│
+├── signals/
+│   ├── base.py                   # BaseSignal abstract class
+│   ├── rsi.py                    # RSI (oversold/overbought)
+│   ├── macd.py                   # MACD crossover
+│   ├── bollinger.py              # Bollinger Bands mean reversion
+│   ├── ema_cross.py              # EMA golden/death cross
+│   ├── candle_pattern.py         # Candlestick patterns
+│   └── confluence.py             # ConfluenceEngine: weighted scoring + ≥3 gate
+│
+├── strategy/
+│   ├── manager_v2.py             # v2 orchestrator (navigate→TA→decide→trade)
+│   ├── decision.py               # Pure agree/disagree + combined probability
+│   ├── expiry.py                 # Nearest-allowed expiry selection
+│   ├── trade_logger.py           # decisions.jsonl writer + outcome backfill
+│   ├── signal_gate.py            # Legacy 3-gate filter (kept)
+│   ├── win_rate.py               # Per-pair win rate tracker (data/win_rates.json)
+│   ├── risk.py                   # RiskManager (balance/hr/daily/cooldown)
+│   └── manager.py                # Legacy event-driven manager (kept)
+│
+├── data/
+│   ├── candles.py                # API candle dicts → o/h/l/c/v DataFrame
+│   └── feed.py                   # Legacy price feed (kept)
+│
+├── tools/
+│   ├── v2_smoke.py               # One dry-run cycle smoke test
+│   ├── gen_telegram_session.py   # One-time Telethon session auth
+│   └── test_telegram_feed.py     # Live feed capture / debugging
+│
 ├── utils/
-│   ├── logger.py         # Loguru setup + trades.jsonl
-│   └── dashboard.py      # Rich terminal UI
-└── main.py               # Entry point
+│   └── logger.py                 # Loguru: logs/ + data/trades.jsonl
+│
+├── tests/                        # 100 offline unit tests
+│
+└── docs/
+    └── superpowers/plans/
+        └── 2026-06-04-telebot-evolution.md  # Full implementation plan
 ```
 
-## 🚀 Quick Start
+---
 
-### 1. Launch Chrome with Remote Debugging
+## Quick Start
 
-```bash
-# macOS / Linux
-google-chrome --remote-debugging-port=9222 &
+### 1. Prerequisites
 
-# Or use existing instance:
-# The bot will auto-connect to the first PocketOption tab
-```
+- Python 3.12+
+- An existing Telethon session authenticated to your Telegram account  
+  (run `python3 tools/gen_telegram_session.py` once if not set up)
+- A PocketOption SSID (copy the `42["auth",{...}]` string from your browser's DevTools Network tab while logged in to pocketoption.com)
 
-### 2. Setup Python Environment
+### 2. Install
 
 ```bash
 cd ~/code/openclaw/projects/PocketOptionBot
-
-# Install dependencies
 pip3 install -r requirements.txt
-
-# Or use Poetry:
-poetry install
-poetry shell
 ```
 
 ### 3. Configure
 
-Copy `.env.example` to `.env` and adjust:
-
 ```bash
 cp .env.example .env
+# Edit .env with your credentials
 ```
 
-**Critical settings:**
+**Minimum required settings:**
 
 ```env
-CDP_URL=http://localhost:9222
-TRADE_MODE=DEMO              # MUST be DEMO initially!
-ASSET=EURUSD
-TRADE_AMOUNT=1.0
-DRY_RUN=true                 # Test without clicking buttons
-MIN_CONFLUENCE_SCORE=0.75    # Require 3+ signals + score >= 0.75
-```
+# Telegram
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=your_api_hash
+TELEGRAM_SESSION=~/.telebot/telegram.session
 
-### 4. Run the Bot
+# PocketOption
+PO_SSID=42["auth",{"session":"...","isDemo":1,...}]
 
-```bash
-python3 main.py
-```
-
-**Output:**
-
-```
-2026-05-25 12:34:56 | INFO | main | Strategy Manager started
-2026-05-25 12:35:02 | INFO | strategy.manager | Placing trade: CALL (score=0.82)
-2026-05-25 12:35:03 | INFO | broker.executor | Trade executed: TradeResult(id='trade_1', status='PENDING')
-```
-
-Trades are logged to `data/trades.jsonl` for post-mortem analysis.
-
-## 📊 Signals
-
-### 1. **RSI** (Weight: 0.20)
-- **CALL** if RSI < 30 (oversold)
-- **PUT** if RSI > 70 (overbought)
-- Confidence scales with distance from midpoint
-
-### 2. **MACD** (Weight: 0.20)
-- **CALL** on golden cross (MACD > Signal line)
-- **PUT** on death cross (MACD < Signal line)
-- Confidence boosted if histogram accelerating
-
-### 3. **Bollinger Bands** (Weight: 0.20)
-- **CALL** if price at lower band + reverting up
-- **PUT** if price at upper band + reverting down
-- Confidence: how far from bands
-
-### 4. **EMA Cross** (Weight: 0.15)
-- **CALL** on golden cross (fast EMA > slow EMA)
-- **PUT** on death cross (fast EMA < slow EMA)
-- Sustaining positions have lower confidence
-
-### 5. **Candlestick Patterns** (Weight: 0.25)
-- Bullish Engulfing → CALL
-- Bearish Engulfing → PUT
-- Hammer (long wick) → CALL
-- Shooting Star → PUT
-- Doji → Indecision
-
-**Confluence Rule:** Trade only if ≥3 signals agree AND score ≥ `MIN_CONFLUENCE_SCORE`.
-
-## 🛡️ Risk Management
-
-**Hard Guards:**
-
-1. **Max Trades/Hour**: Prevents over-trading
-2. **Daily Loss Limit**: Halts if cumulative loss exceeds threshold
-3. **Cooldown After Loss**: Blocks trades for N seconds after a loss
-4. **Min Balance**: Requires balance ≥ 5× trade amount
-5. **Demo Mode Guard**: Refuses to trade if page shows LIVE and `TRADE_MODE=DEMO`
-
-**Trade Limits** (from `.env`):
-
-```env
-MAX_TRADES_PER_HOUR=10
-MAX_DAILY_LOSS_USD=20.0
-COOLDOWN_AFTER_LOSS_SECONDS=120
-MIN_BALANCE_MULTIPLIER=5.0
-```
-
-## 🔍 Selector Discovery
-
-If DOM selectors are outdated, run this in **DevTools Console** on the PocketOption page:
-
-```javascript
-// Test each selector
-const selectors = {
-  price: document.querySelector('[class*="price"]')?.textContent,
-  timer: document.querySelector('[class*="timer"], [class*="countdown"]')?.textContent,
-  balance: document.querySelector('[class*="balance"]')?.textContent,
-  asset: document.querySelector('[class*="asset"], [class*="symbol"]')?.textContent,
-};
-console.log(JSON.stringify(selectors, null, 2));
-```
-
-If these fail, update `broker/scraper.py` > `SELECTORS` dict with working selectors. Selectors are centralized for easy updates.
-
-## 📝 Logs & Data
-
-- **Logs**: `logs/bot.log` (rolling, 7-day retention)
-- **Trades**: `data/trades.jsonl` (one JSON per trade for easy analysis)
-
-Example trade record:
-
-```json
-{
-  "id": "trade_1",
-  "direction": "CALL",
-  "amount": 1.0,
-  "expiry": 60,
-  "timestamp": "2026-05-25T12:35:03.123456",
-  "status": "PENDING"
-}
-```
-
-## 🧪 Testing
-
-### Dry Run (No Clicks)
-
-```env
-DRY_RUN=true
-```
-
-All trades are logged but buttons are never clicked. Perfect for debugging signal logic.
-
-### Demo Mode (Safe)
-
-```env
+# Safety (leave these until you are confident)
 TRADE_MODE=DEMO
-DRY_RUN=false
+DRY_RUN=true
+STAKE_AMOUNT=1.50
 ```
 
-Trades are executed on the demo account. Safe for validation.
-
-### Live Mode (Production)
-
-```env
-TRADE_MODE=LIVE
-DRY_RUN=false
-```
-
-⚠️ **Only after extensive testing in DEMO.**
-
-## 🐛 Troubleshooting
-
-### Chrome won't connect
+### 4. Smoke test (no trade placed)
 
 ```bash
-# Check if CDP is listening
-curl http://localhost:9222/json/version
-
-# If not, restart Chrome:
-pkill -f "chrome.*remote-debugging"
-google-chrome --remote-debugging-port=9222 &
+python3 tools/v2_smoke.py
+# Runs one full cycle: navigate → TA → decide → log (DRY_RUN forced true)
+# Check data/decisions.jsonl for the result
 ```
 
-### Selectors not working
+### 5. Run the bot
 
-1. Inspect the page: Open DevTools on PocketOption
-2. Test selectors manually in Console
-3. Update `SELECTORS` in `broker/scraper.py`
-
-### Trades not being placed
-
-Check logs for:
-- `"Trade blocked by risk manager"` — Risk constraints active
-- `"ERROR: TRADE_MODE=DEMO but page shows LIVE"` — Demo guard triggered
-- `"Button not found"` — Selector issue
-
-## 📚 References
-
-- [Playwright Docs](https://playwright.dev/python/)
-- [Pandas-ta Docs](https://github.com/twopirllc/pandas-ta)
-- [PocketOption](https://pocketoption.com)
+```bash
+python3 main_v2.py               # run until Ctrl-C
+python3 main_v2.py --cycles 5    # run exactly 5 cycles then exit
+```
 
 ---
 
-**Built with:** Python 3.11+ | Playwright | Pandas-ta | Pydantic | Loguru | Rich
+## Configuration Reference
+
+All settings live in `.env`. See `.env.example` for the full list.
+
+### Critical safety settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRADE_MODE` | `DEMO` | `DEMO` or `LIVE`. Hard-reset to DEMO if unset. |
+| `DRY_RUN` | `true` | Log trades but never call buy/sell on the API. |
+| `STAKE_AMOUNT` | `1.50` | Fixed stake per trade (USD). |
+
+### v2 gate settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `PAIR_SELECT_MIN_WIN_RATE` | `0.0` | Minimum bot-stated win rate to consider a pair. Set to `0.82` for real runs; `0.0` disables the gate during testing. |
+| `DEFAULT_EXPIRY_SECONDS` | `30` | Trade expiry. Snapped to nearest allowed value. |
+| `CLICK_TRADE_ANYWAY` | `true` | Auto-click the "low-balance" nag page when it appears. |
+| `DECISIONS_LOG_PATH` | `data/decisions.jsonl` | Path for the structured decision log. |
+| `MIN_CONFLUENCE_SCORE` | `0.75` | Minimum TA confluence score to agree with a signal. |
+
+### Risk settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_TRADES_PER_HOUR` | `10` | Rolling 1-hour cap. |
+| `MAX_DAILY_LOSS_USD` | `20.0` | Daily loss stops trading for the day. |
+| `COOLDOWN_AFTER_LOSS_SECONDS` | `120` | Pause after each loss. |
+| `MIN_BALANCE_MULTIPLIER` | `5.0` | Balance must be ≥ this × stake to trade. |
+
+### Telegram settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `TELEGRAM_API_ID` | — | From my.telegram.org |
+| `TELEGRAM_API_HASH` | — | From my.telegram.org |
+| `TELEGRAM_SESSION` | `po_session` | Path to `.session` file or session name. |
+| `SIGNAL_BOT_USERNAME` | `po_broker_bot` | The Telegram bot to read from. |
+
+---
+
+## Technical Analysis Signals
+
+All signals consume an `o/h/l/c/v` time-indexed DataFrame from `data/candles.py`.
+
+| Signal | Weight | CALL trigger | PUT trigger |
+|---|---|---|---|
+| RSI | 0.20 | RSI < 30 (oversold) | RSI > 70 (overbought) |
+| MACD | 0.20 | MACD crosses above signal | MACD crosses below signal |
+| Bollinger | 0.20 | Price at lower band + reverting | Price at upper band + reverting |
+| EMA Cross | 0.15 | Fast EMA crosses above slow EMA | Fast EMA crosses below slow EMA |
+| Candle Patterns | 0.25 | Bullish engulfing / hammer | Bearish engulfing / shooting star |
+
+**Confluence rule:** ≥ 3 signals must agree on the **same** direction AND the weighted score must exceed `MIN_CONFLUENCE_SCORE`. A tie returns `None` (no trade).
+
+---
+
+## Decision Logic
+
+Each cycle produces a `DecisionRow` appended to `data/decisions.jsonl`:
+
+```
+TRADE  → bot direction matches our TA direction + both gates pass
+SKIP   → one of: no_direction · ta_disagree · ta_low_score · risk_blocked
+```
+
+**Combined probability** (logged, not gated):
+```
+combined = (bot_win_rate + our_confluence_score) / 2
+```
+
+This is the number to calibrate against real outcomes over time.
+
+---
+
+## Decision Log (`data/decisions.jsonl`)
+
+One JSON line per evaluated signal. Key fields:
+
+```json
+{
+  "cycle_id": "20260605T042310-0001",
+  "pair_raw": "GBP/USD",
+  "pair_api": "GBPUSD",
+  "bot_win_rate": 0.90,
+  "bot_direction": "CALL",
+  "our_direction": "CALL",
+  "our_confluence_score": 0.78,
+  "agreement": true,
+  "combined_probability": 0.84,
+  "decision": "TRADE",
+  "skip_reason": null,
+  "stake": 1.5,
+  "trade_id": "trade_abc123",
+  "outcome": "WIN",
+  "pnl": 1.28,
+  "pnl_currency": "USD",
+  "balance_before": 1000.0,
+  "balance_after": 1001.28,
+  "ts": "2026-06-05T04:23:10.000000+00:00"
+}
+```
+
+Use this log to calibrate signal quality, tune gates, and identify which pairs perform well over time.
+
+---
+
+## Safety Invariants
+
+These must **never** be weakened without explicit intent:
+
+1. **DEMO by default.** `TRADE_MODE=DEMO` is the hard default. Even an empty `TRADE_MODE=` env var resets to DEMO.
+2. **Demo guard.** Before any real buy, `broker/po_api.py` decodes `isDemo` from the SSID using the API-native `is_demo()` method (with SSID-string fallback). If SSID is live but `TRADE_MODE=DEMO`, the trade is **aborted**.
+3. **DRY_RUN.** When `DRY_RUN=true`, `buy/sell` logs the would-be trade and returns without calling the API.
+4. **Navigator never clicks amount buttons.** The only safe action is clicking pair names, "Start Autotrade", "Main Menu", and "Trade Anyway" nag buttons. Clicking an amount/stake button places a **martingale bot trade** with the bot's own tokens — our trades go through the PocketOption API exclusively.
+5. **Single session writer.** Only one process may use the Telethon session at a time. Ensure `telebot/scripts/pocket_robot_trader.py` is stopped before running `main_v2.py`.
+
+---
+
+## Data Files
+
+| Path | Description |
+|---|---|
+| `data/decisions.jsonl` | Structured log: one row per evaluated signal |
+| `data/win_rates.json` | Per-pair win rate tracker (persisted) |
+| `data/trades.jsonl` | Legacy trade log (kept for compatibility) |
+| `logs/bot.log` | Human-readable rotating log (1 day, 7-day retention) |
+
+---
+
+## Testing
+
+All 100 tests run fully offline — no network, no SSID, no Telegram credentials.
+
+```bash
+pytest                    # all tests
+pytest tests/ -v          # verbose
+pytest tests/test_signals.py  # one module
+```
+
+For a live smoke test against the real bot (no trade placed):
+
+```bash
+python3 tools/v2_smoke.py
+python3 tools/v2_smoke.py --pair GBPUSD_otc   # skip navigation, test TA only
+```
+
+---
+
+## Development Notes
+
+- All live-path code is `async/await`. Errors are caught per-iteration and logged; the bot never crashes on a single bad cycle.
+- Frozen dataclasses are used for immutable results (`TelegramSignal`, `SignalResult`, `ConfluenceResult`, `DirectionScreen`, `PredictionScreen`). Mutable state lives in `RiskManager`, `WinRateTracker`, and the API client.
+- Direction is always the string `"CALL"`, `"PUT"`, or `None` — never booleans or enums.
+- Imports are absolute from project root.
+- `pandas-ta` is **not** used (incompatible with newer Python). All indicators are pure pandas/numpy.
+
+---
+
+## Progression Path
+
+| Phase | Config | Purpose |
+|---|---|---|
+| Smoke test | `DRY_RUN=true` | Verify navigation + TA works end-to-end |
+| Capture mode | `PAIR_SELECT_MIN_WIN_RATE=0.0`, `DRY_RUN=true` | Observe all signals, log everything |
+| Gated testing | `PAIR_SELECT_MIN_WIN_RATE=0.82`, `DRY_RUN=true` | Verify gate logic against real signals |
+| Demo live | `TRADE_MODE=DEMO`, `DRY_RUN=false` | Real trades on demo account |
+| Live | `TRADE_MODE=LIVE`, `DRY_RUN=false` | Only after sustained demo profitability |
+
+---
+
+**Built with:** Python 3.12+ · Telethon · binaryoptionstoolsv2 · Pydantic · Loguru · pandas/numpy

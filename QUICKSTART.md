@@ -1,257 +1,195 @@
-# PocketOptionBot — Quick Start Guide
+# PocketOptionBot v2 — Quick Start
 
-## 🎯 5-Minute Setup
+## Prerequisites
 
-### Step 1: Launch Chrome with Remote Debugging
+Before your first run you need three things:
 
-```bash
-# Kill any existing Chrome instances
-pkill -f "chrome.*remote-debugging" || true
+1. **Telethon session** — run `python3 tools/gen_telegram_session.py` once if not already done. The session file lives at `~/.telebot/telegram.session` (or wherever `TELEGRAM_SESSION` points).
+2. **PocketOption SSID** — log in to pocketoption.com in Chrome, open DevTools → Network, filter for WS, find the `42["auth",{...}]` message and copy the full string.
+3. **`.env` configured** — `cp .env.example .env` and fill in your credentials.
 
-# Start Chrome with debugging enabled
-google-chrome --remote-debugging-port=9222 &
+> ⚠️ Only one process may use the Telethon session at a time. **Stop any running `pocket_robot_trader.py` (Telebot) before starting PocketOptionBot v2.**
 
-# Verify it's listening
-curl http://localhost:9222/json/version
-```
+---
 
-You should see JSON output. If not, Chrome didn't start properly.
-
-### Step 2: Install Python Dependencies
+## Setup (one-time)
 
 ```bash
 cd ~/code/openclaw/projects/PocketOptionBot
 
-# Install from requirements.txt
+# Install dependencies
 pip3 install -r requirements.txt
 
-# Or use Poetry
-poetry install
-poetry shell
+# Copy and fill in config
+cp .env.example .env
+# Edit .env: set TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION, PO_SSID
 ```
 
-### Step 3: Verify Selectors Work
-
-**Open PocketOption in Chrome** (in the Chrome instance with debugging enabled).
-
-Then run:
-
-```bash
-python3 verify_selectors.py
-```
-
-Expected output:
-```
-[3] Testing selectors...
-─────────────────────────────────────
-✓ price           = 1.06325
-✓ timer           = 45
-✓ balance         = $1000.00
-✓ asset           = EURUSD
-✓ last_result     = None
-✓ is_demo         = True
-─────────────────────────────────────
-✓ All selectors working!
-```
-
-If any fail, selectors need updating. Let me know.
-
-### Step 4: Run in Dry-Run Mode (Test)
-
-This runs the bot but **never clicks buttons** — just logs what it would trade.
-
-```bash
-python3 main.py
-```
-
-Watch the logs. You should see:
-- Price ticks and candles building
-- Signals being evaluated
-- Trades being simulated
-
-**Let this run for 5-10 minutes** to verify signals are working.
-
-### Step 5: Review Logs
-
-```bash
-# View live logs
-tail -f logs/bot.log
-
-# View all trades (JSON)
-cat data/trades.jsonl | python3 -m json.tool | head -50
-```
-
----
-
-## 🔧 Tuning the Bot
-
-All settings are in `.env`. Don't edit `main.py` or signal code.
-
-### Conservative Settings (Low Risk)
+**Minimum `.env` for testing:**
 
 ```env
-MIN_CONFLUENCE_SCORE=0.80        # Require higher signal agreement
-MAX_TRADES_PER_HOUR=5            # Fewer trades
-MAX_DAILY_LOSS_USD=10.0          # Tighter loss limit
-TRADE_AMOUNT=0.5                 # Smaller size
-COOLDOWN_AFTER_LOSS_SECONDS=300  # Longer cooldown
-```
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=abc123def456
+TELEGRAM_SESSION=~/.telebot/telegram.session
 
-### Aggressive Settings (Higher Risk)
+PO_SSID=42["auth",{"session":"your_session","isDemo":1,"uid":123456}]
 
-```env
-MIN_CONFLUENCE_SCORE=0.60
-MAX_TRADES_PER_HOUR=20
-MAX_DAILY_LOSS_USD=50.0
-TRADE_AMOUNT=5.0
-COOLDOWN_AFTER_LOSS_SECONDS=60
-```
-
-### Signal Weights (in `signals/confluence.py`)
-
-Each signal contributes a weighted vote. Currently:
-- RSI: 20%
-- MACD: 20%
-- Bollinger: 20%
-- EMA: 15%
-- Patterns: 25%
-
-To adjust, edit `ConfluenceEngine` in `signals/confluence.py` or contact me.
-
----
-
-## ✅ Safe Progression Path
-
-### Phase 1: Dry Run (Days 1-3)
-```env
+# Safety defaults — do not change until you understand the implications
 TRADE_MODE=DEMO
 DRY_RUN=true
+STAKE_AMOUNT=1.50
+PAIR_SELECT_MIN_WIN_RATE=0.0   # 0.0 disables the gate; set 0.82 for real runs
 ```
-✓ Signals validate correctly  
-✓ No real clicks, 100% safe  
-✓ Review P&L logs  
 
-### Phase 2: Demo Mode (Days 3-7)
+---
+
+## Step 1: Smoke test
+
+Verifies the full pipeline without placing any trade.
+
+```bash
+python3 tools/v2_smoke.py
+```
+
+Expected: one cycle completes, you see a `TRADE` or `SKIP` decision in `data/decisions.jsonl`.
+
+```bash
+# Check the log
+tail -1 data/decisions.jsonl | python3 -m json.tool
+```
+
+If you see a `decision` field set to `"TRADE"` or `"SKIP"` with a valid `pair_api`, the pipeline is working.
+
+---
+
+## Step 2: Capture mode (all signals, no gate, no trades)
+
+Run a few cycles with gates off and DRY_RUN on to see what the bot produces:
+
+```bash
+# .env: PAIR_SELECT_MIN_WIN_RATE=0.0, DRY_RUN=true
+python3 main_v2.py --cycles 5
+```
+
+Review the decisions log:
+
+```bash
+cat data/decisions.jsonl | python3 -c "
+import sys, json
+for line in sys.stdin:
+    r = json.loads(line)
+    print(f\"{r['ts'][:19]}  {r['pair_api']:12}  bot={r['bot_direction']}  our={r['our_direction']}  agree={r['agreement']}  dec={r['decision']}  prob={r.get('combined_probability',0):.2f}\")
+"
+```
+
+---
+
+## Step 3: Gated testing (with win-rate gate, still DRY_RUN)
+
+Enable the 82% pair gate:
+
+```env
+PAIR_SELECT_MIN_WIN_RATE=0.82
+DRY_RUN=true
+```
+
+```bash
+python3 main_v2.py
+```
+
+Now the bot only evaluates pairs where `po_broker_bot` has stated ≥ 82% win rate. Signals that don't pass the confluence check will be logged as `SKIP`.
+
+---
+
+## Step 4: Demo live trading
+
+Once you're happy with the signal quality from the log:
+
 ```env
 TRADE_MODE=DEMO
 DRY_RUN=false
+PAIR_SELECT_MIN_WIN_RATE=0.82
 ```
-✓ Real clicks on demo account  
-✓ See actual trade outcomes  
-✓ Refine parameters  
-
-### Phase 3: Live (After 1+ week of consistent demo profit)
-```env
-TRADE_MODE=LIVE
-DRY_RUN=false
-```
-⚠️ **Only after Phase 2 proves profitable**  
-⚠️ Start with 1/10th of your max size  
-⚠️ Monitor closely  
-
----
-
-## 🐛 Troubleshooting
-
-### "Failed to connect"
-```
-✗ Connection failed: ...
-   Start Chrome with: google-chrome --remote-debugging-port=9222
-```
-→ Chrome isn't listening. Restart it:
-```bash
-pkill -f "chrome.*remote-debugging"
-google-chrome --remote-debugging-port=9222 &
-sleep 2
-curl http://localhost:9222/json/version
-```
-
-### "No active PocketOption page"
-→ PocketOption tab must be open in the Chrome instance with debugging enabled.
-
-### "Trade blocked by risk manager"
-→ Check the reason in logs. Common ones:
-- `Balance too low` — Need more demo/live funds
-- `Max trades/hour` — You've hit your limit
-- `Cooling down` — After a loss, waiting before next trade
-
-### Selectors returning None
-→ DOM changed. Run `verify_selectors.py` to confirm, then update selectors:
 
 ```bash
-python3 verify_selectors.py
-# If any fail, update SELECTORS in broker/scraper.py
+python3 main_v2.py
 ```
 
----
+Real trades on your PocketOption **demo** account. No real money. Outcomes are tracked and backfilled into `data/decisions.jsonl`.
 
-## 📊 Monitoring
-
-### Live Dashboard (Optional)
-
-```python
-# In main.py, uncomment dashboard code to see live stats
-dashboard.update(...)
-```
-
-### Logs Directory
-
-```
-logs/
-├── bot.log           # All events, rotates daily
-└── (older)           # 7-day retention
-
-data/
-└── trades.jsonl      # All trades, one per line
-```
-
-### Parse Trades
+Watch outcomes live:
 
 ```bash
-# Count trades by direction
-python3 << 'EOF'
-import json
-calls = 0
-puts = 0
-with open('data/trades.jsonl') as f:
-    for line in f:
-        trade = json.loads(line)
-        if trade['direction'] == 'CALL':
-            calls += 1
-        else:
-            puts += 1
-print(f"CALL: {calls}, PUT: {puts}")
-EOF
+tail -f logs/bot.log
 ```
 
 ---
 
-## 🛑 Emergency Stop
+## Step 5: Analyse results
 
-**Ctrl+C** stops the bot gracefully.
+After running for a day or more:
 
-To force-kill all Chrome instances:
 ```bash
-pkill -9 -f chrome
+# Win rate by pair
+python3 -c "
+import json, collections
+rows = [json.loads(l) for l in open('data/decisions.jsonl')]
+trades = [r for r in rows if r['decision'] == 'TRADE' and r.get('outcome')]
+by_pair = collections.defaultdict(lambda: {'wins':0,'total':0,'pnl':0.0})
+for r in trades:
+    p = by_pair[r['pair_api']]
+    p['total'] += 1
+    p['wins'] += 1 if r['outcome'].upper() == 'WIN' else 0
+    p['pnl'] += r.get('pnl', 0) or 0
+for pair, s in sorted(by_pair.items()):
+    wr = s['wins']/s['total'] if s['total'] else 0
+    print(f\"{pair:14}  {s['total']:3} trades  win={wr:.0%}  pnl={s['pnl']:+.2f}\")
+"
 ```
 
 ---
 
-## 📞 Next Steps
+## Common Issues
 
-Once you've verified Phase 1 (dry run working):
+### "Session locked" / Telethon error on startup
+→ Another process is using the Telegram session. Stop it first:
+```bash
+pkill -f pocket_robot_trader
+```
 
-1. **Share 10 trades from `data/trades.jsonl`** — I can analyze signal quality
-2. **Run Phase 2 (demo mode)** for 1 week — See real outcomes
-3. **Tune parameters** based on results
-4. **Only then** consider live trading
+### Bot predicts but direction screen never shows
+→ The pair selection step may have failed silently. Run with a single cycle and check logs:
+```bash
+python3 main_v2.py --cycles 1
+tail -20 logs/bot.log
+```
 
-Good luck! 🚀
+### All signals are SKIP with `ta_disagree`
+→ The bot direction and our TA direction are consistently disagreeing. This is expected if TA indicators don't have enough data or the market is volatile. Let it run — it will agree when confluence is strong.
+
+### `ABORT: TRADE_MODE=DEMO but SSID has isDemo=0`
+→ Your SSID was copied from a live account session. Log in to your **demo** account on PocketOption, copy the SSID again, and update `.env`.
+
+### Nag screen keeps blocking
+→ `CLICK_TRADE_ANYWAY=true` (the default) handles this. If it persists, check logs for `FloodWaitError` — the bot may be clicking too quickly and Telegram is rate-limiting it.
 
 ---
 
-**Remember:**
-- Binary options = extreme risk
-- This bot is educational
-- Never risk money you can't lose
-- Past performance ≠ future results
+## Emergency Stop
+
+- **Graceful:** `Ctrl+C` — completes the current cycle then exits
+- **Immediate:** `kill <pid>` — stops mid-cycle (any open trade continues until expiry via API)
+
+---
+
+## Files to Monitor
+
+| File | What to watch for |
+|---|---|
+| `logs/bot.log` | Live events, errors, decision reasons |
+| `data/decisions.jsonl` | Full structured log of every cycle |
+| `data/win_rates.json` | Per-pair win rate accumulation |
+
+---
+
+**Next:** once demo P&L is consistently positive over a week, consider setting `TRADE_MODE=LIVE`. Start with the minimum stake and monitor closely.
