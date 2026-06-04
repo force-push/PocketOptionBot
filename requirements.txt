@@ -18,7 +18,7 @@ rich>=13.0.0
 telethon>=1.34.0
 
 # PocketOption WebSocket API (Rust-backed wheel, supports Python 3.8–3.13)
-binaryoptionstoolsv2>=2.0.0
+binaryoptionstoolsv2>=0.2.8
 
 # Development
 pytest>=7.4.0
