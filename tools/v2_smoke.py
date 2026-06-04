@@ -1,22 +1,28 @@
 """v2 smoke tool — run ONE dry-run cycle against the live po_broker_bot.
 
-This tool validates the full Telegram navigation + TA decision pipeline
-WITHOUT placing any real trades. It:
+Validates the pipeline WITHOUT placing any real trades (DRY_RUN forced True).
+Runs in one of two modes depending on whether PO_SSID is configured:
 
-1. Connects to po_broker_bot via the existing Telethon session.
-2. Navigates menus (Start Autotrade → top pair → direction screen).
-3. Runs the 5-signal TA confluence engine against live PO candles.
-4. Evaluates the decision (TRADE / SKIP) and logs to data/decisions.jsonl.
-5. Exits — no trade is placed (DRY_RUN is forced to True).
+FULL mode (PO_SSID set):
+  1. Connect to po_broker_bot via the existing Telethon session.
+  2. Navigate menus (Start Autotrade → wait for prediction → pair → direction).
+  3. Connect the PocketOption API, fetch candles, run the 5-signal TA engine.
+  4. Evaluate the decision (TRADE / SKIP) and log to data/decisions.jsonl.
+  5. No trade is placed (DRY_RUN).
+
+NAVIGATION-ONLY mode (no PO_SSID):
+  Steps 1–2 only — proves the Telegram navigation + parsing works. The TA
+  stage is skipped because it needs live PocketOption market data (candles),
+  which requires a connected API session.
 
 Usage
 -----
-    python3 tools/v2_smoke.py [--pair XXXYYY_otc]
+    python3 tools/v2_smoke.py [--pair XXXYYY_otc] [--verbose]
 
 Options
 -------
-    --pair      Override the pair selected by the bot (useful for testing a
-                specific asset). Skips the prediction/navigation step.
+    --pair      Override the pair (skip navigation, test TA for one asset).
+                Requires PO_SSID.
     --verbose   Show DEBUG logs.
 
 Pre-conditions
@@ -26,7 +32,7 @@ Pre-conditions
   tools/gen_telegram_session.py once if it isn't).
 - The legacy pocket_robot_trader.py must NOT be running (session is
   single-writer).
-- PO_SSID is not required (we never call buy/sell in the smoke tool).
+- PO_SSID enables FULL mode; without it the tool runs NAVIGATION-ONLY.
 """
 from __future__ import annotations
 
@@ -54,7 +60,7 @@ async def run_smoke(override_pair: str | None = None) -> bool:
     cfg = BotSettings(_env_file=_ROOT / ".env")  # type: ignore[call-arg]
     cfg_dry = cfg.model_copy(update={"dry_run": True})
     _ = cfg_dry  # we use the global `settings` singleton below; just log intent
-    log.info("Smoke tool — forced dry_run=True; trade_mode=%s", cfg.trade_mode)
+    log.info("Smoke tool — forced dry_run=True; trade_mode={}", cfg.trade_mode)
 
     from telethon import TelegramClient
 
@@ -99,7 +105,7 @@ async def run_smoke(override_pair: str | None = None) -> bool:
 
     if override_pair:
         # ── pair override mode: skip navigation, inject a fake direction screen ──
-        log.info("Pair override: %s — skipping navigation", override_pair)
+        log.info("Pair override: {} — skipping navigation", override_pair)
         from data.candles import candles_to_df
         from strategy.decision import decide
         from strategy.expiry import select_expiry
@@ -136,7 +142,7 @@ async def run_smoke(override_pair: str | None = None) -> bool:
             stake=cfg.stake_amount,
         )
         write_decision(cfg.decisions_log_path, row)
-        log.info("Smoke (override) — decision=%s conf=%.3f reason=%s",
+        log.info("Smoke (override) — decision={} conf={:.3f} reason={}",
                  row.decision, conf.score, d.skip_reason)
         return True
 
@@ -146,23 +152,73 @@ async def run_smoke(override_pair: str | None = None) -> bool:
         bot_username=cfg.signal_bot_username,
         click_trade_anyway=cfg.click_trade_anyway,
     )
-    manager = StrategyManagerV2(
-        navigator=navigator,
-        api_client=api_client,
-        confluence_engine=confluence,
-        risk_manager=risk,
-        tracker=tracker,
-    )
 
     async with tg_client:
-        log.info("Connected to Telegram — running one cycle…")
-        try:
-            await manager.run_once()
-            log.info("Smoke cycle complete — check data/decisions.jsonl")
-            return True
-        except Exception as exc:
-            log.error("Smoke cycle error: %s", exc, exc_info=True)
-            return False
+        # The TA step needs live PocketOption market data (candles), which requires
+        # a connected API session. DRY_RUN only short-circuits buy/sell, not candles.
+        if cfg.po_ssid:
+            log.info("PO_SSID present — connecting API for full pipeline…")
+            try:
+                await api_client.connect()
+            except Exception as exc:
+                log.opt(exception=True).error("PO API connect failed: {}", exc)
+                return False
+            manager = StrategyManagerV2(
+                navigator=navigator, api_client=api_client,
+                confluence_engine=confluence, risk_manager=risk, tracker=tracker,
+            )
+            log.info("Running one full cycle (DRY_RUN — no trade placed)…")
+            try:
+                await manager.run_once()
+                log.info("Smoke cycle complete — check data/decisions.jsonl")
+                return True
+            except Exception as exc:
+                log.opt(exception=True).error("Smoke cycle error: {}", exc)
+                return False
+
+        # No SSID → validate the Telegram half only (navigation + parsing).
+        log.warning("No PO_SSID set — running NAVIGATION-ONLY smoke (TA/trade skipped).")
+        return await _navigation_only_smoke(navigator, cfg)
+
+
+async def _navigation_only_smoke(navigator, cfg) -> bool:
+    """Drive the bot and parse the prediction + direction screens, no TA/trade.
+
+    Proves the risky Telegram-navigation half works without needing a PO session.
+    """
+    from telegram_feed.direction_parser import parse_direction_screen
+    from telegram_feed.pair_norm import normalize_pair
+    from telegram_feed.prediction_parser import parse_prediction
+
+    log.info("Connected to Telegram — start_autotrade…")
+    await navigator.start_autotrade()
+
+    pred_text, _ = await navigator.wait_for_prediction()
+    pred = parse_prediction(pred_text)
+    if not pred or not pred.top_pick():
+        log.error("Navigation FAILED — no prediction screen parsed.")
+        return False
+    top = pred.top_pick()
+    pair_api = normalize_pair(top.pair_raw)
+    log.info("✅ Prediction OK — top pair {} ({}) → {} @ win%={:.0f}",
+             top.pair_raw, "🏆" if top.is_top else "", pair_api, top.win_rate * 100)
+
+    if not await navigator.select_pair(pair_api):
+        log.error("Navigation FAILED — could not select pair {}", pair_api)
+        return False
+
+    dir_text, _ = await navigator.read_latest_text()
+    dscreen = parse_direction_screen(dir_text)
+    if dscreen is None:
+        log.error("Navigation FAILED — no direction screen parsed.")
+        await navigator.back_to_menu()
+        return False
+    log.info("✅ Direction OK — {} (setup={})", dscreen.direction, dscreen.setup)
+
+    await navigator.back_to_menu()
+    log.info("✅ NAVIGATION-ONLY smoke PASSED — Telegram pipeline works end-to-end. "
+             "Add PO_SSID to test the TA + decision stage.")
+    return True
 
 
 def main() -> None:

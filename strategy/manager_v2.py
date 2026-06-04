@@ -35,31 +35,33 @@ class StrategyManagerV2:
         log_path = settings.decisions_log_path
 
         await self._nav.start_autotrade()
-        pred_text, pred_btns = await self._nav.read_latest_text()
+        # The prediction screen arrives several seconds after launch (AI analysis);
+        # poll for it rather than reading the interim status message.
+        pred_text, pred_btns = await self._nav.wait_for_prediction()
         pred = parse_prediction(pred_text)
         if not pred or not pred.top_pick():
-            log.info("[%s] no prediction parsed; skipping", cid)
+            log.info("[{}] no prediction parsed; skipping", cid)
             return
 
         top = pred.top_pick()
         pair_api = normalize_pair(top.pair_raw)
         if pair_api is None:
-            log.info("[%s] could not normalize pair %r", cid, top.pair_raw)
+            log.info("[{}] could not normalize pair {!r}", cid, top.pair_raw)
             return
 
         if top.win_rate < settings.pair_select_min_win_rate:
-            log.info("[%s] %s win%% %.0f below gate %.0f — skip",
+            log.info("[{}] {} win% {:.0f} below gate {:.0f} — skip",
                      cid, pair_api, top.win_rate * 100, settings.pair_select_min_win_rate * 100)
             return
 
         if not await self._nav.select_pair(pair_api):
-            log.info("[%s] pair select failed for %s", cid, pair_api)
+            log.info("[{}] pair select failed for {}", cid, pair_api)
             return
 
         dir_text, _ = await self._nav.read_latest_text()
         dscreen = parse_direction_screen(dir_text)
         if dscreen is None:
-            log.info("[%s] no direction screen for %s", cid, pair_api)
+            log.info("[{}] no direction screen for {}", cid, pair_api)
             return
 
         expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
@@ -87,14 +89,14 @@ class StrategyManagerV2:
 
         if not d.trade:
             write_decision(log_path, row)
-            log.info("[%s] SKIP %s: %s", cid, pair_api, d.skip_reason)
+            log.info("[{}] SKIP {}: {}", cid, pair_api, d.skip_reason)
             await self._nav.back_to_menu()
             return
 
         if not self._risk.is_allowed(balance_before):
             row.decision = "SKIP"; row.skip_reason = "risk_blocked"
             write_decision(log_path, row)
-            log.warning("[%s] risk blocked: %s", cid, getattr(self._risk, "block_reason", ""))
+            log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
             await self._nav.back_to_menu()
             return
 
@@ -103,7 +105,7 @@ class StrategyManagerV2:
         row.trade_id = getattr(trade, "trade_id", None)
         row.status = getattr(trade, "status", "PENDING")
         write_decision(log_path, row)
-        log.info("[%s] TRADE %s %s @%.2f exp=%ds id=%s",
+        log.info("[{}] TRADE {} {} @{:.2f} exp={}s id={}",
                  cid, dscreen.direction, pair_api, settings.stake_amount, expiry, row.trade_id)
 
         await self._nav.back_to_menu()
@@ -119,4 +121,4 @@ class StrategyManagerV2:
             self._tracker.record(pair_api, dscreen.direction, expiry, outcome)
             risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
             self._risk.record_trade(dscreen.direction, settings.stake_amount, risk_result)
-            log.info("[%s] OUTCOME %s pnl=%s", cid, outcome, pnl)
+            log.info("[{}] OUTCOME {} pnl={}", cid, outcome, pnl)

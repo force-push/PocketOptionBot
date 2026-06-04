@@ -74,11 +74,11 @@ class Navigator:
                             await m.click(i, j)
                             return b.text
                         except FloodWaitError as e:
-                            log.warning("FloodWait during click: sleeping %ss", getattr(e, "seconds", 0))
+                            log.warning("FloodWait during click: sleeping {}s", getattr(e, "seconds", 0))
                             await asyncio.sleep(getattr(e, "seconds", 0) or 1)
                             raise
                         except Exception as e:
-                            log.debug("click failed: %s", e)
+                            log.debug("click failed: {}", e)
         return None
 
     async def start_autotrade(self) -> None:
@@ -115,6 +115,32 @@ class Navigator:
             return "", []
         _, text, btns = msgs[0]
         return text, btns
+
+    async def wait_for_prediction(
+        self, timeout: float = 30.0, interval: float = 2.0
+    ) -> tuple[str, list[str]]:
+        """Poll until the actionable Bot Prediction screen (with pair buttons) arrives.
+
+        After 'Start Autotrade' the bot posts a 'Launched / AI analysis: Running'
+        status and only produces the prediction screen several seconds later. We
+        poll read_latest_text until we see a 'Bot Prediction' message that has
+        pair buttons, dismissing any nag screen encountered along the way.
+
+        Returns (text, buttons) of the prediction screen, or ("", []) on timeout.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout
+        while True:
+            text, btns = await self.read_latest_text()
+            low = (text or "").lower()
+            if "bot prediction" in low and btns:
+                return text, btns
+            if is_nag_screen(text, btns):
+                await self.dismiss_nag_if_present()
+            if time.monotonic() >= deadline:
+                return "", []
+            await asyncio.sleep(interval)
 
     async def back_to_menu(self) -> None:
         await self._click(lambda x: "main menu" in x.lower())

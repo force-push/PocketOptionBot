@@ -134,7 +134,7 @@ class PocketOptionAPIClient:
             )
         except AttributeError:
             # Library version does not expose these methods — fall back to SSID parsing
-            log.info("PocketOptionAPIClient connected (dry_run=%s)", self._dry_run)
+            log.info("PocketOptionAPIClient connected (dry_run={})", self._dry_run)
 
     # ── demo guard ───────────────────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ class PocketOptionAPIClient:
                     raise AttributeError("is_demo appears to be async")
                 return bool(demo)
             except Exception as exc:
-                log.debug("API-native is_demo() unavailable (%s); using SSID fallback", exc)
+                log.debug("API-native is_demo() unavailable ({}); using SSID fallback", exc)
         # Fallback: decode from the raw SSID string
         return _parse_ssid_is_demo(self._ssid)
 
@@ -352,7 +352,7 @@ class PocketOptionAPIClient:
         try:
             return float(await self._client.balance())
         except Exception as exc:
-            log.error("balance() failed: %s", exc)
+            log.error("balance() failed: {}", exc)
             return None
 
     async def get_candles(
@@ -377,5 +377,5 @@ class PocketOptionAPIClient:
             candles = await self._client.get_candles(pair, period, count)
             return list(candles)
         except Exception as exc:
-            log.error("get_candles(%s) failed: %s", pair, exc)
+            log.error("get_candles({}) failed: {}", pair, exc)
             return []

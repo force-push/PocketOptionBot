@@ -19,7 +19,10 @@ async def test_one_cycle_trades_and_logs(tmp_path, monkeypatch):
 
     nav = MagicMock()
     nav.start_autotrade = AsyncMock()
-    nav.read_latest_text = AsyncMock(side_effect=[(PRED, ["🏆 AUD/USD OTC", "CHF/JPY OTC"]), (DIR_BUY, [])])
+    # Prediction is now obtained via wait_for_prediction (polls past the AI-analysis
+    # status); the direction screen is still read via read_latest_text.
+    nav.wait_for_prediction = AsyncMock(return_value=(PRED, ["🏆 AUD/USD OTC", "CHF/JPY OTC"]))
+    nav.read_latest_text = AsyncMock(return_value=(DIR_BUY, []))
     nav.select_pair = AsyncMock(return_value=True)
     nav.back_to_menu = AsyncMock()
 

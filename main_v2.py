@@ -111,7 +111,7 @@ async def main(cycles: int = 0) -> None:
     cycles:
         Number of trade cycles to attempt. 0 means run indefinitely.
     """
-    log.info("PocketOptionBot v2 starting — mode=%s dry_run=%s cycles=%s",
+    log.info("PocketOptionBot v2 starting — mode={} dry_run={} cycles={}",
              settings.trade_mode, settings.dry_run, cycles or "∞")
 
     if settings.trade_mode == TradeMode.LIVE and not settings.dry_run:
@@ -127,11 +127,11 @@ async def main(cycles: int = 0) -> None:
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
-                log.error("run_once error (will retry): %s", exc, exc_info=True)
+                log.opt(exception=True).error("run_once error (will retry): {}", exc)
 
             count += 1
             if cycles and count >= cycles:
-                log.info("Completed %d cycle(s) — exiting.", count)
+                log.info("Completed {} cycle(s) — exiting.", count)
                 break
 
             # Brief pause between cycles to avoid hammering the bot
