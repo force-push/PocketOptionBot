@@ -36,3 +36,8 @@ def test_backfill_outcome(tmp_path):
     assert rec["outcome"] == "win"
     assert rec["pnl"] == 1.38
     assert rec["balance_after"] == 101.38
+
+def test_backfill_returns_false_when_file_missing(tmp_path):
+    missing = tmp_path / "nope.jsonl"
+    assert backfill_outcome(missing, trade_id="x", outcome="win", pnl=0.0) is False
+    assert not missing.exists()
