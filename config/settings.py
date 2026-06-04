@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsError
 
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -79,10 +79,11 @@ class BotSettings(BaseSettings):
             raise SettingsError(f"Invalid TRADE_MODE: {v!r}. Must be DEMO or LIVE.")
         return TradeMode(mode)
 
-    class Config:
-        env_file = _PROJECT_ROOT / ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # Allow extra env vars without error
+    model_config = ConfigDict(
+        env_file=_PROJECT_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",  # allow extra env vars without error
+    )
 
     def __init__(self, **data):
         super().__init__(**data)
