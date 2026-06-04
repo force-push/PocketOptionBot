@@ -59,27 +59,13 @@ class ConfluenceEngine:
                     reason=f"Exception: {str(e)}",
                 )
 
-        # Determine final direction
-        agreeing_signals = sum(
-            1 for r in results.values() if r.direction in ("CALL", "PUT")
-        )
-
-        if agreeing_signals < 3:
-            return ConfluenceResult(
-                direction=None,
-                score=0.0,
-                breakdown={
-                    r.name: (r.direction, r.confidence) for r in results.values()
-                },
-                reason=f"Only {agreeing_signals} signals agree (need ≥3)",
-            )
-
+        # Determine direction by weighted confidence score
         if call_score > put_score:
-            final_score = call_score
             direction = "CALL"
+            final_score = call_score
         elif put_score > call_score:
-            final_score = put_score
             direction = "PUT"
+            final_score = put_score
         else:
             return ConfluenceResult(
                 direction=None,
@@ -88,6 +74,23 @@ class ConfluenceEngine:
                     r.name: (r.direction, r.confidence) for r in results.values()
                 },
                 reason="Conflicting signals (CALL ≈ PUT)",
+            )
+
+        # Require ≥3 signals to agree on the winning direction.
+        # Previously this counted CALL + PUT together, which allowed trades to
+        # fire when e.g. 2 signals said CALL and 1 said PUT — not "agreement".
+        agreeing_count = sum(1 for r in results.values() if r.direction == direction)
+        if agreeing_count < 3:
+            return ConfluenceResult(
+                direction=None,
+                score=0.0,
+                breakdown={
+                    r.name: (r.direction, r.confidence) for r in results.values()
+                },
+                reason=(
+                    f"Only {agreeing_count} signal(s) agree on {direction} "
+                    f"(need ≥3 on the same side)"
+                ),
             )
 
         breakdown = {r.name: (r.direction, r.confidence) for r in results.values()}
