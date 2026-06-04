@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from pathlib import Path
+from typing import Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsError
@@ -17,7 +18,7 @@ class TradeMode(StrEnum):
 class BotSettings(BaseSettings):
     """All configuration loaded from .env or environment variables."""
 
-    # ── CDP ──
+    # ── CDP (legacy — kept for backward compat, not in live path) ──
     cdp_url: str = Field(default="http://localhost:9222", alias="CDP_URL")
 
     # ── Trading Mode ──
@@ -43,6 +44,27 @@ class BotSettings(BaseSettings):
     dry_run: bool = Field(default=True, alias="DRY_RUN")
     max_open_trades: int = Field(default=1, alias="MAX_OPEN_TRADES", ge=1)
     min_balance_multiplier: float = Field(default=5.0, alias="MIN_BALANCE_MULTIPLIER", ge=1.0)
+
+    # ── Telegram (Telethon user session) ──
+    # Optional: module imports cleanly without a .env present.
+    telegram_api_id: Optional[int] = Field(default=None, alias="TELEGRAM_API_ID")
+    telegram_api_hash: Optional[str] = Field(default=None, alias="TELEGRAM_API_HASH")
+    telegram_phone: Optional[str] = Field(default=None, alias="TELEGRAM_PHONE")
+    telegram_session: str = Field(default="po_session", alias="TELEGRAM_SESSION")
+    signal_bot_username: str = Field(default="po_broker_bot", alias="SIGNAL_BOT_USERNAME")
+
+    # ── PocketOption WS API ──
+    # Full 42["auth",{...}] string copied from browser; demo/live encoded in it.
+    po_ssid: str = Field(default="", alias="PO_SSID")
+
+    # ── Gating thresholds ──
+    min_channel_win_rate: float = Field(
+        default=0.80, alias="MIN_CHANNEL_WIN_RATE", ge=0.0, le=1.0
+    )
+    min_tracked_win_rate: float = Field(
+        default=0.55, alias="MIN_TRACKED_WIN_RATE", ge=0.0, le=1.0
+    )
+    min_tracked_samples: int = Field(default=20, alias="MIN_TRACKED_SAMPLES", ge=1)
 
     @field_validator("trade_mode", mode="before")
     @classmethod
