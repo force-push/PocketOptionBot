@@ -60,6 +60,16 @@ class BotSettings(BaseSettings):
     # Full 42["auth",{...}] string copied from browser; demo/live encoded in it.
     po_ssid: str = Field(default="", alias="PO_SSID")
 
+    # ── v2 (Telebot evolution) ──
+    stake_amount: float = Field(default=1.5, alias="STAKE_AMOUNT", gt=0)
+    default_expiry_seconds: int = Field(default=30, alias="DEFAULT_EXPIRY_SECONDS", gt=0)
+    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 60, 120, 300)
+    # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
+    # set to 0.82 for real runs (the "82%" rule).
+    pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
+    click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
+    decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
+
     # ── Gating thresholds ──
     min_channel_win_rate: float = Field(
         default=0.80, alias="MIN_CHANNEL_WIN_RATE", ge=0.0, le=1.0
