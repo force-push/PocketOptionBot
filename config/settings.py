@@ -2,8 +2,9 @@
 
 from enum import StrEnum
 from pathlib import Path
+from typing import Optional
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsError
 
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -17,7 +18,7 @@ class TradeMode(StrEnum):
 class BotSettings(BaseSettings):
     """All configuration loaded from .env or environment variables."""
 
-    # ── CDP ──
+    # ── CDP (legacy — kept for backward compat, not in live path) ──
     cdp_url: str = Field(default="http://localhost:9222", alias="CDP_URL")
 
     # ── Trading Mode ──
@@ -44,6 +45,40 @@ class BotSettings(BaseSettings):
     max_open_trades: int = Field(default=1, alias="MAX_OPEN_TRADES", ge=1)
     min_balance_multiplier: float = Field(default=5.0, alias="MIN_BALANCE_MULTIPLIER", ge=1.0)
 
+    # ── Telegram (Telethon user session) ──
+    # Optional: module imports cleanly without a .env present.
+    telegram_api_id: Optional[int] = Field(default=None, alias="TELEGRAM_API_ID")
+    telegram_api_hash: Optional[str] = Field(default=None, alias="TELEGRAM_API_HASH")
+    telegram_phone: Optional[str] = Field(default=None, alias="TELEGRAM_PHONE")
+    telegram_session: str = Field(default="po_session", alias="TELEGRAM_SESSION")
+    # StringSession string — preferred over file session in cloud/headless envs.
+    # Generate with: python3 tools/gen_telegram_session.py
+    telegram_session_string: Optional[str] = Field(default=None, alias="TELEGRAM_SESSION_STRING")
+    signal_bot_username: str = Field(default="po_broker_bot", alias="SIGNAL_BOT_USERNAME")
+
+    # ── PocketOption WS API ──
+    # Full 42["auth",{...}] string copied from browser; demo/live encoded in it.
+    po_ssid: str = Field(default="", alias="PO_SSID")
+
+    # ── v2 (Telebot evolution) ──
+    stake_amount: float = Field(default=1.5, alias="STAKE_AMOUNT", gt=0)
+    default_expiry_seconds: int = Field(default=30, alias="DEFAULT_EXPIRY_SECONDS", gt=0)
+    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 60, 120, 300)
+    # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
+    # set to 0.82 for real runs (the "82%" rule).
+    pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
+    click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
+    decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
+
+    # ── Gating thresholds ──
+    min_channel_win_rate: float = Field(
+        default=0.80, alias="MIN_CHANNEL_WIN_RATE", ge=0.0, le=1.0
+    )
+    min_tracked_win_rate: float = Field(
+        default=0.55, alias="MIN_TRACKED_WIN_RATE", ge=0.0, le=1.0
+    )
+    min_tracked_samples: int = Field(default=20, alias="MIN_TRACKED_SAMPLES", ge=1)
+
     @field_validator("trade_mode", mode="before")
     @classmethod
     def _force_demo_if_unset(cls, v):
@@ -54,10 +89,11 @@ class BotSettings(BaseSettings):
             raise SettingsError(f"Invalid TRADE_MODE: {v!r}. Must be DEMO or LIVE.")
         return TradeMode(mode)
 
-    class Config:
-        env_file = _PROJECT_ROOT / ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # Allow extra env vars without error
+    model_config = ConfigDict(
+        env_file=_PROJECT_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",  # allow extra env vars without error
+    )
 
     def __init__(self, **data):
         super().__init__(**data)
