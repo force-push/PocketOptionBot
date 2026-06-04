@@ -57,9 +57,10 @@ def _build_components():
     )
 
     # ── PocketOption API client ───────────────────────────────────────────────
+    # demo mode is encoded in the SSID and enforced inside the client via the
+    # demo guard — no separate flag needed here.
     api_client = PocketOptionAPIClient(
         ssid=settings.po_ssid,
-        demo=(settings.trade_mode == TradeMode.DEMO),
         dry_run=settings.dry_run,
     )
 
