@@ -41,7 +41,7 @@ def _build_components():
     from signals.bollinger import BollingerSignal
     from signals.candle_pattern import CandlePatternSignal
     from signals.confluence import ConfluenceEngine
-    from signals.ema_cross import EMACrossSignal
+    from signals.ema_cross import EMASignal
     from signals.macd import MACDSignal
     from signals.rsi import RSISignal
     from strategy.risk import RiskManager
@@ -69,7 +69,7 @@ def _build_components():
         RSISignal(period=14),
         MACDSignal(),
         BollingerSignal(),
-        EMACrossSignal(fast=9, slow=21),
+        EMASignal(fast=9, slow=21),
         CandlePatternSignal(),
     ]
     confluence = ConfluenceEngine(signals)
