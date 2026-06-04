@@ -89,6 +89,16 @@ class BotSettings(BaseSettings):
             raise SettingsError(f"Invalid TRADE_MODE: {v!r}. Must be DEMO or LIVE.")
         return TradeMode(mode)
 
+    @field_validator("telegram_session", mode="before")
+    @classmethod
+    def _expand_session_path(cls, v):
+        # Telethon does NOT expand ~ in session paths; expand it here so a path
+        # like ~/.telebot/telegram.session resolves instead of creating a literal
+        # "~" file (which would trigger a fresh, interactive auth).
+        if isinstance(v, str) and v.startswith("~"):
+            return str(Path(v).expanduser())
+        return v
+
     model_config = ConfigDict(
         env_file=_PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
