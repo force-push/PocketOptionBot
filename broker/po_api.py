@@ -120,6 +120,11 @@ class PocketOptionAPIClient:
                 "PO_SSID must be set in .env before connecting to the API."
             )
         self._client = PocketOptionAsync(self._ssid)
+        # wait_for_assets() blocks until the WebSocket handshake is complete and
+        # the server has sent the asset list. Without this, get_candles() hangs
+        # indefinitely because the Rust backend waits for initialization internally.
+        log.info("Waiting for PocketOption WebSocket assets (up to 60s)…")
+        await self._client.wait_for_assets(timeout=60.0)
         # Validate SSID using API-native methods immediately after construction
         try:
             if not self._client.is_ssid_valid():
@@ -129,7 +134,7 @@ class PocketOptionAPIClient:
                 )
             demo_flag = self._client.is_demo()
             log.info(
-                "PocketOptionAPIClient connected — is_demo=%s dry_run=%s",
+                "PocketOptionAPIClient connected — is_demo={} dry_run={}",
                 demo_flag, self._dry_run,
             )
         except AttributeError:
@@ -365,16 +370,20 @@ class PocketOptionAPIClient:
 
         Args:
             pair:   Asset symbol, e.g. "EURUSD_otc".
-            period: Candle period in seconds (e.g. 60 for 1-minute candles).
-            count:  Number of candles to fetch (used as the offset/limit).
+            period: Candle timeframe in seconds (1, 5, 15, 30, 60, 300).
+            count:  Number of candles to fetch. Converted to ``offset`` (seconds
+                    of history = count * period) for the library call.
 
         Returns list of candle dicts as returned by the library.
         Empty list on error.
         """
         if self._client is None:
             raise RuntimeError("API client not connected.")
+        # The library's get_candles(asset, period, offset) takes 'offset' as
+        # the historical window in seconds, not a candle count.
+        offset_seconds = count * period
         try:
-            candles = await self._client.get_candles(pair, period, count)
+            candles = await self._client.get_candles(pair, period, offset_seconds)
             return list(candles)
         except Exception as exc:
             log.error("get_candles({}) failed: {}", pair, exc)

@@ -63,7 +63,11 @@ Key settings groups:
 - **Telegram (Telethon user session):** `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`,
   `TELEGRAM_SESSION`, `SIGNAL_BOT_USERNAME` (default `po_broker_bot`).
 - **PocketOption WS API:** `PO_SSID` (the full `42["auth",{...}]` string copied
-  from the browser; demo/live is encoded in it).
+  from the **trading terminal's** WebSocket — DevTools → Network → Socket →
+  Messages, the outgoing `auth` frame). It must contain `session` and `uid`
+  fields; `isDemo` (0/1) inside the payload selects demo vs live. The homepage
+  socket emits a different `sessionToken` frame — that one is **not** accepted by
+  `binaryoptionstoolsv2`.
 - **v2 gate settings:** `PAIR_SELECT_MIN_WIN_RATE` (default `0.0` = disabled
   during testing; set to `0.82` for real runs), `DEFAULT_EXPIRY_SECONDS` (30),
   `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (1.50).
@@ -129,7 +133,12 @@ po_broker_bot (Telegram)
 - **`broker/po_api.py`** — `PocketOptionAPIClient` wraps
   `binaryoptionstoolsv2.PocketOptionAsync(ssid)`. Exposes `buy/sell(pair, amount,
   expiry)`, `check_win(trade_id)`, `balance()`, `get_candles(pair, period, count)`.
-  **Critical safety function:** enforces the demo guard using the API-native
+  `connect()` **must** await `wait_for_assets()` after constructing the client —
+  the Rust backend initialises the WebSocket lazily, so skipping this makes the
+  first `get_candles()` hang indefinitely. `get_candles(pair, period, count)`
+  takes a candle **count** for our callers but converts it to the library's
+  `offset` arg (historical seconds = `count * period`). **Critical safety
+  function:** enforces the demo guard using the API-native
   `is_demo()`/`is_ssid_valid()` methods (with SSID-string fallback); if SSID is
   live but `TRADE_MODE=DEMO`, the trade is **aborted** (fail-closed). Honors
   `DRY_RUN` (log, skip API call).
