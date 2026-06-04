@@ -78,7 +78,7 @@ class SignalGate:
             return GateResult(passed=False, reason=reason)
 
         log.debug(
-            "Gate 1 PASS: stated win rate %.1%", signal.stated_win_rate
+            "Gate 1 PASS: stated win rate %s", f"{signal.stated_win_rate:.1%}"
         )
 
         # ── Gate 2: tracked win rate ─────────────────────────────────────────
