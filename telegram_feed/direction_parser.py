@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_DIR_RE = re.compile(r"direction\s*[:\-]?\s*[^A-Za-z]*(buy|sell)", re.IGNORECASE | re.DOTALL)
+_DIR_RE = re.compile(r"direction\s*[:\-]?\s*[^A-Za-z]*(buy|sell)", re.IGNORECASE)
 _BULL_RE = re.compile(r"bullish", re.IGNORECASE)
 _BEAR_RE = re.compile(r"bearish", re.IGNORECASE)
 _IND_RE = re.compile(r"(MACD|RSI|EMA|Bollinger|momentum|overbought|oversold)", re.IGNORECASE)
@@ -27,6 +27,6 @@ def parse_direction_screen(text: str) -> DirectionScreen | None:
     direction = "CALL" if word == "buy" else "PUT"
     setup = "bullish" if _BULL_RE.search(text) else "bearish" if _BEAR_RE.search(text) else "unknown"
     ind_lines = [ln.strip() for ln in text.splitlines()
-                 if _IND_RE.search(ln) and "direction" not in ln.lower()]
+                 if _IND_RE.search(ln) and not _DIR_RE.search(ln)]
     return DirectionScreen(direction=direction, setup=setup,
                            indicators_raw=" ".join(ind_lines).strip())
