@@ -120,9 +120,55 @@ class PocketOptionAPIClient:
                 "PO_SSID must be set in .env before connecting to the API."
             )
         self._client = PocketOptionAsync(self._ssid)
-        log.info("PocketOptionAPIClient connected (dry_run=%s)", self._dry_run)
+        # Validate SSID using API-native methods immediately after construction
+        try:
+            if not self._client.is_ssid_valid():
+                raise RuntimeError(
+                    "PocketOption API reports SSID is invalid or expired. "
+                    "Refresh PO_SSID in .env and restart."
+                )
+            demo_flag = self._client.is_demo()
+            log.info(
+                "PocketOptionAPIClient connected — is_demo=%s dry_run=%s",
+                demo_flag, self._dry_run,
+            )
+        except AttributeError:
+            # Library version does not expose these methods — fall back to SSID parsing
+            log.info("PocketOptionAPIClient connected (dry_run=%s)", self._dry_run)
 
     # ── demo guard ───────────────────────────────────────────────────────────
+
+    def _resolve_is_demo(self) -> Optional[bool]:
+        """Determine whether the active session is a demo account.
+
+        Priority:
+        1. API-native ``is_ssid_valid()`` + ``is_demo()`` — authoritative when
+           the client is connected and the library exposes these sync methods.
+        2. SSID string decode (``_parse_ssid_is_demo``) — fallback for
+           pre-connection guard checks, when methods are absent, or when the
+           client is a test mock (AsyncMock returns coroutines, not bools).
+        """
+        import inspect
+
+        if self._client is not None:
+            try:
+                valid = self._client.is_ssid_valid()
+                # Guard against AsyncMock returning a coroutine instead of bool
+                if inspect.iscoroutine(valid):
+                    valid.close()  # prevent ResourceWarning
+                    raise AttributeError("is_ssid_valid appears to be async")
+                if not valid:
+                    log.warning("is_ssid_valid() returned False — SSID may be expired")
+                    return None  # treat invalid SSID as indeterminate → fail closed
+                demo = self._client.is_demo()
+                if inspect.iscoroutine(demo):
+                    demo.close()
+                    raise AttributeError("is_demo appears to be async")
+                return bool(demo)
+            except Exception as exc:
+                log.debug("API-native is_demo() unavailable (%s); using SSID fallback", exc)
+        # Fallback: decode from the raw SSID string
+        return _parse_ssid_is_demo(self._ssid)
 
     def _check_demo_guard(self, direction: str, pair: str, amount: float, expiry: int) -> Optional[TradeResult]:
         """Enforce demo/live mode consistency.
@@ -133,7 +179,7 @@ class PocketOptionAPIClient:
         PocketOptionAPIClient._counter += 1
         trade_id_prefix = f"guard_{PocketOptionAPIClient._counter}"
 
-        ssid_is_demo = _parse_ssid_is_demo(self._ssid)
+        ssid_is_demo = self._resolve_is_demo()
 
         if settings.trade_mode == TradeMode.DEMO:
             # If we cannot determine the SSID mode, fail closed
