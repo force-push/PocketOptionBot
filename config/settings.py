@@ -51,6 +51,9 @@ class BotSettings(BaseSettings):
     telegram_api_hash: Optional[str] = Field(default=None, alias="TELEGRAM_API_HASH")
     telegram_phone: Optional[str] = Field(default=None, alias="TELEGRAM_PHONE")
     telegram_session: str = Field(default="po_session", alias="TELEGRAM_SESSION")
+    # StringSession string — preferred over file session in cloud/headless envs.
+    # Generate with: python3 tools/gen_telegram_session.py
+    telegram_session_string: Optional[str] = Field(default=None, alias="TELEGRAM_SESSION_STRING")
     signal_bot_username: str = Field(default="po_broker_bot", alias="SIGNAL_BOT_USERNAME")
 
     # ── PocketOption WS API ──

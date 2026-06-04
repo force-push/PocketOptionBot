@@ -15,11 +15,13 @@ from utils.logger import log
 # Lazy import guard — Telethon may not be installed in all environments
 try:
     from telethon import TelegramClient, events as tg_events  # type: ignore[import]
+    from telethon.sessions import StringSession  # type: ignore[import]
     _TELETHON_AVAILABLE = True
 except ImportError:
     _TELETHON_AVAILABLE = False
-    TelegramClient = None  # type: ignore[assignment,misc]
-    tg_events = None  # type: ignore[assignment]
+    TelegramClient = None   # type: ignore[assignment,misc]
+    tg_events = None        # type: ignore[assignment]
+    StringSession = None    # type: ignore[assignment,misc]
 
 
 class TelegramSignalFeed:
@@ -44,6 +46,7 @@ class TelegramSignalFeed:
         self._api_hash = api_hash or settings.telegram_api_hash
         self._phone = phone or settings.telegram_phone
         self._session_name = session_name or settings.telegram_session
+        self._session_string = settings.telegram_session_string  # preferred in cloud
         self._signal_bot_username = signal_bot_username or settings.signal_bot_username
 
         # Public queue — consumers read raw message text from here
@@ -76,8 +79,17 @@ class TelegramSignalFeed:
             self._signal_bot_username,
         )
 
+        # Prefer StringSession (portable, no file needed — good for cloud envs).
+        # Fall back to a named file session for local use.
+        if self._session_string and StringSession is not None:
+            session = StringSession(self._session_string)
+            log.info("Using StringSession (cloud mode)")
+        else:
+            session = self._session_name
+            log.info("Using file session: %s.session", self._session_name)
+
         client = TelegramClient(
-            self._session_name,
+            session,
             self._api_id,
             self._api_hash,
         )
