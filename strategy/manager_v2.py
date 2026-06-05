@@ -183,7 +183,8 @@ class StrategyManagerV2:
             expiry, d.combined_probability, row.trade_id,
         )
 
-        await self._nav.back_to_menu()
+        # Schedule menu navigation in background (don't block main loop)
+        asyncio.create_task(self._nav.back_to_menu())
 
         # Schedule background resolution instead of blocking
         if row.trade_id:
