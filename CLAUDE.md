@@ -73,7 +73,8 @@ Key settings groups:
   `binaryoptionstoolsv2`.
 - **v2 gate settings:** `PAIR_SELECT_MIN_WIN_RATE` (default `0.0` = disabled
   during testing; set to `0.82` for real runs), `DEFAULT_EXPIRY_SECONDS` (30),
-  `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (1.50).
+  `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (default
+  `3.00`, live-editable in dashboard without restart).
 - **TA thresholds:** `MIN_SIGNAL_AGREEMENT` (default `2` — how many of 5 signals must
   agree), `MIN_CONFLUENCE_SCORE` (default `0.40`, adaptive based on agreement count),
   `CANDLE_INTERVAL_SECONDS` (default `5` seconds — decoupled from expiry).
@@ -232,7 +233,12 @@ live trade data from `data/decisions.jsonl` and `data/live_state.json`. Key feat
   - Our TA direction + confidence scores
   - Outcome, P&L, balance after, PO trade ID
 - **Settings tab:** Live-editable configuration (Pydantic BotSettings singleton),
-  persists to `.env` via python-dotenv.
+  persists to `.env` via python-dotenv. Key settings:
+  - **Signal gates:** MIN_SIGNAL_AGREEMENT (2–5), MIN_CONFLUENCE_SCORE (0.0–1.0)
+  - **Trading:** STAKE_AMOUNT ($0.50–$50.00), DEFAULT_EXPIRY_SECONDS, PAIR_SELECT_MIN_WIN_RATE
+  - **TA parameters:** All signal thresholds (RSI, MACD, Bollinger, EMA, etc.)
+  - **Risk limits:** MAX_TRADES_PER_HOUR, MAX_DAILY_LOSS_USD, COOLDOWN_AFTER_LOSS_SECONDS
+  - Changes take effect on next trade (no restart needed for most settings).
 
 ## Conventions
 
