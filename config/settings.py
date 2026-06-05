@@ -40,7 +40,9 @@ class BotSettings(BaseSettings):
     )
     # Minimum number of signals that must agree on the same direction.
     # Separate from the score floor: both gates must pass independently.
-    min_signal_agreement: int = Field(default=3, alias="MIN_SIGNAL_AGREEMENT", ge=1, le=5)
+    # Set to 2 during initial calibration so trades reach execution and
+    # real outcomes can inform threshold tuning. Raise to 3+ for stricter entries.
+    min_signal_agreement: int = Field(default=2, alias="MIN_SIGNAL_AGREEMENT", ge=1, le=5)
     max_trades_per_hour: int = Field(default=10, alias="MAX_TRADES_PER_HOUR", ge=1)
     max_daily_loss_usd: float = Field(default=20.0, alias="MAX_DAILY_LOSS_USD", ge=0)
     # Candle resolution fed to TA signals. Deliberately decoupled from the trade
