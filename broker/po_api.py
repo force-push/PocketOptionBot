@@ -348,7 +348,20 @@ class PocketOptionAPIClient:
         if self._client is None:
             raise RuntimeError("API client not connected.")
         result = await self._client.check_win(trade_id)
-        return str(result).lower()
+        # The library returns a dict with trade details; extract the 'result' field
+        if isinstance(result, dict):
+            result_str = result.get("result", str(result)).lower()
+        else:
+            result_str = str(result).lower()
+        # Normalize to 'win'/'loss'/'draw'
+        if "loss" in result_str or "lose" in result_str:
+            return "loss"
+        elif "win" in result_str:
+            return "win"
+        elif "draw" in result_str or "tie" in result_str:
+            return "draw"
+        else:
+            return result_str
 
     async def balance(self) -> Optional[float]:
         """Return the current account balance, or None on error."""
