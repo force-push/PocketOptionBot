@@ -79,6 +79,14 @@ class BotSettings(BaseSettings):
     )
     min_tracked_samples: int = Field(default=20, alias="MIN_TRACKED_SAMPLES", ge=1)
 
+    # ── Dashboard (read-mostly web UI; off by default, no behavioural impact) ──
+    dashboard_enabled: bool = Field(default=False, alias="DASHBOARD_ENABLED")
+    dashboard_host: str = Field(default="127.0.0.1", alias="DASHBOARD_HOST")
+    dashboard_port: int = Field(default=8787, alias="DASHBOARD_PORT", ge=1, le=65535)
+    dashboard_token: Optional[str] = Field(default=None, alias="DASHBOARD_TOKEN")
+    live_state_path: str = Field(default="data/live_state.json", alias="LIVE_STATE_PATH")
+    events_log_path: str = Field(default="data/events.jsonl", alias="EVENTS_LOG_PATH")
+
     @field_validator("trade_mode", mode="before")
     @classmethod
     def _force_demo_if_unset(cls, v):

@@ -2,7 +2,8 @@
 """Telebot-evolution orchestrator: navigate → parse → TA → decide → API → record."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 
 from config.settings import settings
 from data.candles import candles_to_df
@@ -18,12 +19,17 @@ _cycle_counter = 0
 
 
 class StrategyManagerV2:
-    def __init__(self, navigator, api_client, confluence_engine, risk_manager, tracker):
+    def __init__(self, navigator, api_client, confluence_engine, risk_manager, tracker,
+                 bridge=None):
         self._nav = navigator
         self._api = api_client
         self._conf = confluence_engine
         self._risk = risk_manager
         self._tracker = tracker
+        # Optional dashboard StateBridge. All call sites are guarded by
+        # `if self._bridge:` and the bridge itself never raises (fail-closed),
+        # so trading behaviour is unchanged when the dashboard is disabled.
+        self._bridge = bridge
 
     def _next_cycle_id(self) -> str:
         global _cycle_counter
@@ -74,6 +80,13 @@ class StrategyManagerV2:
                    our_score_floor=settings.min_confluence_score)
 
         balance_before = await self._api.balance()
+        if self._bridge:
+            self._bridge.heartbeat(
+                mode=settings.trade_mode.value, dry_run=settings.dry_run,
+                connected=True, balance=balance_before, currency="USD",
+                active=[], last_cycle={"cycle_id": cid, "status": "trading", "skip_reason": None},
+                risk_block_reason=None,
+            )
         row = DecisionRow(
             cycle_id=cid, pair_raw=top.pair_raw, pair_api=pair_api,
             bot_win_rate=top.win_rate, bot_is_top_pick=top.is_top,
@@ -89,6 +102,8 @@ class StrategyManagerV2:
 
         if not d.trade:
             write_decision(log_path, row)
+            if self._bridge:
+                self._bridge.on_decision(asdict(row))
             log.info("[{}] SKIP {}: {}", cid, pair_api, d.skip_reason)
             await self._nav.back_to_menu()
             return
@@ -96,6 +111,8 @@ class StrategyManagerV2:
         if not self._risk.is_allowed(balance_before):
             row.decision = "SKIP"; row.skip_reason = "risk_blocked"
             write_decision(log_path, row)
+            if self._bridge:
+                self._bridge.on_decision(asdict(row))
             log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
             await self._nav.back_to_menu()
             return
@@ -105,6 +122,18 @@ class StrategyManagerV2:
         row.trade_id = getattr(trade, "trade_id", None)
         row.status = getattr(trade, "status", "PENDING")
         write_decision(log_path, row)
+        if self._bridge:
+            _now = datetime.now(timezone.utc)
+            self._bridge.trade_opened({
+                "trade_id": row.trade_id, "pair_raw": top.pair_raw, "pair_api": pair_api,
+                "dir": dscreen.direction, "stake": settings.stake_amount,
+                "entry": getattr(trade, "entry", None),
+                "opened_at": _now.isoformat(),
+                "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
+                "expiry_seconds": expiry,
+                "confluence_n": len(conf.breakdown or {}),
+                "confluence_score": conf.score,
+            })
         log.info("[{}] TRADE {} {} @{:.2f} exp={}s id={}",
                  cid, dscreen.direction, pair_api, settings.stake_amount, expiry, row.trade_id)
 
@@ -121,4 +150,13 @@ class StrategyManagerV2:
             self._tracker.record(pair_api, dscreen.direction, expiry, outcome)
             risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
             self._risk.record_trade(dscreen.direction, settings.stake_amount, risk_result)
+            if self._bridge:
+                row.outcome = outcome
+                row.pnl = pnl if pnl is not None else 0.0
+                row.balance_after = balance_after
+                self._bridge.trade_resolved({
+                    **asdict(row),
+                    "result": outcome.lower() if isinstance(outcome, str) else outcome,
+                    "balance_after": balance_after,
+                })
             log.info("[{}] OUTCOME {} pnl={}", cid, outcome, pnl)
