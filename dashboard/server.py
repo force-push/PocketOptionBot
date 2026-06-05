@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -119,8 +120,23 @@ class Broadcaster:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="PocketOption Bot Dashboard", version="2.0")
     broadcaster = Broadcaster()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: start the file watcher
+        app.state._watch_task = asyncio.create_task(_watch_loop(app, broadcaster))
+        yield
+        # Shutdown: cancel the watcher task
+        task = getattr(app.state, "_watch_task", None)
+        if task:
+            task.cancel()
+
+    app = FastAPI(
+        title="PocketOption Bot Dashboard",
+        version="2.0",
+        lifespan=lifespan,
+    )
     app.state.broadcaster = broadcaster
 
     # ── auth helper ──────────────────────────────────────────────────────────
@@ -237,17 +253,6 @@ def create_app() -> FastAPI:
             pass
         finally:
             await broadcaster.unregister(ws)
-
-    # ── file watcher → broadcast deltas ───────────────────────────────────────
-    @app.on_event("startup")
-    async def _start_watcher() -> None:
-        app.state._watch_task = asyncio.create_task(_watch_loop(app, broadcaster))
-
-    @app.on_event("shutdown")
-    async def _stop_watcher() -> None:
-        task = getattr(app.state, "_watch_task", None)
-        if task:
-            task.cancel()
 
     # ── static files ──────────────────────────────────────────────────────────
     _mount_web(app)
