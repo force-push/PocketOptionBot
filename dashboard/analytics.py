@@ -326,6 +326,20 @@ def kpis(
 
     at_risk = round(sum(_num(a.get("stake")) or 0.0 for a in active_list), 6)
 
+    # Weekly profit projection: calculate P&L rate per minute, extrapolate to 7 days
+    weekly_projection = 0.0
+    if today_trades and today_pnl != 0.0:
+        # Find earliest and latest trade timestamp
+        timestamps = [_parse_ts(r) for r in today_trades]
+        timestamps = [t for t in timestamps if t is not None]
+        if len(timestamps) >= 2:
+            earliest = min(timestamps)
+            latest = max(timestamps)
+            elapsed_minutes = max((latest - earliest).total_seconds() / 60, 1)  # avoid div by zero
+            pnl_per_minute = today_pnl / elapsed_minutes
+            minutes_per_week = 7 * 24 * 60
+            weekly_projection = pnl_per_minute * minutes_per_week
+
     return {
         "today_pnl": round(today_pnl, 6),
         "today_pnl_pct": (round(today_pnl_pct, 8) if today_pnl_pct is not None else None),
@@ -339,6 +353,7 @@ def kpis(
         "traded": len(today_trades),
         "skipped": len(today_skips),
         "avg_confluence": round(avg_confluence, 6),
+        "weekly_projection": round(weekly_projection, 2),
     }
 
 

@@ -57,6 +57,7 @@ function initChips() {
   const wsChip = document.getElementById('chip-ws');
   const balChip = document.getElementById('chip-balance');
   const modeChip = document.getElementById('chip-mode');
+  const weeklyChip = document.getElementById('chip-weekly');
 
   store.subscribe('ws', (status) => {
     if (!wsChip) return;
@@ -78,6 +79,15 @@ function initChips() {
       modeChip.className = `chip ${live ? 'badge-live' : 'badge-demo'}`;
       modeChip.textContent = `● ${meta.mode}${meta.dry_run ? ' · DRY' : ''}`;
     }
+  });
+
+  store.subscribe('kpis', (kpis) => {
+    if (!weeklyChip) return;
+    const proj = kpis.weekly_projection || 0;
+    const sign = proj >= 0 ? '+' : '';
+    weeklyChip.querySelector('b').textContent = `${sign}${fmt.pnl(proj)}`;
+    const isPositive = proj > 0;
+    weeklyChip.style.color = isPositive ? 'var(--up)' : proj < 0 ? 'var(--down)' : 'var(--accent)';
   });
 }
 
