@@ -172,6 +172,32 @@
   .pair { font-weight: 600; }
   .pair .otc { color: var(--tx-2); font-weight: 500; font-size: 10px; margin-left: 3px; }
 
+  /* History: symbol/color encodings for direction + result */
+  .dir-arrow { font-size: 10px; font-weight: 700; margin-right: 7px; }
+  .dir-arrow.call { color: var(--up); }
+  .dir-arrow.put { color: var(--down); }
+  .res-sym { font-weight: 800; font-size: 13px; }
+  .res-sym.win { color: var(--up); }
+  .res-sym.loss { color: var(--down); }
+  .res-sym.draw { color: var(--tx-2); }
+  #history-rows tr { cursor: default; }
+
+  /* Styled hover tooltip */
+  .tooltip {
+    position: fixed; z-index: 200; pointer-events: none;
+    min-width: 220px; padding: 11px 13px;
+    background: rgba(15,20,28,.97); border: 1px solid var(--stroke-2);
+    border-radius: var(--radius-sm); box-shadow: 0 12px 32px rgba(0,0,0,.55);
+    backdrop-filter: blur(6px);
+    opacity: 0; transform: translateY(3px); transition: opacity .12s, transform .12s;
+  }
+  .tooltip.show { opacity: 1; transform: translateY(0); }
+  .tooltip .tt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 9px; margin-bottom: 9px; border-bottom: 1px solid var(--stroke); }
+  .tooltip .tt-head b { font-size: 13px; }
+  .tooltip .tt-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 11.5px; }
+  .tooltip .tt-grid span { color: var(--tx-2); }
+  .tooltip .tt-grid b { text-align: right; font-weight: 600; }
+
   /* ---- Active trade cards ---- */
   .active-list { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
   .trade-card {
@@ -300,7 +326,7 @@
         <div class="panel-body">
           <table>
             <thead>
-              <tr><th>Time</th><th>Pair</th><th>Dir</th><th class="num">Stake</th><th>Result</th><th class="num">P&amp;L</th></tr>
+              <tr><th>Time</th><th>Pair</th><th class="num">Result</th></tr>
             </thead>
             <tbody id="history-rows"></tbody>
           </table>
@@ -450,32 +476,63 @@ document.querySelectorAll('.tab').forEach(t => {
    Sample data — shapes mirror DecisionRow (strategy/trade_logger.py)
    ============================================================ */
 const history = [
-  ['14:38:21','EUR/USD','otc','CALL',1.50,'win',  1.38],
-  ['14:36:02','GBP/USD','otc','PUT', 1.50,'loss',-1.50],
-  ['14:33:47','USD/JPY','',   'CALL',1.50,'win',  1.31],
-  ['14:31:10','AUD/CAD','otc','CALL',1.50,'win',  1.42],
-  ['14:28:55','EUR/GBP','otc','PUT', 1.50,'draw', 0.00],
-  ['14:26:33','USD/CHF','',   'PUT', 1.50,'win',  1.36],
-  ['14:24:08','GBP/JPY','otc','CALL',1.50,'loss',-1.50],
-  ['14:21:44','NZD/USD','otc','CALL',1.50,'win',  1.40],
-  ['14:19:20','EUR/JPY','',   'PUT', 1.50,'win',  1.33],
-  ['14:16:59','USD/CAD','otc','PUT', 1.50,'loss',-1.50],
-  ['14:14:31','AUD/USD','otc','CALL',1.50,'win',  1.39],
-  ['14:12:05','EUR/USD','otc','PUT', 1.50,'win',  1.41],
+  {t:'14:38:21',pair:'EUR/USD',otc:'otc',dir:'CALL',stake:1.50,res:'win', pnl: 1.38,exp:30,conf:0.84,botWr:0.86,entry:'1.07432'},
+  {t:'14:36:02',pair:'GBP/USD',otc:'otc',dir:'PUT', stake:1.50,res:'loss',pnl:-1.50,exp:30,conf:0.79,botWr:0.83,entry:'1.26901'},
+  {t:'14:33:47',pair:'USD/JPY',otc:'',   dir:'CALL',stake:1.50,res:'win', pnl: 1.31,exp:60,conf:0.81,botWr:0.85,entry:'157.214'},
+  {t:'14:31:10',pair:'AUD/CAD',otc:'otc',dir:'CALL',stake:1.50,res:'win', pnl: 1.42,exp:30,conf:0.88,botWr:0.84,entry:'0.90112'},
+  {t:'14:28:55',pair:'EUR/GBP',otc:'otc',dir:'PUT', stake:1.50,res:'draw',pnl: 0.00,exp:30,conf:0.76,botWr:0.82,entry:'0.84330'},
+  {t:'14:26:33',pair:'USD/CHF',otc:'',   dir:'PUT', stake:1.50,res:'win', pnl: 1.36,exp:60,conf:0.83,botWr:0.87,entry:'0.89744'},
+  {t:'14:24:08',pair:'GBP/JPY',otc:'otc',dir:'CALL',stake:1.50,res:'loss',pnl:-1.50,exp:30,conf:0.77,botWr:0.84,entry:'199.041'},
+  {t:'14:21:44',pair:'NZD/USD',otc:'otc',dir:'CALL',stake:1.50,res:'win', pnl: 1.40,exp:30,conf:0.85,botWr:0.83,entry:'0.61208'},
+  {t:'14:19:20',pair:'EUR/JPY',otc:'',   dir:'PUT', stake:1.50,res:'win', pnl: 1.33,exp:60,conf:0.80,botWr:0.86,entry:'169.512'},
+  {t:'14:16:59',pair:'USD/CAD',otc:'otc',dir:'PUT', stake:1.50,res:'loss',pnl:-1.50,exp:30,conf:0.78,botWr:0.82,entry:'1.37004'},
+  {t:'14:14:31',pair:'AUD/USD',otc:'otc',dir:'CALL',stake:1.50,res:'win', pnl: 1.39,exp:30,conf:0.86,botWr:0.85,entry:'0.65118'},
+  {t:'14:12:05',pair:'EUR/USD',otc:'otc',dir:'PUT', stake:1.50,res:'win', pnl: 1.41,exp:60,conf:0.82,botWr:0.84,entry:'1.07401'},
 ];
-document.getElementById('history-rows').innerHTML = history.map(r => {
-  const [t,pair,otc,dir,stake,res,pnl] = r;
-  const pnlCls = pnl > 0 ? 'up' : (pnl < 0 ? 'down' : 'muted');
-  const pnlTxt = pnl > 0 ? '+$'+pnl.toFixed(2) : (pnl < 0 ? '-$'+Math.abs(pnl).toFixed(2) : '$0.00');
-  return `<tr>
-    <td class="mono muted">${t}</td>
-    <td><span class="pair">${pair}${otc?`<span class="otc">${otc}</span>`:''}</span></td>
-    <td><span class="pill ${dir.toLowerCase()}">${dir}</span></td>
-    <td class="num">$${stake.toFixed(2)}</td>
-    <td><span class="pill ${res}">${res.toUpperCase()}</span></td>
-    <td class="num ${pnlCls}">${pnlTxt}</td>
-  </tr>`;
-}).join('');
+const dirSym = d => d === 'CALL' ? '▲' : '▼';
+const resSym = r => r === 'win' ? '✓' : (r === 'loss' ? '✗' : '–');
+const pnlText = p => p > 0 ? '+$'+p.toFixed(2) : (p < 0 ? '-$'+Math.abs(p).toFixed(2) : '$0.00');
+const pnlClass = p => p > 0 ? 'up' : (p < 0 ? 'down' : 'muted');
+document.getElementById('history-rows').innerHTML = history.map((h,i) => `<tr data-i="${i}">
+    <td class="mono muted">${h.t}</td>
+    <td><span class="dir-arrow ${h.dir.toLowerCase()}" title="${h.dir}">${dirSym(h.dir)}</span><span class="pair">${h.pair}${h.otc?`<span class="otc">${h.otc}</span>`:''}</span></td>
+    <td class="num"><span class="res-sym ${h.res}">${resSym(h.res)}</span><span class="${pnlClass(h.pnl)}" style="margin-left:7px">${pnlText(h.pnl)}</span></td>
+  </tr>`).join('');
+
+/* Styled hover tooltip — one shared element, follows the cursor */
+(function historyTooltip(){
+  const tip = document.createElement('div');
+  tip.className = 'tooltip';
+  document.body.appendChild(tip);
+  const tbody = document.getElementById('history-rows');
+  tbody.addEventListener('mouseover', e => {
+    const tr = e.target.closest('tr'); if(!tr) return;
+    const h = history[+tr.dataset.i];
+    const rc = h.res === 'win' ? 'up' : (h.res === 'loss' ? 'down' : 'muted');
+    tip.innerHTML = `
+      <div class="tt-head"><b>${h.pair}${h.otc?' '+h.otc.toUpperCase():''}</b><span class="pill ${h.dir.toLowerCase()}">${dirSym(h.dir)} ${h.dir}</span></div>
+      <div class="tt-grid">
+        <span>Time</span><b class="mono">${h.t}</b>
+        <span>Result</span><b class="${rc}">${h.res.toUpperCase()}</b>
+        <span>P&amp;L</span><b class="mono ${pnlClass(h.pnl)}">${pnlText(h.pnl)}</b>
+        <span>Stake</span><b class="mono">$${h.stake.toFixed(2)}</b>
+        <span>Expiry</span><b class="mono">${h.exp}s</b>
+        <span>Our confluence</span><b class="mono">${h.conf.toFixed(2)}</b>
+        <span>Bot win rate</span><b class="mono">${(h.botWr*100).toFixed(0)}%</b>
+        <span>Entry price</span><b class="mono">${h.entry}</b>
+      </div>`;
+    tip.classList.add('show');
+  });
+  tbody.addEventListener('mousemove', e => {
+    const pad = 16;
+    let x = e.clientX - tip.offsetWidth - pad;        // prefer left of cursor (history is on the right edge)
+    if (x < 8) x = e.clientX + pad;
+    let y = e.clientY + pad;
+    if (y + tip.offsetHeight > window.innerHeight - 8) y = window.innerHeight - tip.offsetHeight - 8;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  });
+  tbody.addEventListener('mouseleave', () => tip.classList.remove('show'));
+})();
 
 /* Active trades */
 const active = [
