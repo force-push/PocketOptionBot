@@ -2,6 +2,7 @@
 """Telebot-evolution orchestrator: navigate → parse → TA → decide → API → record."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
@@ -30,6 +31,8 @@ class StrategyManagerV2:
         # `if self._bridge:` and the bridge itself never raises (fail-closed),
         # so trading behaviour is unchanged when the dashboard is disabled.
         self._bridge = bridge
+        # Background trade resolver: maps trade_id → (log_path, row, expires_at)
+        self._open_trades: dict = {}
 
     def _next_cycle_id(self) -> str:
         global _cycle_counter
@@ -182,25 +185,61 @@ class StrategyManagerV2:
 
         await self._nav.back_to_menu()
 
+        # Schedule background resolution instead of blocking
         if row.trade_id:
-            outcome = await self._api.check_win(row.trade_id)
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=expiry)
+            self._open_trades[row.trade_id] = {
+                "log_path": log_path,
+                "row": row,
+                "balance_before": balance_before,
+                "expires_at": expires_at,
+            }
+            # Start background resolver (non-blocking)
+            asyncio.create_task(self._resolve_trade_background(row.trade_id))
+
+    async def _resolve_trade_background(self, trade_id: str) -> None:
+        """Background task: wait for trade expiry, check outcome, update decisions.jsonl."""
+        if trade_id not in self._open_trades:
+            return
+        try:
+            trade_info = self._open_trades[trade_id]
+            expires_at = trade_info["expires_at"]
+            row = trade_info["row"]
+            log_path = trade_info["log_path"]
+            balance_before = trade_info["balance_before"]
+
+            # Wait until trade expires
+            now = datetime.now(timezone.utc)
+            sleep_secs = max(0, (expires_at - now).total_seconds())
+            if sleep_secs > 0:
+                await asyncio.sleep(sleep_secs + 1)  # +1s buffer for API
+
+            # Check outcome and update
+            outcome = await self._api.check_win(trade_id)
             balance_after = await self._api.balance()
             pnl = (balance_after - balance_before) if (balance_after is not None and balance_before is not None) else None
-            backfill_outcome(log_path, trade_id=row.trade_id, outcome=outcome,
+
+            backfill_outcome(log_path, trade_id=trade_id, outcome=outcome,
                              pnl=pnl if pnl is not None else 0.0,
                              balance_before=balance_before, balance_after=balance_after,
                              pnl_currency="USD")
-            self._tracker.record(pair_api, dscreen.direction, expiry, outcome)
+            self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
             risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
-            self._risk.record_trade(dscreen.direction, settings.stake_amount, risk_result)
+            self._risk.record_trade(row.bot_direction, row.stake, risk_result)
+
+            # Notify dashboard
             if self._bridge:
-                row.outcome = outcome
-                row.pnl = pnl if pnl is not None else 0.0
-                row.balance_after = balance_after
                 self._bridge.trade_resolved({
                     **asdict(row),
                     "result": outcome.lower() if isinstance(outcome, str) else outcome,
                     "balance_after": balance_after,
                 })
+
             pnl_str = f"{pnl:+.2f}" if pnl is not None else "?"
-            log.info("[{}] OUTCOME {}  pnl={}  balance={}", cid, outcome.upper(), pnl_str, balance_after)
+            log.info("[{}] RESOLVED {}  pnl={}  balance={}", row.cycle_id, outcome.upper(), pnl_str, balance_after)
+
+        except Exception as e:
+            log.error(f"Background resolution failed for {trade_id}: {e}")
+        finally:
+            # Clean up
+            self._open_trades.pop(trade_id, None)

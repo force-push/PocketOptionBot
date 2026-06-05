@@ -46,6 +46,11 @@ async def test_one_cycle_trades_and_logs(tmp_path, monkeypatch):
                             risk_manager=risk, tracker=tracker)
     await mgr.run_once()
 
+    # Wait for background trade resolution
+    import asyncio
+    while mgr._open_trades:
+        await asyncio.sleep(0.1)
+
     api.buy.assert_awaited_once()
     rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
     assert rows[-1]["decision"] == "TRADE"
