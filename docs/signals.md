@@ -5,9 +5,10 @@
 Five signals feed into a `ConfluenceEngine` that produces a single CALL/PUT/None
 decision.  Two independent gates must both pass before a trade is taken:
 
-1. **Agreement gate** (`MIN_SIGNAL_AGREEMENT`, default 3) — at least N signals
-   must agree on the same non-None direction.
-2. **Score floor** (`MIN_CONFLUENCE_SCORE`, default 0.40) — the weighted sum of
+1. **Agreement gate** (`MIN_SIGNAL_AGREEMENT`, default **2/5**) — at least N signals
+   must agree on the same non-None direction.  Lowered to 2 for calibration so
+   trades execute and real outcomes inform tuning. Raise to 3+ for stricter entry.
+2. **Score floor** (`MIN_CONFLUENCE_SCORE`, default **0.40**) — the weighted sum of
    confidences for the winning direction must exceed this threshold.
 
 Both gates are tunable via `.env` / dashboard without a code change.

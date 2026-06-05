@@ -147,6 +147,11 @@ async def main(cycles: int = 0) -> None:
     """
     log.info("PocketOptionBot v2 starting — mode={} dry_run={} cycles={}",
              settings.trade_mode, settings.dry_run, cycles or "∞")
+    log.info("Signal gates: min_agreement={}/5  min_confluence_score={}",
+             settings.min_signal_agreement, settings.min_confluence_score)
+    log.info("TA config: candle_interval={}s  history_length={}  expiry={}s",
+             settings.candle_interval_seconds, settings.history_length,
+             settings.default_expiry_seconds)
 
     if settings.trade_mode == TradeMode.LIVE and not settings.dry_run:
         log.warning("⚠  LIVE mode active — real money at stake!")

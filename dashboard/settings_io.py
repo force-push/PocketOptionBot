@@ -59,7 +59,7 @@ GROUP_META: dict[str, dict] = {
     "Safety & Trade Mode": {"id": "safety", "title": "Safety & Trade Mode", "icon": "🛡️",
                             "subtitle": "Hard-defaults to DEMO. LIVE must be explicit.", "span2": True, "order": 0},
     "Signal Gate": {"id": "gate", "title": "Signal Gate", "icon": "🎯",
-                    "subtitle": "Entry thresholds — bot win rate & confluence score", "order": 1},
+                    "subtitle": "Gate 1: ≥N signals agree on direction | Gate 2: score ≥ floor", "order": 1},
     "TA Signals": {"id": "ta", "title": "TA Signal Parameters", "icon": "📊",
                    "subtitle": "Candle resolution + per-indicator thresholds. Restart required.", "order": 2},
     "Risk": {"id": "risk", "title": "Risk Manager", "icon": "⚖️",
