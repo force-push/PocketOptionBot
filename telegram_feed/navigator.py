@@ -22,7 +22,8 @@ except Exception:  # pragma: no cover - telethon optional at import time
         seconds = 0
 
 _NAG_MARKERS = ("tokens running low", "trade anyway")
-_DIR_MARKERS = ("direction:", "select trade amount", "setup detected")
+_STAKE_MARKERS = ("select trade amount", "select the stake amount")
+_DIR_MARKERS = ("direction:", "setup detected")
 
 
 def find_pair_button_text(button_texts: list[str], pair_api: str) -> str | None:
@@ -40,6 +41,12 @@ def is_nag_screen(text: str, button_texts: list[str]) -> bool:
     if any(m in low for m in _NAG_MARKERS):
         return True
     return any("trade anyway" in (b or "").lower() for b in button_texts)
+
+
+def is_stake_selection_screen(text: str) -> bool:
+    """Detect the stake amount selection screen (between direction and execution)."""
+    low = (text or "").lower()
+    return any(m in low for m in _STAKE_MARKERS)
 
 
 def is_direction_screen(text: str) -> bool:
@@ -84,13 +91,27 @@ class Navigator:
     async def start_autotrade(self) -> None:
         """Navigate to 'Start Autotrade' via Main Menu to reduce /start spam.
 
-        First tries to find the "Start Autotrade" button directly (we may already
-        be at Main Menu from the previous cycle's back_to_menu() call).
-        If not found, sends /start as a fallback to reset the bot state.
+        Handles three cases:
+        1. On stake selection screen → click Main Menu to go back
+        2. On Main Menu → click Start Autotrade directly
+        3. Elsewhere → send /start as fallback
+
         Waits 2 seconds before clicking to allow UI to fully render.
         """
-        # Try to find Start Autotrade button directly (natural flow from Main Menu)
         await asyncio.sleep(2)
+
+        # Check if we're on stake selection screen (stuck between direction and execution)
+        # If so, click Main Menu to escape
+        for msg in await self._recent(limit=5):
+            if is_stake_selection_screen(msg.text or ""):
+                log.debug("Detected stake selection screen — clicking Main Menu")
+                if await self._click(lambda x: "main menu" in x.lower(), limit=8):
+                    await asyncio.sleep(2)
+                    break
+                # If Main Menu not found, try /start
+                break
+
+        # Try to find Start Autotrade button directly (natural flow from Main Menu)
         for label in ("🚀 Start Autotrade", "Start Autotrade", "Start Trade"):
             if await self._click(lambda x, L=label: L in x):
                 await asyncio.sleep(3)
