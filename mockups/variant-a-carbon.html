@@ -130,7 +130,7 @@
      ============================================================ */
   .grid {
     display: grid; gap: 12px; padding: 12px 18px 18px;
-    grid-template-columns: 1.15fr 0.95fr 1.4fr;
+    grid-template-columns: 2fr 1fr 1fr;   /* Performance ½ · Active ¼ · History ¼ */
     flex: 1 1 auto; min-height: 0;
   }
   .panel {
@@ -294,8 +294,8 @@
     <!-- 3-column landscape grid -->
     <div class="grid">
 
-      <!-- COLUMN 1 — Trade History -->
-      <div class="panel">
+      <!-- RIGHT (¼) — Trade History -->
+      <div class="panel" style="order:3">
         <div class="panel-head"><h3>Trade History</h3><span class="count">resolved · 59</span></div>
         <div class="panel-body">
           <table>
@@ -307,16 +307,16 @@
         </div>
       </div>
 
-      <!-- COLUMN 2 — Active Trades -->
-      <div class="panel">
+      <!-- MIDDLE (¼) — Active Trades -->
+      <div class="panel" style="order:2">
         <div class="panel-head"><h3>Active Trades</h3><span class="count">3 open</span></div>
         <div class="panel-body">
           <div class="active-list" id="active-list"></div>
         </div>
       </div>
 
-      <!-- COLUMN 3 — Performance (chart + win/loss) -->
-      <div class="panel perf">
+      <!-- LEFT (½) — Performance (chart + win/loss) -->
+      <div class="panel perf" style="order:1">
         <div class="panel-head">
           <h3>Performance</h3>
           <div class="seg" style="margin-left:auto">
