@@ -36,14 +36,14 @@ export function initKpis(root) {
         <div class="sub">${kpis.wins}W · ${kpis.losses}L · ${kpis.draws}D</div>
       </div>
       <div class="kpi">
-        <div class="label">Active Trades</div>
-        <div class="val">${kpis.active_count}</div>
-        <div class="sub">${fmt.money(kpis.at_risk)} at risk</div>
+        <div class="label">Traded</div>
+        <div class="val">${kpis.traded}</div>
+        <div class="sub">today</div>
       </div>
       <div class="kpi">
-        <div class="label">Trades Today</div>
-        <div class="val">${kpis.trades_today}</div>
-        <div class="sub">${kpis.traded} traded · ${kpis.skipped} skipped</div>
+        <div class="label">Skipped</div>
+        <div class="val">${kpis.skipped}</div>
+        <div class="sub">today</div>
       </div>
       <div class="kpi ${confCls}">
         <div class="label">Avg Confluence</div>
