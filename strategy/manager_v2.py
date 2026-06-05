@@ -159,6 +159,11 @@ class StrategyManagerV2:
         write_decision(log_path, row)
         if self._bridge:
             _now = datetime.now(timezone.utc)
+            # Count how many signals actually agree on conf.direction (not total signals)
+            agreeing_signals = sum(
+                1 for sig_vals in (conf.breakdown or {}).values()
+                if sig_vals[0] == conf.direction  # sig_vals = (direction, confidence, reason)
+            )
             self._bridge.trade_opened({
                 "trade_id": row.trade_id, "pair_raw": top.pair_raw, "pair_api": pair_api,
                 "dir": dscreen.direction, "stake": settings.stake_amount,
@@ -166,7 +171,7 @@ class StrategyManagerV2:
                 "opened_at": _now.isoformat(),
                 "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
                 "expiry_seconds": expiry,
-                "confluence_n": len(conf.breakdown or {}),
+                "confluence_n": agreeing_signals,
                 "confluence_score": conf.score,
             })
         log.info(
