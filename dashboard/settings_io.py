@@ -76,7 +76,7 @@ FIELDS: list[_F] = [
     _F("TRADE_MODE", "trade_mode", "Safety & Trade Mode", "str", False, True, "Trade Mode", "mode"),
     _F("DRY_RUN", "dry_run", "Safety & Trade Mode", "bool", False, False, "Dry Run", "toggle",
        hint="Log trades without calling the API"),
-    _F("STAKE_AMOUNT", "stake_amount", "Safety & Trade Mode", "float", False, False, "Stake Amount (USD)", "number", step=0.5),
+    _F("STAKE_AMOUNT", "stake_amount", "Safety & Trade Mode", "float", False, True, "Stake Amount (USD)", "number", step=0.5, min=0.5, max=50.0),
     _F("DEFAULT_EXPIRY_SECONDS", "default_expiry_seconds", "Safety & Trade Mode", "int", False, False, "Default Expiry (s)", "number", step=1),
     # Telegram
     _F("TELEGRAM_API_ID", "telegram_api_id", "Telegram", "int", False, True, "API ID", "text"),
