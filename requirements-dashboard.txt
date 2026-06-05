@@ -1,0 +1,17 @@
+# Minimal dependencies to run ONLY the web dashboard (python3 -m dashboard.server).
+#
+# The dashboard reads the bot's output files (data/decisions.jsonl, live_state.json)
+# and serves the UI — it does NOT need the trading stack (playwright, telethon,
+# pandas, or the binaryoptionstoolsv2 Rust wheel). Use this for a fast local run.
+#
+#     pip install -r requirements-dashboard.txt
+#     python tools/dashboard_demo.py     # optional: seed demo data
+#     python -m dashboard.server         # http://127.0.0.1:8787
+#
+# To run the actual trading bot too, install the full requirements.txt instead.
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+watchfiles>=0.21
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
