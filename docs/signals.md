@@ -123,6 +123,19 @@ Trend-direction signal with two tiers — same design rationale as MACD.
 EMA's cap (0.55) is slightly lower than MACD's (0.60) because EMA crossovers on
 short timeframes are noisier, so the trend-bias signal is given a smaller weight.
 
+**Confidence weighting by gap:**
+Crossover confidence is calculated as `min(1.0, gap_pct × 100)` where `gap_pct` is
+the percentage gap between the EMAs relative to the slow EMA value. This means:
+
+- **Gap = 0.1 (0.01%)**: confidence ≈ 0.10 — strong, clean crossover
+- **Gap = 0.001 (0.0001%)**: confidence ≈ 0.001 → 0.00 when rounded — near-zero momentum
+
+A crossover with near-zero separation (e.g., fast=1.19497, slow=1.19498, gap=0.00001)
+indicates **almost no momentum** behind the trend change. This is likely floating-point
+noise or a brief kiss with immediate reversal, not a sustained trend. The algorithm
+correctly assigns ~0.0 confidence to such weak crossovers — trading them usually loses
+money.
+
 **Params:** `EMA_FAST` (9), `EMA_SLOW` (21).
 
 ---
