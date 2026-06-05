@@ -3,544 +3,61 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PocketOption Bot — Dashboard Mockup</title>
+<title>PocketOption Bot — Mockup Gallery</title>
 <style>
-  /* ============================================================
-     DESIGN TOKENS — "Carbon" professional trading theme
-     ============================================================ */
-  :root {
-    /* surfaces */
-    --bg-0: #0a0e14;        /* app background */
-    --bg-1: #0f141c;        /* panel background */
-    --bg-2: #151c26;        /* raised / row hover */
-    --bg-3: #1c2530;        /* inputs, chips */
-    --stroke: #1e2733;      /* hairline borders */
-    --stroke-2: #2a3543;    /* stronger borders */
-
-    /* text */
-    --tx-0: #e6edf3;        /* primary */
-    --tx-1: #9fb0c0;        /* secondary */
-    --tx-2: #5f7283;        /* muted / labels */
-
-    /* semantic */
-    --up: #16c784;          /* win / call / profit */
-    --up-dim: rgba(22,199,132,.12);
-    --down: #ea3943;        /* loss / put / drawdown */
-    --down-dim: rgba(234,57,67,.12);
-    --warn: #f0a020;
-    --accent: #2dd4bf;      /* teal accent — the "modern edge" */
-    --accent-2: #6366f1;    /* indigo secondary accent */
-
-    --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", ui-monospace, Menlo, monospace;
-    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    --radius: 10px;
-    --radius-sm: 7px;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    background:
-      radial-gradient(1200px 600px at 80% -10%, rgba(45,212,191,.06), transparent 60%),
-      radial-gradient(900px 500px at -5% 110%, rgba(99,102,241,.05), transparent 55%),
-      var(--bg-0);
-    color: var(--tx-0);
-    font-family: var(--sans);
-    font-size: 13px;
-    -webkit-font-smoothing: antialiased;
-    overflow: hidden;
-  }
-  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  .up { color: var(--up); }
-  .down { color: var(--down); }
-  .muted { color: var(--tx-2); }
-
-  /* ============================================================
-     APP SHELL
-     ============================================================ */
-  .app { display: flex; flex-direction: column; height: 100vh; }
-
-  /* ---- Top bar ---- */
-  .topbar {
-    display: flex; align-items: center; gap: 18px;
-    height: 54px; padding: 0 18px;
-    background: linear-gradient(180deg, rgba(21,28,38,.9), rgba(15,20,28,.9));
-    border-bottom: 1px solid var(--stroke);
-    backdrop-filter: blur(8px);
-    flex: 0 0 auto;
-  }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: .2px; }
-  .brand .logo {
-    width: 26px; height: 26px; border-radius: 7px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: grid; place-items: center; color: #06121a; font-weight: 800; font-size: 14px;
-    box-shadow: 0 0 18px rgba(45,212,191,.35);
-  }
-  .brand small { color: var(--tx-2); font-weight: 500; font-size: 11px; }
-
-  /* ---- Nav tabs ---- */
-  .tabs { display: flex; gap: 4px; margin-left: 8px; }
-  .tab {
-    appearance: none; border: 0; cursor: pointer;
-    background: transparent; color: var(--tx-1);
-    padding: 8px 16px; border-radius: var(--radius-sm);
-    font-family: var(--sans); font-size: 13px; font-weight: 550;
-    display: flex; align-items: center; gap: 7px;
-    transition: .15s;
-  }
-  .tab:hover { background: var(--bg-2); color: var(--tx-0); }
-  .tab.active { background: var(--bg-3); color: var(--tx-0); box-shadow: inset 0 0 0 1px var(--stroke-2); }
-  .tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-
-  .spacer { flex: 1; }
-
-  /* ---- Status chips on the right ---- */
-  .chips { display: flex; align-items: center; gap: 10px; }
-  .chip {
-    display: flex; align-items: center; gap: 7px;
-    background: var(--bg-2); border: 1px solid var(--stroke);
-    padding: 6px 11px; border-radius: 999px; font-size: 12px; color: var(--tx-1);
-  }
-  .chip b { color: var(--tx-0); font-weight: 600; }
-  .badge-demo {
-    background: var(--up-dim); border-color: rgba(22,199,132,.4); color: var(--up);
-    font-weight: 700; letter-spacing: .4px; font-size: 11px;
-  }
-  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-
-  /* ============================================================
-     KPI STRIP
-     ============================================================ */
-  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; padding: 14px 18px 4px; flex: 0 0 auto; }
-  .kpi {
-    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
-    border: 1px solid var(--stroke); border-radius: var(--radius);
-    padding: 13px 15px; position: relative; overflow: hidden;
-  }
-  .kpi::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--accent); opacity:.6; }
-  .kpi.k-up::before { background: var(--up); }
-  .kpi.k-down::before { background: var(--down); }
-  .kpi .label { color: var(--tx-2); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
-  .kpi .val { font-family: var(--mono); font-size: 22px; font-weight: 600; margin-top: 6px; letter-spacing: -.5px; }
-  .kpi .sub { font-size: 11px; margin-top: 3px; color: var(--tx-2); }
-
-  /* ============================================================
-     MONITORING — 3-column landscape grid
-     ============================================================ */
-  .grid {
-    display: grid; gap: 12px; padding: 12px 18px 18px;
-    grid-template-columns: 1.15fr 0.95fr 1.4fr;
-    flex: 1 1 auto; min-height: 0;
-  }
-  .panel {
-    background: linear-gradient(180deg, var(--bg-1), rgba(10,14,20,.6));
-    border: 1px solid var(--stroke); border-radius: var(--radius);
-    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
-  }
-  .panel-head {
-    display: flex; align-items: center; gap: 10px;
-    padding: 12px 14px; border-bottom: 1px solid var(--stroke); flex: 0 0 auto;
-  }
-  .panel-head h3 { font-size: 13px; font-weight: 600; letter-spacing: .2px; }
-  .panel-head .count {
-    margin-left: auto; font-size: 11px; color: var(--tx-2);
-    background: var(--bg-3); padding: 2px 8px; border-radius: 999px;
-  }
-  .panel-body { overflow: auto; flex: 1 1 auto; min-height: 0; }
-  .panel-body::-webkit-scrollbar { width: 9px; height: 9px; }
-  .panel-body::-webkit-scrollbar-thumb { background: var(--stroke-2); border-radius: 9px; border: 2px solid transparent; background-clip: padding-box; }
-
-  /* ---- Tables ---- */
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  thead th {
-    position: sticky; top: 0; z-index: 1;
-    background: var(--bg-1); color: var(--tx-2);
-    text-align: left; font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px;
-    padding: 9px 12px; border-bottom: 1px solid var(--stroke);
-  }
-  tbody td { padding: 9px 12px; border-bottom: 1px solid rgba(30,39,51,.5); }
-  tbody tr:hover { background: var(--bg-2); }
-  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-
-  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 650; }
-  .pill.call { background: var(--up-dim); color: var(--up); }
-  .pill.put { background: var(--down-dim); color: var(--down); }
-  .pill.win { background: var(--up-dim); color: var(--up); }
-  .pill.loss { background: var(--down-dim); color: var(--down); }
-  .pill.draw { background: rgba(95,114,131,.16); color: var(--tx-1); }
-  .pair { font-weight: 600; }
-  .pair .otc { color: var(--tx-2); font-weight: 500; font-size: 10px; margin-left: 3px; }
-
-  /* ---- Active trade cards ---- */
-  .active-list { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-  .trade-card {
-    background: var(--bg-1); border: 1px solid var(--stroke-2); border-radius: var(--radius-sm);
-    padding: 12px; position: relative; overflow: hidden;
-  }
-  .trade-card .row { display: flex; align-items: center; justify-content: space-between; }
-  .trade-card .pair { font-size: 14px; }
-  .trade-card .meta { color: var(--tx-2); font-size: 11px; margin-top: 2px; }
-  .trade-card .stake { font-family: var(--mono); font-size: 15px; font-weight: 600; }
-  .countdown { margin-top: 11px; }
-  .countdown .track { height: 6px; background: var(--bg-3); border-radius: 999px; overflow: hidden; }
-  .countdown .fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-  .countdown .t { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--tx-2); font-family: var(--mono); }
-  .conf-bar { display: flex; gap: 3px; margin-top: 10px; }
-  .conf-bar i { height: 4px; flex: 1; border-radius: 2px; background: var(--bg-3); }
-  .conf-bar i.on { background: var(--accent); }
-
-  /* ---- Performance column ---- */
-  .perf { display: flex; flex-direction: column; min-height: 0; }
-  .seg { display: flex; gap: 2px; background: var(--bg-3); border-radius: 7px; padding: 2px; }
-  .seg button { appearance:none; border:0; cursor:pointer; background:transparent; color: var(--tx-1); font-size: 11px; font-weight:600; padding: 4px 10px; border-radius: 5px; font-family: var(--sans); }
-  .seg button.on { background: var(--bg-1); color: var(--tx-0); box-shadow: inset 0 0 0 1px var(--stroke-2); }
-  .chart-wrap { padding: 8px 8px 0; }
-  .chart-legend { display:flex; gap:16px; padding: 4px 14px 10px; font-size: 11px; color: var(--tx-1); }
-  .chart-legend span { display:flex; align-items:center; gap:6px; }
-  .chart-legend i { width: 10px; height: 3px; border-radius: 2px; display:inline-block; }
-  .winloss { padding: 4px 14px 14px; border-top: 1px solid var(--stroke); margin-top: auto; }
-  .winloss h4 { font-size: 11px; color: var(--tx-2); text-transform: uppercase; letter-spacing:.5px; margin: 12px 0 9px; }
-  .wl-bar { height: 12px; border-radius: 999px; overflow: hidden; display:flex; background: var(--bg-3); }
-  .wl-bar .w { background: var(--up); }
-  .wl-bar .l { background: var(--down); }
-  .wl-bar .d { background: var(--tx-2); }
-  .wl-meta { display:flex; justify-content: space-between; margin-top: 8px; font-size: 11px; }
-
-  /* ============================================================
-     SETTINGS
-     ============================================================ */
-  .settings-wrap { flex:1 1 auto; overflow:auto; padding: 18px; }
-  .settings-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; max-width: 1100px; margin: 0 auto; }
-  .set-card { background: var(--bg-1); border: 1px solid var(--stroke); border-radius: var(--radius); }
-  .set-card.span2 { grid-column: 1 / -1; }
-  .set-card .h { display:flex; align-items:center; gap:9px; padding: 13px 15px; border-bottom: 1px solid var(--stroke); }
-  .set-card .h .ic { width: 26px; height:26px; border-radius:7px; background: var(--bg-3); display:grid; place-items:center; font-size:13px; }
-  .set-card .h h3 { font-size: 13px; }
-  .set-card .h p { color: var(--tx-2); font-size: 11px; margin-top:1px; }
-  .set-body { padding: 6px 15px 14px; }
-  .field { display:flex; align-items:center; justify-content: space-between; gap: 14px; padding: 11px 0; border-bottom: 1px solid rgba(30,39,51,.5); }
-  .field:last-child { border-bottom: 0; }
-  .field .k { font-size: 12.5px; }
-  .field .k small { display:block; color: var(--tx-2); font-size: 11px; margin-top:2px; font-weight: 400; }
-  .field .k code { font-family: var(--mono); font-size: 10.5px; color: var(--accent); background: rgba(45,212,191,.08); padding: 1px 5px; border-radius: 4px; }
-  input[type=text], input[type=number], input[type=password], select {
-    background: var(--bg-3); border: 1px solid var(--stroke-2); color: var(--tx-0);
-    border-radius: var(--radius-sm); padding: 7px 10px; font-family: var(--mono); font-size: 12px; width: 160px;
-  }
-  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(45,212,191,.12); }
-  /* toggle */
-  .toggle { position: relative; width: 42px; height: 24px; }
-  .toggle input { opacity:0; width:0; height:0; }
-  .toggle .sl { position:absolute; inset:0; background: var(--bg-3); border:1px solid var(--stroke-2); border-radius:999px; transition:.18s; cursor:pointer; }
-  .toggle .sl::before { content:""; position:absolute; width:18px; height:18px; left:2px; top:2px; background: var(--tx-1); border-radius:50%; transition:.18s; }
-  .toggle input:checked + .sl { background: var(--accent); border-color: var(--accent); }
-  .toggle input:checked + .sl::before { transform: translateX(18px); background: #06121a; }
-  /* mode switch (demo/live) */
-  .modeswitch { display:flex; background: var(--bg-3); border-radius: 8px; padding: 3px; }
-  .modeswitch button { border:0; cursor:pointer; font-family: var(--sans); font-weight: 700; font-size: 12px; padding: 6px 16px; border-radius: 6px; background: transparent; color: var(--tx-1); letter-spacing:.4px; }
-  .modeswitch button.demo-on { background: var(--up); color:#06121a; }
-  .modeswitch button.live-on { background: var(--down); color:#fff; }
-  .range { display:flex; align-items:center; gap:10px; }
-  input[type=range]{ -webkit-appearance:none; width:140px; height:4px; border-radius:999px; background: var(--bg-3); }
-  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background: var(--accent); cursor:pointer; box-shadow:0 0 8px rgba(45,212,191,.5); }
-  .range b { font-family: var(--mono); width: 38px; text-align:right; }
-  .save-bar { max-width: 1100px; margin: 16px auto 0; display:flex; gap:10px; justify-content:flex-end; }
-  .btn { border:0; cursor:pointer; font-family: var(--sans); font-weight:600; font-size:12.5px; padding: 9px 18px; border-radius: 8px; }
-  .btn.ghost { background: var(--bg-3); color: var(--tx-1); border:1px solid var(--stroke-2); }
-  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color:#06121a; }
-  .warn-note { display:flex; gap:10px; background: var(--down-dim); border:1px solid rgba(234,57,67,.3); color:#f3b6ba; padding: 11px 13px; border-radius: 8px; font-size: 12px; margin-bottom: 14px; max-width:1100px; margin-left:auto; margin-right:auto; }
-
-  .view { display: none; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-  .view.active { display: flex; }
+  :root{--bg:#0a0e14;--card:#0f141c;--stroke:#1e2733;--tx:#e6edf3;--tx2:#9fb0c0;--mut:#5f7283;--acc:#2dd4bf;--acc2:#6366f1}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1000px 500px at 80% -10%,rgba(45,212,191,.07),transparent 60%),var(--bg);color:var(--tx);font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100vh;display:grid;place-items:center;padding:40px}
+  .wrap{max-width:1000px;width:100%}
+  h1{font-size:26px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:12px}
+  .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;color:#06121a;font-weight:800;font-size:18px;box-shadow:0 0 20px rgba(45,212,191,.4)}
+  p.lead{color:var(--tx2);margin:12px 0 28px;font-size:14px;line-height:1.6;max-width:680px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  a.card{display:block;text-decoration:none;color:inherit;background:linear-gradient(180deg,var(--card),rgba(10,14,20,.6));border:1px solid var(--stroke);border-radius:14px;padding:20px;transition:.18s}
+  a.card:hover{border-color:var(--acc);transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .swatch{height:54px;border-radius:9px;margin-bottom:14px;display:flex;overflow:hidden;border:1px solid var(--stroke)}
+  .swatch i{flex:1}
+  .tag{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+  .card h3{font-size:16px;margin:4px 0 7px;font-weight:650}
+  .card span{color:var(--tx2);font-size:12.5px;line-height:1.55}
+  .open{margin-top:14px;color:var(--acc);font-size:12px;font-weight:600}
+  .foot{margin-top:26px;color:var(--mut);font-size:12px;line-height:1.6}
+  .foot code{font-family:ui-monospace,Menlo,monospace;color:var(--acc);background:rgba(45,212,191,.08);padding:1px 6px;border-radius:4px}
 </style>
 </head>
 <body>
-<div class="app">
+<div class="wrap">
+  <h1><span class="logo">P</span> PocketOption Bot — Dashboard Mockups</h1>
+  <p class="lead">Three theme directions, identical layout and data. Monitoring view is a 3-column landscape
+    (Trade History · Active Trades · Performance with equity/P&amp;L curve + win/loss). Settings live in a separate tab.
+    Open each and use the tabs at the top to switch between Monitoring and Settings.</p>
 
-  <!-- ============ TOP BAR ============ -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">P</div>
-      <div>PocketOption Bot <small>v2 · po_broker_bot</small></div>
-    </div>
-    <nav class="tabs">
-      <button class="tab active" data-view="monitoring"><span class="dot"></span>Monitoring</button>
-      <button class="tab" data-view="settings">⚙ Settings</button>
-    </nav>
-    <div class="spacer"></div>
-    <div class="chips">
-      <div class="chip"><span class="live-dot"></span>WS Connected</div>
-      <div class="chip">Balance <b class="mono">$1,184.50</b></div>
-      <div class="chip badge-demo">● DEMO</div>
-    </div>
-  </header>
+  <div class="cards">
+    <a class="card" href="variant-a-carbon.html">
+      <div class="swatch"><i style="background:#0a0e14"></i><i style="background:#151c26"></i><i style="background:#2dd4bf"></i><i style="background:#16c784"></i><i style="background:#ea3943"></i></div>
+      <div class="tag">Recommended</div>
+      <h3>A · Carbon</h3>
+      <span>Dark, layered surfaces with a teal→indigo accent. Modern fintech with a clean professional edge. Balanced density.</span>
+      <div class="open">Open Carbon →</div>
+    </a>
+    <a class="card" href="variant-b-terminal.html">
+      <div class="swatch"><i style="background:#050607"></i><i style="background:#11151a"></i><i style="background:#f5a623"></i><i style="background:#2bd96b"></i><i style="background:#ff4d4d"></i></div>
+      <div class="tag">Max density</div>
+      <h3>B · Terminal</h3>
+      <span>Bloomberg-style data terminal. Monospace everywhere, square corners, amber/phosphor accents, scanline texture. Maximum info per pixel.</span>
+      <div class="open">Open Terminal →</div>
+    </a>
+    <a class="card" href="variant-c-daylight.html">
+      <div class="swatch"><i style="background:#eef1f6"></i><i style="background:#ffffff"></i><i style="background:#0d9488"></i><i style="background:#0ea66e"></i><i style="background:#e0344a"></i></div>
+      <div class="tag">Light</div>
+      <h3>C · Daylight</h3>
+      <span>Light fintech for bright rooms / daytime trading. Soft shadows, rounded cards, teal/indigo accent. Same structure, airier feel.</span>
+      <div class="open">Open Daylight →</div>
+    </a>
+  </div>
 
-  <!-- ============================================================
-       MONITORING VIEW
-       ============================================================ -->
-  <section class="view active" id="view-monitoring">
-
-    <!-- KPI strip -->
-    <div class="kpis">
-      <div class="kpi"><div class="label">Balance</div><div class="val">$1,184.50</div><div class="sub">demo account</div></div>
-      <div class="kpi k-up"><div class="label">Today P&amp;L</div><div class="val up">+$42.30</div><div class="sub up">▲ 3.71%</div></div>
-      <div class="kpi"><div class="label">Win Rate</div><div class="val">61.4%</div><div class="sub">35W · 22L · 2D</div></div>
-      <div class="kpi"><div class="label">Active Trades</div><div class="val">3</div><div class="sub">$4.50 at risk</div></div>
-      <div class="kpi"><div class="label">Trades Today</div><div class="val">18</div><div class="sub">12 traded · 6 skipped</div></div>
-      <div class="kpi k-up"><div class="label">Avg Confluence</div><div class="val">0.81</div><div class="sub">floor 0.75</div></div>
-    </div>
-
-    <!-- 3-column landscape grid -->
-    <div class="grid">
-
-      <!-- COLUMN 1 — Trade History -->
-      <div class="panel">
-        <div class="panel-head"><h3>Trade History</h3><span class="count">resolved · 59</span></div>
-        <div class="panel-body">
-          <table>
-            <thead>
-              <tr><th>Time</th><th>Pair</th><th>Dir</th><th class="num">Stake</th><th>Result</th><th class="num">P&amp;L</th></tr>
-            </thead>
-            <tbody id="history-rows"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- COLUMN 2 — Active Trades -->
-      <div class="panel">
-        <div class="panel-head"><h3>Active Trades</h3><span class="count">3 open</span></div>
-        <div class="panel-body">
-          <div class="active-list" id="active-list"></div>
-        </div>
-      </div>
-
-      <!-- COLUMN 3 — Performance (chart + win/loss) -->
-      <div class="panel perf">
-        <div class="panel-head">
-          <h3>Performance</h3>
-          <div class="seg" style="margin-left:auto">
-            <button>1H</button><button class="on">1D</button><button>1W</button><button>ALL</button>
-          </div>
-        </div>
-        <div class="chart-wrap" id="chart-wrap"></div>
-        <div class="chart-legend">
-          <span><i style="background:var(--accent)"></i>Equity / P&amp;L curve</span>
-          <span><i style="background:var(--tx-2)"></i>Break-even</span>
-        </div>
-        <div class="winloss">
-          <h4>Win / Loss Distribution</h4>
-          <div class="wl-bar">
-            <div class="w" style="width:59%"></div>
-            <div class="l" style="width:37%"></div>
-            <div class="d" style="width:4%"></div>
-          </div>
-          <div class="wl-meta">
-            <span class="up">35 Wins · 59%</span>
-            <span class="down">22 Losses · 37%</span>
-            <span class="muted">2 Draws</span>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
-  <!-- ============================================================
-       SETTINGS VIEW
-       ============================================================ -->
-  <section class="view" id="view-settings">
-    <div class="settings-wrap">
-      <div class="warn-note">
-        <span>⚠️</span>
-        <div><b>LIVE mode trades real money.</b> The demo guard in <code style="font-family:var(--mono)">broker/po_api.py</code> aborts any trade if the SSID is live while mode is DEMO. Keep DEMO as the default for testing.</div>
-      </div>
-
-      <div class="settings-grid">
-
-        <!-- Safety / Mode -->
-        <div class="set-card span2">
-          <div class="h"><div class="ic">🛡️</div><div><h3>Safety &amp; Trade Mode</h3><p>Hard-defaults to DEMO. LIVE must be explicit.</p></div></div>
-          <div class="set-body">
-            <div class="field">
-              <div class="k">Trade Mode <small><code>TRADE_MODE</code></small></div>
-              <div class="modeswitch"><button class="demo-on">DEMO</button><button>LIVE</button></div>
-            </div>
-            <div class="field">
-              <div class="k">Dry Run <small>Log trades without calling the API · <code>DRY_RUN</code></small></div>
-              <label class="toggle"><input type="checkbox" checked><span class="sl"></span></label>
-            </div>
-            <div class="field">
-              <div class="k">Stake Amount (USD) <small><code>STAKE_AMOUNT</code></small></div>
-              <input type="number" value="1.50" step="0.50">
-            </div>
-            <div class="field">
-              <div class="k">Default Expiry (s) <small><code>DEFAULT_EXPIRY_SECONDS</code></small></div>
-              <input type="number" value="30">
-            </div>
-          </div>
-        </div>
-
-        <!-- Telegram -->
-        <div class="set-card">
-          <div class="h"><div class="ic">✈️</div><div><h3>Telegram Session</h3><p>Telethon user session (MTProto)</p></div></div>
-          <div class="set-body">
-            <div class="field"><div class="k">API ID <small><code>TELEGRAM_API_ID</code></small></div><input type="text" value="2040123"></div>
-            <div class="field"><div class="k">API Hash <small><code>TELEGRAM_API_HASH</code></small></div><input type="password" value="••••••••••••"></div>
-            <div class="field"><div class="k">Signal Bot <small><code>SIGNAL_BOT_USERNAME</code></small></div><input type="text" value="po_broker_bot"></div>
-          </div>
-        </div>
-
-        <!-- PocketOption -->
-        <div class="set-card">
-          <div class="h"><div class="ic">📡</div><div><h3>PocketOption WS</h3><p>Trading-terminal auth frame</p></div></div>
-          <div class="set-body">
-            <div class="field"><div class="k">SSID <small>full <code>42["auth",{…}]</code> frame</small></div><input type="password" value="••••••••••••••••"></div>
-            <div class="field"><div class="k">Detected Mode <small>from <code>is_demo()</code></small></div><span class="pill win">DEMO · valid</span></div>
-            <div class="field"><div class="k">Connection <small>WebSocket assets ready</small></div><span class="pill win">● connected</span></div>
-          </div>
-        </div>
-
-        <!-- Gate / TA -->
-        <div class="set-card">
-          <div class="h"><div class="ic">🎯</div><div><h3>Signal Gate</h3><p>Entry thresholds</p></div></div>
-          <div class="set-body">
-            <div class="field"><div class="k">Min Win Rate <small>bot pair gate · <code>PAIR_SELECT_MIN_WIN_RATE</code></small></div><div class="range"><input type="range" min="0" max="100" value="82"><b>0.82</b></div></div>
-            <div class="field"><div class="k">Min Confluence <small><code>MIN_CONFLUENCE_SCORE</code></small></div><div class="range"><input type="range" min="0" max="100" value="75"><b>0.75</b></div></div>
-            <div class="field"><div class="k">Click Trade Anyway <small>auto-dismiss nag screens · <code>CLICK_TRADE_ANYWAY</code></small></div><label class="toggle"><input type="checkbox" checked><span class="sl"></span></label></div>
-          </div>
-        </div>
-
-        <!-- Risk -->
-        <div class="set-card">
-          <div class="h"><div class="ic">⚖️</div><div><h3>Risk Manager</h3><p>Hard limits &amp; cooldowns</p></div></div>
-          <div class="set-body">
-            <div class="field"><div class="k">Max Trades / Hour</div><input type="number" value="10"></div>
-            <div class="field"><div class="k">Daily Loss Limit (USD)</div><input type="number" value="25.00"></div>
-            <div class="field"><div class="k">Post-Loss Cooldown (s)</div><input type="number" value="120"></div>
-            <div class="field"><div class="k">Min Balance Multiplier</div><input type="number" value="5"></div>
-          </div>
-        </div>
-
-      </div>
-
-      <div class="save-bar">
-        <button class="btn ghost">Reset</button>
-        <button class="btn primary">Save Changes</button>
-      </div>
-    </div>
-  </section>
-
+  <p class="foot">Self-contained — no backend, sample data baked in. Field shapes mirror <code>DecisionRow</code> in
+    <code>strategy/trade_logger.py</code>. Real build will be <code>FastAPI + WebSocket</code> with an editable settings tab.</p>
 </div>
-
-<script>
-/* ============================================================
-   Tab switching
-   ============================================================ */
-document.querySelectorAll('.tab').forEach(t => {
-  t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    t.classList.add('active');
-    document.getElementById('view-' + t.dataset.view).classList.add('active');
-  });
-});
-
-/* ============================================================
-   Sample data — shapes mirror DecisionRow (strategy/trade_logger.py)
-   ============================================================ */
-const history = [
-  ['14:38:21','EUR/USD','otc','CALL',1.50,'win',  1.38],
-  ['14:36:02','GBP/USD','otc','PUT', 1.50,'loss',-1.50],
-  ['14:33:47','USD/JPY','',   'CALL',1.50,'win',  1.31],
-  ['14:31:10','AUD/CAD','otc','CALL',1.50,'win',  1.42],
-  ['14:28:55','EUR/GBP','otc','PUT', 1.50,'draw', 0.00],
-  ['14:26:33','USD/CHF','',   'PUT', 1.50,'win',  1.36],
-  ['14:24:08','GBP/JPY','otc','CALL',1.50,'loss',-1.50],
-  ['14:21:44','NZD/USD','otc','CALL',1.50,'win',  1.40],
-  ['14:19:20','EUR/JPY','',   'PUT', 1.50,'win',  1.33],
-  ['14:16:59','USD/CAD','otc','PUT', 1.50,'loss',-1.50],
-  ['14:14:31','AUD/USD','otc','CALL',1.50,'win',  1.39],
-  ['14:12:05','EUR/USD','otc','PUT', 1.50,'win',  1.41],
-];
-document.getElementById('history-rows').innerHTML = history.map(r => {
-  const [t,pair,otc,dir,stake,res,pnl] = r;
-  const pnlCls = pnl > 0 ? 'up' : (pnl < 0 ? 'down' : 'muted');
-  const pnlTxt = pnl > 0 ? '+$'+pnl.toFixed(2) : (pnl < 0 ? '-$'+Math.abs(pnl).toFixed(2) : '$0.00');
-  return `<tr>
-    <td class="mono muted">${t}</td>
-    <td><span class="pair">${pair}${otc?`<span class="otc">${otc}</span>`:''}</span></td>
-    <td><span class="pill ${dir.toLowerCase()}">${dir}</span></td>
-    <td class="num">$${stake.toFixed(2)}</td>
-    <td><span class="pill ${res}">${res.toUpperCase()}</span></td>
-    <td class="num ${pnlCls}">${pnlTxt}</td>
-  </tr>`;
-}).join('');
-
-/* Active trades */
-const active = [
-  {pair:'EUR/USD', otc:'otc', dir:'CALL', stake:1.50, total:30, left:18, conf:4, entry:'1.07432'},
-  {pair:'GBP/JPY', otc:'otc', dir:'PUT',  stake:1.50, total:30, left:11, conf:3, entry:'188.214'},
-  {pair:'AUD/USD', otc:'',    dir:'CALL', stake:1.50, total:60, left:47, conf:5, entry:'0.65118'},
-];
-document.getElementById('active-list').innerHTML = active.map(a => {
-  const pct = (a.left / a.total) * 100;
-  const conf = Array.from({length:5}, (_,i)=>`<i class="${i < a.conf ? 'on':''}"></i>`).join('');
-  return `<div class="trade-card">
-    <div class="row">
-      <div>
-        <div class="pair">${a.pair}${a.otc?`<span class="otc">${a.otc}</span>`:''} &nbsp;<span class="pill ${a.dir.toLowerCase()}">${a.dir}</span></div>
-        <div class="meta">entry ${a.entry} · ${a.total}s expiry</div>
-      </div>
-      <div style="text-align:right"><div class="stake">$${a.stake.toFixed(2)}</div><div class="meta">at risk</div></div>
-    </div>
-    <div class="countdown">
-      <div class="track"><div class="fill" style="width:${pct}%"></div></div>
-      <div class="t"><span>${a.left}s remaining</span><span>${a.conf}/5 signals</span></div>
-    </div>
-    <div class="conf-bar">${conf}</div>
-  </div>`;
-}).join('');
-
-/* ============================================================
-   Equity / P&L curve — inline SVG, no deps
-   ============================================================ */
-(function drawChart(){
-  const W=560, H=240, pad={l:46,r:14,t:14,b:24};
-  // cumulative P&L points across the session
-  const pnl = [0,1.4,2.8,1.3,2.7,4.1,2.6,4.0,5.4,3.9,5.3,6.7,8.1,6.6,8.0,9.4,10.8,9.3,10.7,12.1,13.5,12.0,11.4,
-               12.8,14.2,15.6,17.0,15.5,16.9,18.3,19.7,21.1,22.5,21.0,22.4,23.8,25.2,26.6,28.0,29.4,30.8,32.2,
-               33.6,32.1,33.5,34.9,36.3,37.7,39.1,40.5,42.3];
-  const min = Math.min(...pnl, 0), max = Math.max(...pnl);
-  const x = i => pad.l + (i/(pnl.length-1))*(W-pad.l-pad.r);
-  const y = v => pad.t + (1-(v-min)/(max-min))*(H-pad.t-pad.b);
-  const line = pnl.map((v,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const area = `${line} L${x(pnl.length-1).toFixed(1)},${y(min).toFixed(1)} L${x(0).toFixed(1)},${y(min).toFixed(1)} Z`;
-  const zeroY = y(0);
-  // y gridlines
-  let grid='';
-  for(let g=0; g<=4; g++){
-    const v = min + (max-min)*g/4;
-    const gy = y(v);
-    grid += `<line x1="${pad.l}" y1="${gy}" x2="${W-pad.r}" y2="${gy}" stroke="#1e2733" stroke-width="1"/>
-             <text x="${pad.l-8}" y="${gy+3}" fill="#5f7283" font-size="9" text-anchor="end" font-family="monospace">$${v.toFixed(0)}</text>`;
-  }
-  const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
-    <defs>
-      <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.28"/>
-        <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    ${grid}
-    <line x1="${pad.l}" y1="${zeroY}" x2="${W-pad.r}" y2="${zeroY}" stroke="#5f7283" stroke-width="1" stroke-dasharray="3 3"/>
-    <path d="${area}" fill="url(#ag)"/>
-    <path d="${line}" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linejoin="round"/>
-    <circle cx="${x(pnl.length-1)}" cy="${y(pnl[pnl.length-1])}" r="3.5" fill="#2dd4bf"/>
-    <circle cx="${x(pnl.length-1)}" cy="${y(pnl[pnl.length-1])}" r="7" fill="#2dd4bf" opacity="0.18"/>
-  </svg>`;
-  document.getElementById('chart-wrap').innerHTML = svg;
-})();
-</script>
 </body>
 </html>
