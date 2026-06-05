@@ -108,8 +108,7 @@ class StrategyManagerV2:
         )
 
         d = decide(bot_direction=dscreen.direction, our_direction=conf.direction,
-                   bot_win_rate=top.win_rate, our_confluence=conf.score,
-                   our_score_floor=settings.min_confluence_score)
+                   bot_win_rate=top.win_rate, our_confluence=conf.score)
 
         balance_before = await self._api.balance()
         if self._bridge:

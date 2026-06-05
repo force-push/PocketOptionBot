@@ -20,13 +20,16 @@ def decide(
     our_direction: str | None,
     bot_win_rate: float,
     our_confluence: float,
-    our_score_floor: float,
 ) -> Decision:
+    """Pure trade decision logic.
+
+    The confluence engine (signals/confluence.py) already validates the score
+    against an adaptive threshold based on how many signals agree. This function
+    just checks direction agreement (bot TA ↔ our TA) and combines the win rates.
+    """
     if our_direction is None:
         return Decision(False, 0.0, "no_direction")
     if our_direction != bot_direction:
         return Decision(False, 0.0, "ta_disagree")
-    if our_confluence < our_score_floor:
-        return Decision(False, (bot_win_rate + our_confluence) / 2.0, "ta_low_score")
     combined = (bot_win_rate + our_confluence) / 2.0
     return Decision(True, combined, None)
