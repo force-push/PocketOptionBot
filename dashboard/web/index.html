@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- Optional dashboard token for settings writes; backend may template this. -->
+<meta name="dashboard-token" content="{{TOKEN}}" />
+<title>PocketOption Bot — Dashboard</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP BAR ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">P</div>
+      <div>PocketOption Bot <small>v2 · po_broker_bot</small></div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab active" data-view="monitoring" role="tab" aria-selected="true" aria-controls="view-monitoring">
+        <span class="dot"></span>Monitoring
+      </button>
+      <button class="tab" data-view="settings" role="tab" aria-selected="false" aria-controls="view-settings" tabindex="-1">
+        ⚙ Settings
+      </button>
+    </nav>
+    <div class="spacer"></div>
+    <div class="chips">
+      <div class="chip ws-connecting" id="chip-ws"><span class="live-dot"></span>WS Connecting…</div>
+      <div class="chip" id="chip-balance">Balance <b class="mono">—</b></div>
+      <div class="chip badge-demo" id="chip-mode">● DEMO</div>
+    </div>
+  </header>
+
+  <!-- ============ MONITORING VIEW ============ -->
+  <section class="view active" id="view-monitoring" role="tabpanel" aria-labelledby="Monitoring">
+
+    <!-- KPI strip -->
+    <div class="kpis" id="kpi-strip"></div>
+
+    <!-- 3-column landscape grid -->
+    <div class="grid">
+
+      <!-- LEFT (½) — Performance -->
+      <div class="panel perf" style="order:1">
+        <div class="panel-head">
+          <h3>Performance</h3>
+          <div class="seg" id="perf-seg" style="margin-left:auto" role="group" aria-label="Chart range">
+            <button>1H</button><button class="on">1D</button><button>1W</button><button>ALL</button>
+          </div>
+        </div>
+        <div class="chart-wrap" id="chart-wrap"></div>
+        <div class="chart-legend">
+          <span><i style="background:var(--accent)"></i>Equity / P&amp;L curve</span>
+          <span><i style="background:var(--tx-2)"></i>Break-even</span>
+        </div>
+        <div class="winloss" id="winloss"></div>
+      </div>
+
+      <!-- MIDDLE (¼) — Active Trades -->
+      <div class="panel" style="order:2">
+        <div class="panel-head"><h3>Active Trades</h3><span class="count" id="active-count">0 open</span></div>
+        <div class="panel-body">
+          <div class="active-list" id="active-list"></div>
+        </div>
+      </div>
+
+      <!-- RIGHT (¼) — Trade History -->
+      <div class="panel" style="order:3">
+        <div class="panel-head"><h3>Trade History</h3><span class="count" id="history-count">resolved · 0</span></div>
+        <div class="panel-body">
+          <table>
+            <thead>
+              <tr><th>Time</th><th>Pair</th><th class="num">Result</th></tr>
+            </thead>
+            <tbody id="history-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS VIEW ============ -->
+  <section class="view" id="view-settings" role="tabpanel" aria-labelledby="Settings">
+    <div class="settings-wrap" id="settings-wrap"></div>
+  </section>
+
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
