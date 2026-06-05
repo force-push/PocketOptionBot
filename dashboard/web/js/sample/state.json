@@ -1,0 +1,63 @@
+{
+  "mode": "DEMO",
+  "dry_run": true,
+  "connected": true,
+  "balance": 1184.50,
+  "currency": "USD",
+  "kpis": {
+    "today_pnl": 42.30,
+    "today_pnl_pct": 3.71,
+    "win_rate": 0.614,
+    "wins": 35,
+    "losses": 22,
+    "draws": 2,
+    "active_count": 3,
+    "at_risk": 4.50,
+    "trades_today": 18,
+    "traded": 12,
+    "skipped": 6,
+    "avg_confluence": 0.81
+  },
+  "active": [
+    {
+      "trade_id": "act-eurusd-1",
+      "pair_raw": "EUR/USD OTC",
+      "pair_api": "EURUSD_otc",
+      "dir": "CALL",
+      "stake": 1.50,
+      "entry": 1.07432,
+      "opened_at": "2026-06-05T14:38:00Z",
+      "expiry_at": "2026-06-05T14:38:30Z",
+      "expiry_seconds": 30,
+      "confluence_n": 4,
+      "confluence_score": 0.84
+    },
+    {
+      "trade_id": "act-gbpjpy-1",
+      "pair_raw": "GBP/JPY OTC",
+      "pair_api": "GBPJPY_otc",
+      "dir": "PUT",
+      "stake": 1.50,
+      "entry": 188.214,
+      "opened_at": "2026-06-05T14:38:11Z",
+      "expiry_at": "2026-06-05T14:38:41Z",
+      "expiry_seconds": 30,
+      "confluence_n": 3,
+      "confluence_score": 0.79
+    },
+    {
+      "trade_id": "act-audusd-1",
+      "pair_raw": "AUD/USD",
+      "pair_api": "AUDUSD",
+      "dir": "CALL",
+      "stake": 1.50,
+      "entry": 0.65118,
+      "opened_at": "2026-06-05T14:37:34Z",
+      "expiry_at": "2026-06-05T14:38:34Z",
+      "expiry_seconds": 60,
+      "confluence_n": 5,
+      "confluence_score": 0.91
+    }
+  ],
+  "ts": "2026-06-05T14:38:01Z"
+}
