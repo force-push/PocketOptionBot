@@ -227,12 +227,14 @@ class StrategyManagerV2:
             risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
             self._risk.record_trade(row.bot_direction, row.stake, risk_result)
 
-            # Notify dashboard
+            # Notify dashboard with complete resolved data
             if self._bridge:
                 self._bridge.trade_resolved({
                     **asdict(row),
-                    "result": outcome.lower() if isinstance(outcome, str) else outcome,
+                    "outcome": outcome.lower() if isinstance(outcome, str) else outcome,
+                    "pnl": pnl if pnl is not None else 0.0,
                     "balance_after": balance_after,
+                    "pnl_currency": "USD",
                 })
 
             pnl_str = f"{pnl:+.2f}" if pnl is not None else "?"
