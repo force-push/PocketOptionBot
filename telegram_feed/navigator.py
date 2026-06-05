@@ -82,11 +82,26 @@ class Navigator:
         return None
 
     async def start_autotrade(self) -> None:
+        """Navigate to 'Start Autotrade' via Main Menu to reduce /start spam.
+
+        First tries to find the "Start Autotrade" button directly (we may already
+        be at Main Menu from the previous cycle's back_to_menu() call).
+        If not found, sends /start as a fallback to reset the bot state.
+        Waits 2 seconds before clicking to allow UI to fully render.
+        """
+        # Try to find Start Autotrade button directly (natural flow from Main Menu)
+        await asyncio.sleep(2)
+        for label in ("🚀 Start Autotrade", "Start Autotrade", "Start Trade"):
+            if await self._click(lambda x, L=label: L in x):
+                await asyncio.sleep(3)
+                return
+
+        # Fallback: send /start if button not found (e.g., connection reset)
         try:
             await self._c.send_message(self._bot, "/start")
         except FloodWaitError as e:
             wait = getattr(e, "seconds", 60) or 60
-            log.warning("FloodWait on /start — sleeping {}s before continuing", wait)
+            log.warning("FloodWait on /start fallback — sleeping {}s", wait)
             await asyncio.sleep(wait)
             await self._c.send_message(self._bot, "/start")
         await asyncio.sleep(2.5)
@@ -149,7 +164,18 @@ class Navigator:
             await asyncio.sleep(interval)
 
     async def back_to_menu(self) -> None:
-        await self._click(lambda x: "main menu" in x.lower())
-        await asyncio.sleep(1)
-        await self._c.send_message(self._bot, "/start")
-        await asyncio.sleep(2)
+        """Return to Main Menu via button click (no /start).
+
+        The next cycle's start_autotrade() will find the "Start Autotrade"
+        button at Main Menu and click it, using natural button flow instead
+        of spamming /start commands.
+        """
+        clicked = await self._click(lambda x: "main menu" in x.lower())
+        if clicked:
+            log.debug("Clicked Main Menu — next cycle will navigate from here")
+            await asyncio.sleep(1.5)
+        else:
+            # Fallback: if Main Menu button not found, send /start to reset
+            log.warning("Main Menu button not found — sending /start fallback")
+            await self._c.send_message(self._bot, "/start")
+            await asyncio.sleep(2)
