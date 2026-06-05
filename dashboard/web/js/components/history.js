@@ -146,11 +146,11 @@ function detailHtml(d) {
   const botSection = `
     <div class="md-section">
       <div class="md-section-title">PO Broker Bot</div>
-      <div class="md-bot-grid">
-        <span>Direction</span><b class="pill ${dirCls}" style="justify-self:start;font-size:11px">${fmt.dirSym(dir)} ${dir || '—'}</b>
-        <span>Win rate</span><b class="${(d.bot_win_rate||0) >= 0.8 ? 'up' : 'warn'}">${fmt.pct(d.bot_win_rate, 1)}</b>
-        <span>Setup</span><b>${escHtml(d.bot_setup || '—')}</b>
-        <span>Top pick</span><b>${d.bot_is_top_pick ? '<span class="up">✓ Yes</span>' : '<span class="muted">No</span>'}</b>
+      <div class="md-bot-row" style="display:flex;gap:16px;align-items:center;font-size:13px">
+        <div><span style="color:var(--tx-2)">Direction</span> <b class="pill ${dirCls}" style="font-size:10px;padding:2px 8px;margin-left:4px">${fmt.dirSym(dir)} ${dir || '—'}</b></div>
+        <div><span style="color:var(--tx-2)">Win rate</span> <b class="${(d.bot_win_rate||0) >= 0.8 ? 'up' : 'warn'}" style="margin-left:4px">${fmt.pct(d.bot_win_rate, 1)}</b></div>
+        <div><span style="color:var(--tx-2)">Setup</span> <b style="margin-left:4px">${escHtml(d.bot_setup || '—')}</b></div>
+        <div><span style="color:var(--tx-2)">Top pick</span> <b style="margin-left:4px">${d.bot_is_top_pick ? '<span class="up">✓</span>' : '<span class="muted">–</span>'}</b></div>
       </div>
       ${d.bot_indicators_raw ? `<div class="md-indicators">${escHtml(d.bot_indicators_raw)}</div>` : ''}
     </div>`;
