@@ -302,8 +302,7 @@ class PocketOptionAPIClient:
                 trade_id=str(trade_id),
             )
             log.info(
-                "Trade placed: %s %s amount=%.2f expiry=%ds trade_id=%s",
-                direction, pair, amount, expiry, trade_id,
+                f"Trade placed: {direction} {pair} amount={amount:.2f} expiry={expiry}s trade_id={trade_id}"
             )
             log_trade({
                 "id": result.id,
