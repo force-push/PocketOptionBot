@@ -162,6 +162,74 @@ python3 main_v2.py --cycles 5    # run exactly 5 cycles then exit
 
 ---
 
+## Web Dashboard
+
+A live monitoring + settings UI (FastAPI + WebSocket backend, zero-build vanilla
+JS frontend). Landscape layout: **Performance** (equity/P&L curve + win/loss)
+· **Active Trades** (live countdowns) · **Trade History**, plus an editable
+**Settings** tab. It reads the bot's output files and updates live over a
+WebSocket — it does **not** need the trading stack, an SSID, or Telegram.
+
+### Run it locally (one command)
+
+```bash
+git clone https://github.com/force-push/PocketOptionBot.git
+cd PocketOptionBot
+./scripts/run_dashboard.sh          # venv + install + seed demo data + serve
+```
+
+Then open **http://127.0.0.1:8787**. Use `--no-seed` to keep existing data.
+
+### Or step by step (works on Windows too)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install -r requirements-dashboard.txt
+python tools/dashboard_demo.py       # optional: seed synthetic demo data
+python -m dashboard.server           # http://127.0.0.1:8787
+```
+
+`requirements-dashboard.txt` is a minimal 5-package subset (FastAPI, uvicorn,
+watchfiles, pydantic-settings, python-dotenv) — no playwright / telethon / Rust
+wheel needed just to view the dashboard.
+
+### Demo data vs. live trading data
+
+- **Demo (default above):** `tools/dashboard_demo.py` writes deterministic
+  synthetic `data/decisions.jsonl` + `data/live_state.json` so the UI is fully
+  populated with no bot running. Re-run it any time to refresh.
+- **Live:** run the bot with the bridge enabled so it streams real state to the
+  dashboard as it trades:
+
+  ```bash
+  DASHBOARD_ENABLED=true python3 main_v2.py
+  ```
+
+  Start the dashboard server in a second terminal; it picks up changes live.
+
+### Settings tab (writes to `.env`)
+
+The Settings tab can edit configuration and save it back to `.env`. Safety rails
+are enforced server-side: secrets are masked and only written when changed, and
+flipping `TRADE_MODE` to **LIVE** is fail-closed — it requires explicit
+confirmation **and** an SSID that decodes as a live session. Most changes need a
+bot restart to take effect (the UI flags which).
+
+### Dashboard settings (`.env`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DASHBOARD_ENABLED` | `false` | bot streams live state when `true` |
+| `DASHBOARD_HOST` | `127.0.0.1` | bind address (keep localhost) |
+| `DASHBOARD_PORT` | `8787` | server port |
+| `DASHBOARD_TOKEN` | _(unset)_ | when set, required to save settings (sent as a Bearer token) |
+
+> 🔒 Bind to `127.0.0.1` only. The Settings tab can change trading config, so do
+> **not** expose the dashboard publicly without setting `DASHBOARD_TOKEN`.
+
+---
+
 ## Configuration Reference
 
 All settings live in `.env`. See `.env.example` for the full list.
