@@ -67,13 +67,39 @@ class StrategyManagerV2:
         dir_text, _ = await self._nav.read_latest_text()
         dscreen = parse_direction_screen(dir_text)
         if dscreen is None:
-            log.info("[{}] no direction screen for {}", cid, pair_api)
+            log.info("[{}] no direction screen for {} — text received: {!r}", cid, pair_api, dir_text[:300])
             return
+
+        # ── BOT signal summary ────────────────────────────────────────────────
+        log.info(
+            "[{}] ── {} ── BOT: {}  win={:.1f}%  setup={}",
+            cid, pair_api, dscreen.direction, top.win_rate * 100, dscreen.setup,
+        )
+        if dscreen.indicators_raw:
+            log.info("[{}]   BOT indicators: {}", cid, dscreen.indicators_raw)
 
         expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
         candle_list = await self._api.get_candles(pair_api, period=expiry, count=settings.history_length)
         df = candles_to_df(candle_list)
+        log.info("[{}]   candles={}  period={}s", cid, len(df), expiry)
         conf = await self._conf.score(df)
+
+        # ── Per-signal table ─────────────────────────────────────────────────
+        for name, vals in (conf.breakdown or {}).items():
+            sig_dir, sig_conf, sig_reason = (vals + (None,) * 3)[:3]
+            dir_str = sig_dir if sig_dir else "----"
+            log.info("[{}]   TA  {:14s} {}  conf={:.3f}  {}",
+                     cid, name, f"{dir_str:<4}", sig_conf or 0.0, sig_reason or "")
+
+        # ── Confluence result ─────────────────────────────────────────────────
+        agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
+        total_signals = len(conf.breakdown or {})
+        gate = "✓ PASS" if conf.direction is not None else "✗ FAIL"
+        log.info(
+            "[{}]   CONF {}  score={:.3f}  agreed={}/{}  {}  ({})",
+            cid, conf.direction or "----", conf.score, agreeing, total_signals,
+            gate, conf.reason,
+        )
 
         d = decide(bot_direction=dscreen.direction, our_direction=conf.direction,
                    bot_win_rate=top.win_rate, our_confluence=conf.score,
@@ -93,7 +119,7 @@ class StrategyManagerV2:
             bot_direction=dscreen.direction, bot_setup=dscreen.setup,
             bot_indicators_raw=dscreen.indicators_raw,
             our_direction=conf.direction, our_confluence_score=conf.score,
-            our_signal_breakdown={k: list(v) for k, v in (conf.breakdown or {}).items()},
+            our_signal_breakdown={k: list(v[:2]) for k, v in (conf.breakdown or {}).items()},
             agreement=(conf.direction == dscreen.direction),
             combined_probability=d.combined_probability, expiry_seconds=expiry,
             decision="TRADE" if d.trade else "SKIP", skip_reason=d.skip_reason,
@@ -104,7 +130,11 @@ class StrategyManagerV2:
             write_decision(log_path, row)
             if self._bridge:
                 self._bridge.on_decision(asdict(row))
-            log.info("[{}] SKIP {}: {}", cid, pair_api, d.skip_reason)
+            log.info(
+                "[{}] SKIP {}  reason={}  (bot={} our={} prob={:.2f})",
+                cid, pair_api, d.skip_reason,
+                dscreen.direction, conf.direction or "None", d.combined_probability,
+            )
             await self._nav.back_to_menu()
             return
 
@@ -134,8 +164,11 @@ class StrategyManagerV2:
                 "confluence_n": len(conf.breakdown or {}),
                 "confluence_score": conf.score,
             })
-        log.info("[{}] TRADE {} {} @{:.2f} exp={}s id={}",
-                 cid, dscreen.direction, pair_api, settings.stake_amount, expiry, row.trade_id)
+        log.info(
+            "[{}] TRADE {}  {}  @{:.2f}  exp={}s  prob={:.2f}  id={}",
+            cid, dscreen.direction, pair_api, settings.stake_amount,
+            expiry, d.combined_probability, row.trade_id,
+        )
 
         await self._nav.back_to_menu()
 
@@ -159,4 +192,5 @@ class StrategyManagerV2:
                     "result": outcome.lower() if isinstance(outcome, str) else outcome,
                     "balance_after": balance_after,
                 })
-            log.info("[{}] OUTCOME {} pnl={}", cid, outcome, pnl)
+            pnl_str = f"{pnl:+.2f}" if pnl is not None else "?"
+            log.info("[{}] OUTCOME {}  pnl={}  balance={}", cid, outcome.upper(), pnl_str, balance_after)

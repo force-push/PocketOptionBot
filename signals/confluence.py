@@ -70,9 +70,7 @@ class ConfluenceEngine:
             return ConfluenceResult(
                 direction=None,
                 score=0.0,
-                breakdown={
-                    r.name: (r.direction, r.confidence) for r in results.values()
-                },
+                breakdown={r.name: (r.direction, r.confidence, r.reason) for r in results.values()},
                 reason="Conflicting signals (CALL ≈ PUT)",
             )
 
@@ -80,25 +78,17 @@ class ConfluenceEngine:
         # Previously this counted CALL + PUT together, which allowed trades to
         # fire when e.g. 2 signals said CALL and 1 said PUT — not "agreement".
         agreeing_count = sum(1 for r in results.values() if r.direction == direction)
+        breakdown = {r.name: (r.direction, r.confidence, r.reason) for r in results.values()}
         if agreeing_count < 3:
             return ConfluenceResult(
                 direction=None,
                 score=0.0,
-                breakdown={
-                    r.name: (r.direction, r.confidence) for r in results.values()
-                },
+                breakdown=breakdown,
                 reason=(
                     f"Only {agreeing_count} signal(s) agree on {direction} "
                     f"(need ≥3 on the same side)"
                 ),
             )
-
-        breakdown = {r.name: (r.direction, r.confidence) for r in results.values()}
-
-        # Log the full breakdown
-        log.debug(
-            f"Confluence Score: {direction}={final_score:.2f} | {breakdown}"
-        )
 
         return ConfluenceResult(
             direction=direction,

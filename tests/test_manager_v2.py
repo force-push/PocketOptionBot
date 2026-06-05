@@ -36,7 +36,7 @@ async def test_one_cycle_trades_and_logs(tmp_path, monkeypatch):
 
     conf = MagicMock()
     conf_result = MagicMock(); conf_result.direction = "CALL"; conf_result.score = 0.81
-    conf_result.breakdown = {"RSI": ("CALL", 0.7)}
+    conf_result.breakdown = {"RSI": ("CALL", 0.7, "RSI oversold: 28.4")}
     conf.score = AsyncMock(return_value=conf_result)
 
     risk = MagicMock(); risk.is_allowed = MagicMock(return_value=True); risk.record_trade = MagicMock()
