@@ -89,7 +89,7 @@ export function initHistory(rootSel, countSel) {
         `<span class="${fmt.pnlClass(h.pnl)}" style="margin-left:7px">${fmt.pnl(h.pnl)}</span>`;
 
     return `<tr data-i="${i}" class="hist-row${newCls}${skipCls}" tabindex="0" role="button" aria-label="View trade detail">
-      <td class="mono muted">${fmt.time(h.time || h.ts)}</td>
+      <td class="mono muted">${fmt.time(h.ts)}</td>
       <td>
         <span class="dir-arrow ${dirCls}" title="${h.dir || ''}">${fmt.dirSym(h.dir)}</span>
         <span class="pair">${parts.base}${parts.otc ? '<span class="otc">otc</span>' : ''}</span>
@@ -139,7 +139,7 @@ function detailHtml(d) {
         ${isWin ? '▲' : isLoss ? '▼' : '○'} ${resLabel}
         ${!isSkip && d.pnl != null ? `&nbsp;${fmt.pnl(d.pnl)}` : ''}
       </span>
-      <span class="md-time">${fmt.time(d.time || d.ts)}</span>
+      <span class="md-time">${fmt.time(d.ts)}</span>
     </div>`;
 
   // ── Bot section ───────────────────────────────────────────────────────────

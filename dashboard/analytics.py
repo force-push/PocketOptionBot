@@ -59,10 +59,6 @@ def _parse_ts(rec: dict) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
-def _hhmmss(dt: Optional[datetime]) -> str:
-    return dt.strftime("%H:%M:%S") if dt else ""
-
-
 def _num(val: Any) -> Optional[float]:
     if val is None or isinstance(val, bool):
         return None
@@ -100,7 +96,6 @@ def history_row(rec: dict) -> dict:
 
     Includes SKIPs (decision == 'SKIP', skip_reason populated, result null).
     """
-    dt = _parse_ts(rec)
     pair_raw = rec.get("pair_raw")
     pair_api = rec.get("pair_api") or ""
     otc = bool(isinstance(pair_api, str) and pair_api.lower().endswith("_otc"))
@@ -109,7 +104,6 @@ def history_row(rec: dict) -> dict:
     return {
         "cycle_id": rec.get("cycle_id"),
         "ts": rec.get("ts"),
-        "time": _hhmmss(dt),
         "pair_raw": pair_raw,
         "pair_api": pair_api or None,
         "otc": otc,

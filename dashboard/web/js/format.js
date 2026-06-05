@@ -45,11 +45,9 @@ export function score(v, digits = 2) {
   return Number(v).toFixed(digits);
 }
 
-/** HH:MM:SS local time from an ISO timestamp (or pass through a time-string). */
+/** HH:MM:SS in the browser's local timezone from a UTC ISO timestamp. */
 export function time(iso) {
   if (!iso) return '—';
-  // already a HH:MM:SS string?
-  if (/^\d{2}:\d{2}(:\d{2})?$/.test(iso)) return iso;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleTimeString('en-GB', { hour12: false });

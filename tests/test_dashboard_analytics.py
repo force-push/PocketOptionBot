@@ -159,7 +159,7 @@ def test_history_newest_first_includes_skips():
         _trade(_iso(12, 0), trade_id="c", outcome="loss"),
     ]
     rows = analytics.history(recs, limit=100)
-    assert [r["time"] for r in rows] == ["12:00:00", "11:00:00", "10:00:00"]
+    assert [r["ts"] for r in rows] == [_iso(12, 0), _iso(11, 0), _iso(10, 0)]
     skip_row = rows[1]
     assert skip_row["decision"] == "SKIP"
     assert skip_row["result"] is None
@@ -182,13 +182,13 @@ def test_history_limit_and_before_cursor():
     recs = [_trade(_iso(10, i), trade_id=f"t{i}") for i in range(5)]
     page1 = analytics.history(recs, limit=2)
     assert len(page1) == 2
-    assert page1[0]["time"] == "10:04:00"
+    assert page1[0]["ts"] == _iso(10, 4)
     # before the last ts of page1 → next older rows
     cursor = page1[-1]["ts"]
     page2 = analytics.history(recs, limit=2, before=cursor)
     assert len(page2) == 2
     assert all(r["ts"] < cursor for r in page2)
-    assert page2[0]["time"] == "10:02:00"
+    assert page2[0]["ts"] == _iso(10, 2)
 
 
 # ── loading from file ─────────────────────────────────────────────────────────
@@ -212,4 +212,4 @@ def test_load_records_missing_file(tmp_path):
 
 def test_parse_ts_handles_zulu():
     rows = analytics.history([_trade("2026-06-15T10:00:00Z", trade_id="a")])
-    assert rows[0]["time"] == "10:00:00"
+    assert rows[0]["ts"] == "2026-06-15T10:00:00Z"
