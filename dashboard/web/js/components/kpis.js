@@ -48,7 +48,7 @@ export function initKpis(root) {
       <div class="kpi ${confCls}">
         <div class="label">Avg Confluence</div>
         <div class="val">${fmt.score(kpis.avg_confluence)}</div>
-        <div class="sub">floor 0.75</div>
+        <div class="sub">floor 0.40</div>
       </div>`;
 
     // flash the P&L cell when it changed

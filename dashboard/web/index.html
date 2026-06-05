@@ -42,8 +42,16 @@
     <!-- 3-column landscape grid -->
     <div class="grid">
 
-      <!-- LEFT (½) — Performance -->
-      <div class="panel perf" style="order:1">
+      <!-- LEFT (¼) — Active Trades -->
+      <div class="panel" style="order:1">
+        <div class="panel-head"><h3>Active Trades</h3><span class="count" id="active-count">0 open</span></div>
+        <div class="panel-body">
+          <div class="active-list" id="active-list"></div>
+        </div>
+      </div>
+
+      <!-- MIDDLE (½) — Performance -->
+      <div class="panel perf" style="order:2">
         <div class="panel-head">
           <h3>Performance</h3>
           <div class="seg" id="perf-seg" style="margin-left:auto" role="group" aria-label="Chart range">
@@ -56,14 +64,6 @@
           <span><i style="background:var(--tx-2)"></i>Break-even</span>
         </div>
         <div class="winloss" id="winloss"></div>
-      </div>
-
-      <!-- MIDDLE (¼) — Active Trades -->
-      <div class="panel" style="order:2">
-        <div class="panel-head"><h3>Active Trades</h3><span class="count" id="active-count">0 open</span></div>
-        <div class="panel-body">
-          <div class="active-list" id="active-list"></div>
-        </div>
       </div>
 
       <!-- RIGHT (¼) — Trade History -->
