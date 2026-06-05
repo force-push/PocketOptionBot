@@ -103,9 +103,36 @@ class ConfluenceEngine:
                 ),
             )
 
+        # Adaptive score threshold: fewer signals = lower bar.
+        # During calibration (2 signals agreeing), lower the threshold so we can
+        # see if the bot + 1–2 strong TA signals actually win trades.
+        # Once we have data, we'll tighten these based on real win rates.
+        #
+        # 2 signals:  0.10  (calibration mode: let through if bot agrees + 1 strong signal)
+        # 3 signals:  0.25  (moderate bar: need reasonable confidence from 3)
+        # 4 signals:  0.32  (higher bar: 4 need to show strength)
+        # 5 signals:  0.40  (strictest bar: all must contribute meaningfully)
+        min_score_for_agreement = {
+            2: 0.10,
+            3: 0.25,
+            4: 0.32,
+            5: 0.40,
+        }.get(agreeing_count, 0.40)
+
+        if final_score < min_score_for_agreement:
+            return ConfluenceResult(
+                direction=None,
+                score=0.0,
+                breakdown=breakdown,
+                reason=(
+                    f"Score too low: {final_score:.3f} < threshold {min_score_for_agreement} "
+                    f"for {agreeing_count} signals agreeing"
+                ),
+            )
+
         return ConfluenceResult(
             direction=direction,
             score=final_score,
             breakdown=breakdown,
-            reason=f"{direction} confluence={final_score:.2f}",
+            reason=f"{direction} confluence={final_score:.2f} ({agreeing_count}/5 agree)",
         )
