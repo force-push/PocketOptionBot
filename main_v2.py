@@ -84,6 +84,18 @@ def _build_components():
     )
     tracker = WinRateTracker()
 
+    # ── Dashboard StateBridge (optional, fail-closed, no-op when disabled) ────
+    bridge = None
+    if settings.dashboard_enabled:
+        from dashboard.state_bridge import StateBridge
+        bridge = StateBridge(
+            state_path=settings.live_state_path,
+            events_path=settings.events_log_path,
+            enabled=True,
+        )
+        log.info("Dashboard bridge enabled → {} / {}",
+                 settings.live_state_path, settings.events_log_path)
+
     # ── Navigator (Telegram button driver) ───────────────────────────────────
     navigator = Navigator(
         client=tg_client,
@@ -98,6 +110,7 @@ def _build_components():
         confluence_engine=confluence,
         risk_manager=risk,
         tracker=tracker,
+        bridge=bridge,
     )
 
     return tg_client, manager

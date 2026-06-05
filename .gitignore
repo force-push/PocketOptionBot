@@ -8,6 +8,8 @@ logs/*.log
 data/trades.jsonl
 data/win_rates.json
 data/decisions.jsonl
+data/live_state.json
+data/events.jsonl
 *.session
 *.session-journal
 htmlcov/

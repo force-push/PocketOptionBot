@@ -20,6 +20,11 @@ telethon>=1.34.0
 # PocketOption WebSocket API (Rust-backed wheel, supports Python 3.8–3.13)
 binaryoptionstoolsv2>=0.2.8
 
+# Dashboard (optional web UI — only needed to run `python3 -m dashboard.server`)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+watchfiles>=0.21
+
 # Development
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
