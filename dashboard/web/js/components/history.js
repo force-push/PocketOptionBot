@@ -231,6 +231,7 @@ function detailHtml(d) {
     tradeSection = `
       <div class="md-section">
         <div class="md-section-title">Trade</div>
+        ${d.trade_id ? `<div style="font-size:11px;color:var(--tx-2);padding:6px 0;font-family:var(--mono);word-break:break-all">ID: <b style="color:var(--tx-1)">${escHtml(d.trade_id)}</b></div>` : ''}
         <div class="md-trade-grid">
           <div class="md-stat">
             <div class="md-stat-label">Stake</div>
