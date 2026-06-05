@@ -190,9 +190,20 @@ function detailHtml(d) {
   // ── Confluence ────────────────────────────────────────────────────────────
   const conf     = d.our_confluence_score;
   const ourDir   = d.our_direction;
-  const confCls  = ourDir === 'CALL' ? 'up' : ourDir === 'PUT' ? 'down' : 'muted';
   const totalSig = Object.keys(breakdown).length;
-  const agreed   = Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === ourDir).length;
+
+  // When gate fails (ourDir=None), show agreement for the direction that scored highest,
+  // not for None (which would count null signals incorrectly).
+  let displayDir = ourDir;
+  if (!displayDir) {
+    // Count signals per direction to find the winner
+    const callCount = Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === 'CALL').length;
+    const putCount  = Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === 'PUT').length;
+    displayDir = callCount >= putCount ? 'CALL' : putCount > 0 ? 'PUT' : null;
+  }
+
+  const agreed   = displayDir ? Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === displayDir).length : 0;
+  const confCls  = ourDir === 'CALL' ? 'up' : ourDir === 'PUT' ? 'down' : 'muted';
   const gatePass = ourDir != null && agreed >= 3;
 
   const confSection = `
@@ -201,8 +212,8 @@ function detailHtml(d) {
       <div class="md-conf-row">
         <span class="md-conf-score ${confCls}">${conf != null ? conf.toFixed(3) : '—'}</span>
         <div class="md-conf-meta">
-          <div>${ourDir ? `<b>${ourDir}</b>` : '<span class="muted">No direction</span>'} &nbsp;·&nbsp; ${agreed}/${totalSig} signals agree</div>
-          <div class="${gatePass ? 'gate-pass' : 'gate-fail'}">${gatePass ? '✓ Gate passed (≥3 agree)' : '✗ Gate failed (need ≥3 on same side)'}</div>
+          <div>${displayDir ? `<b>${displayDir}</b>` : '<span class="muted">No direction</span>'} &nbsp;·&nbsp; ${agreed}/${totalSig} signals agree</div>
+          <div class="${gatePass ? 'gate-pass' : 'gate-fail'}">${ourDir ? (agreed >= 3 ? '✓ Gate passed (≥3 agree)' : `✗ Gate failed: only ${agreed} signal(s) on ${ourDir} (need ≥3)`) : '✗ Gate failed (tie or no signals)'}</div>
         </div>
         ${d.combined_probability != null ? `<div class="mono" style="font-size:12px;color:var(--tx-1)">prob&nbsp;<b>${(d.combined_probability*100).toFixed(1)}%</b></div>` : ''}
       </div>
