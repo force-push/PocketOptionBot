@@ -9,17 +9,35 @@ const modalEl  = overlay?.querySelector('.modal-card');
 const contentEl = document.getElementById('modal-content');
 const closeBtn  = document.getElementById('modal-close');
 
-function openModal(cycleId) {
-  if (!overlay || !contentEl) return;
+function openModal(cycleId, fallbackRow) {
+  if (!overlay || !contentEl) {
+    console.warn('[modal] #trade-modal not found — did the page load before the new index.html? Hard-refresh the browser.');
+    return;
+  }
   contentEl.innerHTML = '<div style="color:var(--tx-2);padding:24px 0;text-align:center">Loading…</div>';
   overlay.hidden = false;
   document.body.style.overflow = 'hidden';
+
+  if (store.get('demo') || !cycleId) {
+    // Demo mode — load the sample detail so the modal shows a full breakdown
+    const sampleUrl = new URL('../sample/trade_detail.json', import.meta.url);
+    fetch(sampleUrl)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        // Overlay the actual row fields so pair/result/time are accurate
+        contentEl.innerHTML = detailHtml({ ...d, ...fallbackRow });
+      })
+      .catch(() => { contentEl.innerHTML = detailHtml(fallbackRow || {}); });
+    return;
+  }
 
   fetch(`/api/trade/${encodeURIComponent(cycleId)}`)
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => { contentEl.innerHTML = detailHtml(d); })
     .catch(err => {
-      contentEl.innerHTML = `<div style="color:var(--down);padding:24px 0;text-align:center">Failed to load trade detail (${err})</div>`;
+      // Fall back to whatever row data we already have
+      contentEl.innerHTML = detailHtml(fallbackRow || {});
+      console.warn('[modal] full detail fetch failed:', err);
     });
 }
 
@@ -84,7 +102,7 @@ export function initHistory(rootSel, countSel) {
     const tr = e.target.closest('tr.hist-row');
     if (!tr) return;
     const h = rows[+tr.dataset.i];
-    if (h?.cycle_id) openModal(h.cycle_id);
+    if (h) openModal(h.cycle_id, h);
   });
 
   tbody.addEventListener('keydown', e => {
@@ -93,7 +111,7 @@ export function initHistory(rootSel, countSel) {
     if (!tr) return;
     e.preventDefault();
     const h = rows[+tr.dataset.i];
-    if (h?.cycle_id) openModal(h.cycle_id);
+    if (h) openModal(h.cycle_id, h);
   });
 
   store.subscribe('history', render);
