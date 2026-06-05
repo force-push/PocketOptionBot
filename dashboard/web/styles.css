@@ -120,18 +120,18 @@ body {
 /* ============================================================
    KPI STRIP
    ============================================================ */
-.kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; padding: 14px 18px 4px; flex: 0 0 auto; }
+.kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; padding: 12px 18px 2px; flex: 0 0 auto; }
 .kpi {
   background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
   border: 1px solid var(--stroke); border-radius: var(--radius);
-  padding: 13px 15px; position: relative; overflow: hidden;
+  padding: 10px 12px; position: relative; overflow: hidden;
 }
 .kpi::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--accent); opacity:.6; }
 .kpi.k-up::before { background: var(--up); }
 .kpi.k-down::before { background: var(--down); }
-.kpi .label { color: var(--tx-2); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
-.kpi .val { font-family: var(--mono); font-size: 22px; font-weight: 600; margin-top: 6px; letter-spacing: -.5px; }
-.kpi .sub { font-size: 11px; margin-top: 3px; color: var(--tx-2); }
+.kpi .label { color: var(--tx-2); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.kpi .val { font-family: var(--mono); font-size: 20px; font-weight: 600; margin-top: 4px; letter-spacing: -.5px; }
+.kpi .sub { font-size: 10px; margin-top: 2px; color: var(--tx-2); }
 
 /* P&L flash on change */
 @keyframes flashUp { 0% { background: var(--up-dim); } 100% { background: transparent; } }
