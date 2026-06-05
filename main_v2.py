@@ -113,7 +113,7 @@ def _build_components():
         bridge=bridge,
     )
 
-    return tg_client, manager
+    return tg_client, api_client, manager
 
 
 async def main(cycles: int = 0) -> None:
@@ -130,7 +130,13 @@ async def main(cycles: int = 0) -> None:
     if settings.trade_mode == TradeMode.LIVE and not settings.dry_run:
         log.warning("⚠  LIVE mode active — real money at stake!")
 
-    tg_client, manager = _build_components()
+    tg_client, api_client, manager = _build_components()
+
+    if settings.po_ssid:
+        log.info("Connecting PocketOption API…")
+        await api_client.connect()
+    else:
+        log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
 
     async with tg_client:
         count = 0
