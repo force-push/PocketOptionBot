@@ -153,6 +153,14 @@ def create_app() -> FastAPI:
         next_before = rows[-1]["ts"] if rows and len(rows) >= limit and limit > 0 else None
         return {"rows": rows, "next_before": next_before}
 
+    @app.get("/api/trade/{cycle_id}")
+    def get_trade_detail(cycle_id: str) -> Any:
+        records = analytics.load_records(_decisions_path())
+        rec = analytics.find_by_cycle_id(records, cycle_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="trade not found")
+        return analytics.full_detail_row(rec)
+
     @app.get("/api/performance", response_model=PerformanceResponse)
     def get_performance(range: str = Query("ALL")) -> Any:
         records = analytics.load_records(_decisions_path())

@@ -107,6 +107,7 @@ def history_row(rec: dict) -> dict:
     decision = str(rec.get("decision", "")).strip().upper() or None
     result = _normalize_result(rec) if _is_trade(rec) else None
     return {
+        "cycle_id": rec.get("cycle_id"),
         "ts": rec.get("ts"),
         "time": _hhmmss(dt),
         "pair_raw": pair_raw,
@@ -124,6 +125,36 @@ def history_row(rec: dict) -> dict:
         "skip_reason": rec.get("skip_reason"),
         "trade_id": rec.get("trade_id"),
     }
+
+
+def full_detail_row(rec: dict) -> dict:
+    """Return the complete decision record enriched with derived display fields."""
+    base = history_row(rec)
+    base.update({
+        "bot_direction": rec.get("bot_direction"),
+        "bot_setup": rec.get("bot_setup"),
+        "bot_indicators_raw": rec.get("bot_indicators_raw"),
+        "bot_is_top_pick": rec.get("bot_is_top_pick"),
+        "our_direction": rec.get("our_direction"),
+        "our_confluence_score": _num(rec.get("our_confluence_score")),
+        "our_signal_breakdown": rec.get("our_signal_breakdown") or {},
+        "agreement": rec.get("agreement"),
+        "combined_probability": _num(rec.get("combined_probability")),
+        "balance_before": _num(rec.get("balance_before")),
+        "balance_after": _num(rec.get("balance_after")),
+        "pnl_currency": rec.get("pnl_currency") or "USD",
+        "status": rec.get("status"),
+        "outcome": rec.get("outcome"),
+    })
+    return base
+
+
+def find_by_cycle_id(records: Iterable[dict], cycle_id: str) -> Optional[dict]:
+    """Return the first record matching cycle_id, or None."""
+    for rec in records:
+        if rec.get("cycle_id") == cycle_id:
+            return rec
+    return None
 
 
 def history(
@@ -320,6 +351,8 @@ def kpis(
 __all__ = [
     "load_records",
     "history_row",
+    "full_detail_row",
+    "find_by_cycle_id",
     "history",
     "equity_curve",
     "winloss",

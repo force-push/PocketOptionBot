@@ -119,7 +119,7 @@ class StrategyManagerV2:
             bot_direction=dscreen.direction, bot_setup=dscreen.setup,
             bot_indicators_raw=dscreen.indicators_raw,
             our_direction=conf.direction, our_confluence_score=conf.score,
-            our_signal_breakdown={k: list(v[:2]) for k, v in (conf.breakdown or {}).items()},
+            our_signal_breakdown={k: list(v[:3]) for k, v in (conf.breakdown or {}).items()},
             agreement=(conf.direction == dscreen.direction),
             combined_probability=d.combined_probability, expiry_seconds=expiry,
             decision="TRADE" if d.trade else "SKIP", skip_reason=d.skip_reason,
