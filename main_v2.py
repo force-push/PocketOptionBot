@@ -70,14 +70,30 @@ def _build_components():
     )
 
     # ── 5-signal TA confluence engine ─────────────────────────────────────────
+    # All signal parameters are driven from settings so they can be tuned via
+    # .env or the dashboard without touching this file.
     signals = [
-        RSISignal(period=14),
-        MACDSignal(),
-        BollingerSignal(),
-        EMASignal(fast=9, slow=21),
+        RSISignal(
+            period=settings.rsi_period,
+            oversold=settings.rsi_oversold,
+            overbought=settings.rsi_overbought,
+        ),
+        MACDSignal(
+            fast=settings.macd_fast,
+            slow=settings.macd_slow,
+            signal=settings.macd_signal_period,
+        ),
+        BollingerSignal(
+            period=settings.bollinger_period,
+            std_dev=settings.bollinger_std,
+        ),
+        EMASignal(
+            fast=settings.ema_fast,
+            slow=settings.ema_slow,
+        ),
         CandlePatternSignal(),
     ]
-    confluence = ConfluenceEngine(signals)
+    confluence = ConfluenceEngine(signals, min_agreement=settings.min_signal_agreement)
 
     # ── Risk + win-rate tracker ───────────────────────────────────────────────
     risk = RiskManager(

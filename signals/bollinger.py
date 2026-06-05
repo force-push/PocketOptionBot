@@ -8,8 +8,14 @@ from signals.base import BaseSignal, SignalResult
 class BollingerSignal(BaseSignal):
     """Bollinger Bands mean reversion signal.
 
-    - CALL if price touches/breaks lower band + shows reversal
-    - PUT if price touches/breaks upper band + shows reversal
+    Fires when price is outside the bands, indicating overextension likely to
+    revert.  Confidence scales with how far price has broken through the band
+    (measured in standard deviations), so a deep break fires with higher
+    confidence than a marginal touch.
+
+    Parameters are configurable (BOLLINGER_PERIOD / BOLLINGER_STD in .env).
+    Wider bands (std=2.5) fire less often but signal stronger overextension;
+    narrower bands (std=1.5) fire more often on smaller deviations.
     """
 
     name = "Bollinger"

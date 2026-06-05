@@ -17,10 +17,23 @@ class ConfluenceResult:
 
 
 class ConfluenceEngine:
-    """Combine multiple signals into a single trading decision."""
+    """Combine multiple signals into a single trading decision.
 
-    def __init__(self, signals: list[BaseSignal]):
+    Two independent gates must both pass for a direction to be returned:
+      1. Agreement gate  — at least ``min_agreement`` signals must agree on
+         the same non-None direction (configurable via MIN_SIGNAL_AGREEMENT).
+      2. Score floor     — the weighted confidence sum for the winning side must
+         reach ``min_score`` (configurable via MIN_CONFLUENCE_SCORE in
+         strategy/decision.py / settings).
+
+    Keeping these gates separate allows independent tuning: you can require
+    fewer signals to agree (gate 1) while maintaining a score floor (gate 2),
+    or vice versa.
+    """
+
+    def __init__(self, signals: list[BaseSignal], min_agreement: int = 3):
         self.signals = signals
+        self.min_agreement = min_agreement
         # Normalize weights
         total = sum(s.weight for s in signals)
         self.weights = {s.name: s.weight / total for s in signals} if total > 0 else {}
@@ -79,14 +92,14 @@ class ConfluenceEngine:
         # fire when e.g. 2 signals said CALL and 1 said PUT — not "agreement".
         agreeing_count = sum(1 for r in results.values() if r.direction == direction)
         breakdown = {r.name: (r.direction, r.confidence, r.reason) for r in results.values()}
-        if agreeing_count < 3:
+        if agreeing_count < self.min_agreement:
             return ConfluenceResult(
                 direction=None,
                 score=0.0,
                 breakdown=breakdown,
                 reason=(
                     f"Only {agreeing_count} signal(s) agree on {direction} "
-                    f"(need ≥3 on the same side)"
+                    f"(need ≥{self.min_agreement} on the same side)"
                 ),
             )
 

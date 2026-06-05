@@ -96,7 +96,7 @@ def test_read_settings_groups_mirror_mockup():
     # groups is an ORDERED array of cards with display metadata (UI shape).
     assert isinstance(out["groups"], list)
     ids = [g["id"] for g in out["groups"]]
-    assert ids == ["safety", "gate", "risk", "telegram", "pocketoption"]
+    assert ids == ["safety", "gate", "ta", "risk", "telegram", "pocketoption"]
     safety = out["groups"][0]
     assert safety["span2"] is True and safety["title"] == "Safety & Trade Mode"
     assert all("fields" in g and g["fields"] for g in out["groups"])

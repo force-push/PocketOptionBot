@@ -31,14 +31,39 @@ class BotSettings(BaseSettings):
     trade_amount: float = Field(default=1.0, alias="TRADE_AMOUNT", gt=0)
 
     # ── Signal Engine ──
+    # Lowered from 0.75: with trend-direction MACD/EMA signals (see signals/macd.py,
+    # ema_cross.py) real-world scores land in 0.25-0.60 for 3-4 agreeing signals.
+    # 0.75 required near-perfect confidence from all signals simultaneously —
+    # only achievable on fresh crossovers, blocking most valid trend entries.
     min_confluence_score: float = Field(
-        default=0.75, alias="MIN_CONFLUENCE_SCORE", ge=0.0, le=1.0
+        default=0.40, alias="MIN_CONFLUENCE_SCORE", ge=0.0, le=1.0
     )
+    # Minimum number of signals that must agree on the same direction.
+    # Separate from the score floor: both gates must pass independently.
+    min_signal_agreement: int = Field(default=3, alias="MIN_SIGNAL_AGREEMENT", ge=1, le=5)
     max_trades_per_hour: int = Field(default=10, alias="MAX_TRADES_PER_HOUR", ge=1)
     max_daily_loss_usd: float = Field(default=20.0, alias="MAX_DAILY_LOSS_USD", ge=0)
-    candle_interval_seconds: int = Field(default=60, alias="CANDLE_INTERVAL_SECONDS", ge=1)
+    # Candle resolution fed to TA signals. Deliberately decoupled from the trade
+    # expiry — signals need fine-grained price action, not one candle per trade.
+    # 5 s: 100 candles ≈ 8 min of context, fine-grained enough for 30 s expiry.
+    # Previously defaulted to 60 s and was (incorrectly) overridden by expiry in
+    # manager_v2.py; both bugs are now fixed.
+    candle_interval_seconds: int = Field(default=5, alias="CANDLE_INTERVAL_SECONDS", ge=1)
     history_length: int = Field(default=100, alias="HISTORY_LENGTH", ge=10)
     cooldown_after_loss_seconds: int = Field(default=120, alias="COOLDOWN_AFTER_LOSS_SECONDS", ge=0)
+
+    # ── Per-signal parameters (wired into signal constructors in main_v2.py) ──
+    # Expose here so they can be tuned via .env or dashboard without code changes.
+    rsi_period: int = Field(default=14, alias="RSI_PERIOD", ge=2)
+    rsi_oversold: float = Field(default=30.0, alias="RSI_OVERSOLD", ge=1.0, le=49.0)
+    rsi_overbought: float = Field(default=70.0, alias="RSI_OVERBOUGHT", ge=51.0, le=99.0)
+    macd_fast: int = Field(default=12, alias="MACD_FAST", ge=2)
+    macd_slow: int = Field(default=26, alias="MACD_SLOW", ge=3)
+    macd_signal_period: int = Field(default=9, alias="MACD_SIGNAL_PERIOD", ge=2)
+    ema_fast: int = Field(default=9, alias="EMA_FAST", ge=2)
+    ema_slow: int = Field(default=21, alias="EMA_SLOW", ge=3)
+    bollinger_period: int = Field(default=20, alias="BOLLINGER_PERIOD", ge=5)
+    bollinger_std: float = Field(default=2.0, alias="BOLLINGER_STD", ge=0.5, le=5.0)
 
     # ── Risk ──
     dry_run: bool = Field(default=True, alias="DRY_RUN")

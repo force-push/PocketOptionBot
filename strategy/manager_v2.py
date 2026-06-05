@@ -79,9 +79,15 @@ class StrategyManagerV2:
             log.info("[{}]   BOT indicators: {}", cid, dscreen.indicators_raw)
 
         expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
-        candle_list = await self._api.get_candles(pair_api, period=expiry, count=settings.history_length)
+        # Candle resolution is deliberately decoupled from the trade expiry.
+        # Using period=expiry (e.g. 30 s) meant one candle per trade window —
+        # too coarse for MACD/EMA which need 26+ candles of meaningful price
+        # action.  CANDLE_INTERVAL_SECONDS (default 5 s) gives fine-grained
+        # momentum data; 100 × 5 s = 8+ minutes of context for any expiry.
+        candle_period = settings.candle_interval_seconds
+        candle_list = await self._api.get_candles(pair_api, period=candle_period, count=settings.history_length)
         df = candles_to_df(candle_list)
-        log.info("[{}]   candles={}  period={}s", cid, len(df), expiry)
+        log.info("[{}]   candles={}  period={}s  expiry={}s", cid, len(df), candle_period, expiry)
         conf = await self._conf.score(df)
 
         # ── Per-signal table ─────────────────────────────────────────────────
