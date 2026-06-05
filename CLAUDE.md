@@ -71,10 +71,13 @@ Key settings groups:
 - **v2 gate settings:** `PAIR_SELECT_MIN_WIN_RATE` (default `0.0` = disabled
   during testing; set to `0.82` for real runs), `DEFAULT_EXPIRY_SECONDS` (30),
   `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (1.50).
-- **TA thresholds:** `MIN_CONFLUENCE_SCORE` (default `0.75`).
+- **TA thresholds:** `MIN_SIGNAL_AGREEMENT` (default `2` — how many of 5 signals must
+  agree), `MIN_CONFLUENCE_SCORE` (default `0.40`, adaptive based on agreement count),
+  `CANDLE_INTERVAL_SECONDS` (default `5` seconds — decoupled from expiry).
 - **Safety:** `TRADE_MODE` (defaults to `DEMO`, hard-reset to DEMO if
   unset/empty; `LIVE` must be explicit), `DRY_RUN` (defaults `true` — log trades
-  without calling the API), plus the RiskManager limits.
+  without calling the API; set to `false` for real execution), plus the RiskManager
+  limits (`MAX_TRADES_PER_HOUR`, `MAX_DAILY_LOSS_USD`, etc.).
 
 Secrets (`PO_SSID`, Telegram credentials) and the Telethon `*.session` file live
 in `.env` / the working dir and are gitignored. Never commit them.
@@ -106,9 +109,16 @@ po_broker_bot (Telegram)
         │
         ├─ SKIP → back_to_menu
         └─ TRADE → strategy/risk.py → broker/po_api.py buy/sell()
-                 → navigator.back_to_menu()
-                 → await check_win() → backfill_outcome()
-                 → WinRateTracker.record() + RiskManager.record_trade()
+                 ↓ (immediately, non-blocking)
+                 navigator.back_to_menu()
+                 ↓ (main loop continues — don't wait for expiry)
+                 ┌─────────────────────────────────────┐
+                 │ Background async resolver:          │
+                 │ - Wait for expiry time              │
+                 │ - check_win(trade_id)               │
+                 │ - backfill_outcome()                │
+                 │ - record() win/loss for tracking    │
+                 └─────────────────────────────────────┘
 ```
 
 ### Components
@@ -150,16 +160,18 @@ po_broker_bot (Telegram)
   class-level `name`/`weight`, implements `async def evaluate(df) ->
   SignalResult`. **DataFrame columns are short names `o, h, l, c, v`**, time
   indexed. Signals are self-contained and defensive: return a neutral
-  `SignalResult(direction=None, confidence=0.0, ...)` on insufficient data or
-  errors rather than raising. Indicators use **pure pandas/numpy** — do not use
-  `pandas-ta` (incompatible with newer Python).
+  `SignalResult(direction=None, confidence=0.0, reason="...")` on insufficient
+  data or errors rather than raising. Indicators use **pure pandas/numpy** — do
+  not use `pandas-ta` (incompatible with newer Python). Reason strings (e.g.,
+  "RSI oversold: 28.4") provide explainability in logs and dashboard modals.
 
 - **`signals/confluence.py`** — `ConfluenceEngine.score(df) -> ConfluenceResult`.
   Normalises weights, evaluates all signals, sums weighted confidence into
-  `call_score`/`put_score`. **Two hard gates: ≥3 signals must agree on the SAME
-  non-None direction, AND the winning side must beat the other.** Tied scores
-  return `direction=None`. Fixed bug: old code counted CALL+PUT combined, not
-  per-side.
+  `call_score`/`put_score`. **Two independent gates:**
+  1. Agreement gate: ≥`MIN_SIGNAL_AGREEMENT` signals must agree on the SAME
+     non-None direction (default 2/5, configurable).
+  2. Score floor: weighted confidence sum must exceed an adaptive threshold based
+     on how many signals agree (0.10–0.40). Tied scores return `direction=None`.
 
 - **`strategy/decision.py`** — pure function `decide(bot_direction, our_direction,
   bot_win_rate, our_confluence, our_score_floor) -> Decision`. No side effects.

@@ -8,8 +8,17 @@ decision.  Two independent gates must both pass before a trade is taken:
 1. **Agreement gate** (`MIN_SIGNAL_AGREEMENT`, default **2/5**) — at least N signals
    must agree on the same non-None direction.  Lowered to 2 for calibration so
    trades execute and real outcomes inform tuning. Raise to 3+ for stricter entry.
-2. **Score floor** (`MIN_CONFLUENCE_SCORE`, default **0.40**) — the weighted sum of
-   confidences for the winning direction must exceed this threshold.
+2. **Score floor** (adaptive based on agreement count, default **0.10–0.40**) — the
+   weighted sum of confidences for the winning direction must exceed a threshold that
+   varies by how many signals agree:
+   - 2 signals agree → threshold = 0.10 (calibration mode)
+   - 3 signals agree → threshold = 0.25
+   - 4 signals agree → threshold = 0.32
+   - 5 signals agree → threshold = 0.40
+
+This adaptive approach prevents the score gate from being too strict when fewer signals
+agree (they need to be more confident), while still filtering out low-confidence trades
+when many signals agree.
 
 Both gates are tunable via `.env` / dashboard without a code change.
 
@@ -176,3 +185,25 @@ Once real trade data accumulates in `data/decisions.jsonl`:
 PocketOption expiry options change dynamically; if a previously available expiry
 disappears, update `DEFAULT_EXPIRY_SECONDS` in Settings.  The `select_expiry()`
 helper snaps the requested value to the nearest allowed one automatically.
+
+---
+
+## Trade Execution & Background Resolution
+
+Once a trade passes both confluence gates and the risk manager approves it:
+
+1. **Immediate execution** — trade is placed via the PocketOption API
+2. **Main loop continues** — bot does NOT block waiting for expiry (30+ seconds)
+3. **Background resolution** — async task waits for expiry, checks outcome, updates logs
+4. **Results stored** — outcomes backfilled into `data/decisions.jsonl` with WIN/LOSS/DRAW
+
+**Key settings:**
+- `TRADE_MODE` — must be `DEMO` (default, safe). Never set to `LIVE` unless intentional.
+- `DRY_RUN` — when `true`, trades are logged but not executed (no outcomes). Set to
+  `false` to actually execute trades on the API and see real results.
+- `MAX_TRADES_PER_HOUR` — sliding 1-hour window limit (default 24)
+- `MAX_DAILY_LOSS_USD` — daily loss limit (default $50)
+
+The background resolver allows the bot to process ~2 trades/minute instead of
+~2 trades/30-second expiry. This dramatically increases throughput during calibration
+and lets you gather data on signal performance quickly.
