@@ -1,6 +1,6 @@
 // main.js — bootstrap, hash router, WS + REST wiring, demo-mode fallback.
 import store from './store.js';
-import api from './api.js';
+import api, { getToken } from './api.js';
 import { ReconnectingWS } from './ws.js';
 import * as fmt from './format.js';
 
@@ -307,7 +307,8 @@ async function boot() {
   // backend reachable — load the rest and open the websocket
   await Promise.allSettled([loadHistory(), refreshPerformance(), loadSettings()]);
 
-  ws = new ReconnectingWS('/ws', {
+  const tok = getToken();
+  ws = new ReconnectingWS(tok ? `/ws?token=${encodeURIComponent(tok)}` : '/ws', {
     onStatus: (s) => store.setWsStatus(s),
     onMessage: onWsMessage,
   });

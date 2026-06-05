@@ -52,10 +52,10 @@
       "icon": "⚖️",
       "subtitle": "Hard limits & cooldowns",
       "fields": [
-        {"key": "MAX_TRADES_PER_HOUR", "label": "Max Trades / Hour", "type": "number", "value": 10, "step": 1, "requires_restart": false},
-        {"key": "DAILY_LOSS_LIMIT", "label": "Daily Loss Limit (USD)", "type": "number", "value": 25.00, "step": 1, "requires_restart": false},
-        {"key": "POST_LOSS_COOLDOWN_SECONDS", "label": "Post-Loss Cooldown (s)", "type": "number", "value": 120, "step": 5, "requires_restart": false},
-        {"key": "MIN_BALANCE_MULTIPLIER", "label": "Min Balance Multiplier", "type": "number", "value": 5, "step": 1, "requires_restart": false}
+        {"key": "MAX_TRADES_PER_HOUR", "label": "Max Trades / Hour", "type": "number", "value": 10, "step": 1, "requires_restart": true},
+        {"key": "MAX_DAILY_LOSS_USD", "label": "Daily Loss Limit (USD)", "type": "number", "value": 25.00, "step": 1, "requires_restart": true},
+        {"key": "COOLDOWN_AFTER_LOSS_SECONDS", "label": "Post-Loss Cooldown (s)", "type": "number", "value": 120, "step": 5, "requires_restart": true},
+        {"key": "MIN_BALANCE_MULTIPLIER", "label": "Min Balance Multiplier", "type": "number", "value": 5, "step": 1, "requires_restart": true}
       ]
     }
   ]

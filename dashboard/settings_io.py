@@ -33,9 +33,14 @@ MASK = "••••"
 # Gate, Risk. ``requires_restart`` flags fields the running bot won't hot-reload.
 
 class _F:
-    __slots__ = ("env", "attr", "group", "kind", "secret", "requires_restart", "label")
+    # ``kind`` is the python type (used for value coercion/validation); ``control``
+    # is the UI widget type the frontend renders (docs/dashboard-plan.md §7):
+    # mode | toggle | ratio | number | secret | text.
+    __slots__ = ("env", "attr", "group", "kind", "secret", "requires_restart",
+                 "label", "control", "hint", "step")
 
-    def __init__(self, env, attr, group, kind, secret, requires_restart, label):
+    def __init__(self, env, attr, group, kind, secret, requires_restart, label,
+                 control, hint=None, step=None):
         self.env = env
         self.attr = attr
         self.group = group
@@ -43,29 +48,52 @@ class _F:
         self.secret = secret
         self.requires_restart = requires_restart
         self.label = label
+        self.control = control
+        self.hint = hint
+        self.step = step
+
+
+# Group display metadata (mirrors the Carbon mockup's Settings cards). Keyed by
+# the ``group`` string on each field. ``order`` controls left-to-right placement.
+GROUP_META: dict[str, dict] = {
+    "Safety & Trade Mode": {"id": "safety", "title": "Safety & Trade Mode", "icon": "🛡️",
+                            "subtitle": "Hard-defaults to DEMO. LIVE must be explicit.", "span2": True, "order": 0},
+    "Telegram": {"id": "telegram", "title": "Telegram Session", "icon": "✈️",
+                 "subtitle": "Telethon user session (MTProto)", "order": 1},
+    "PocketOption WS": {"id": "pocketoption", "title": "PocketOption WS", "icon": "📡",
+                        "subtitle": "Trading-terminal auth frame", "order": 2},
+    "Signal Gate": {"id": "gate", "title": "Signal Gate", "icon": "🎯",
+                    "subtitle": "Entry thresholds", "order": 3},
+    "Risk": {"id": "risk", "title": "Risk Manager", "icon": "⚖️",
+             "subtitle": "Hard limits & cooldowns", "order": 4},
+}
 
 
 FIELDS: list[_F] = [
     # Safety / Mode
-    _F("TRADE_MODE", "trade_mode", "Safety & Trade Mode", "str", False, True, "Trade Mode"),
-    _F("DRY_RUN", "dry_run", "Safety & Trade Mode", "bool", False, False, "Dry Run"),
-    _F("STAKE_AMOUNT", "stake_amount", "Safety & Trade Mode", "float", False, False, "Stake Amount (USD)"),
-    _F("DEFAULT_EXPIRY_SECONDS", "default_expiry_seconds", "Safety & Trade Mode", "int", False, False, "Default Expiry (s)"),
+    _F("TRADE_MODE", "trade_mode", "Safety & Trade Mode", "str", False, True, "Trade Mode", "mode"),
+    _F("DRY_RUN", "dry_run", "Safety & Trade Mode", "bool", False, False, "Dry Run", "toggle",
+       hint="Log trades without calling the API"),
+    _F("STAKE_AMOUNT", "stake_amount", "Safety & Trade Mode", "float", False, False, "Stake Amount (USD)", "number", step=0.5),
+    _F("DEFAULT_EXPIRY_SECONDS", "default_expiry_seconds", "Safety & Trade Mode", "int", False, False, "Default Expiry (s)", "number", step=1),
     # Telegram
-    _F("TELEGRAM_API_ID", "telegram_api_id", "Telegram", "int", False, True, "API ID"),
-    _F("TELEGRAM_API_HASH", "telegram_api_hash", "Telegram", "str", True, True, "API Hash"),
-    _F("SIGNAL_BOT_USERNAME", "signal_bot_username", "Telegram", "str", False, True, "Signal Bot"),
+    _F("TELEGRAM_API_ID", "telegram_api_id", "Telegram", "int", False, True, "API ID", "text"),
+    _F("TELEGRAM_API_HASH", "telegram_api_hash", "Telegram", "str", True, True, "API Hash", "secret"),
+    _F("SIGNAL_BOT_USERNAME", "signal_bot_username", "Telegram", "str", False, True, "Signal Bot", "text"),
     # PocketOption WS
-    _F("PO_SSID", "po_ssid", "PocketOption WS", "str", True, True, "SSID"),
+    _F("PO_SSID", "po_ssid", "PocketOption WS", "str", True, True, "SSID", "secret",
+       hint='full 42["auth",{…}] frame'),
     # Signal Gate
-    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, False, "Min Win Rate"),
-    _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, False, "Min Confluence"),
-    _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, False, "Click Trade Anyway"),
+    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, False, "Min Win Rate", "ratio",
+       hint="bot pair gate"),
+    _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, False, "Min Confluence", "ratio"),
+    _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, False, "Click Trade Anyway", "toggle",
+       hint="auto-dismiss nag screens"),
     # Risk
-    _F("MAX_TRADES_PER_HOUR", "max_trades_per_hour", "Risk", "int", False, True, "Max Trades / Hour"),
-    _F("MAX_DAILY_LOSS_USD", "max_daily_loss_usd", "Risk", "float", False, True, "Daily Loss Limit (USD)"),
-    _F("COOLDOWN_AFTER_LOSS_SECONDS", "cooldown_after_loss_seconds", "Risk", "int", False, True, "Post-Loss Cooldown (s)"),
-    _F("MIN_BALANCE_MULTIPLIER", "min_balance_multiplier", "Risk", "float", False, True, "Min Balance Multiplier"),
+    _F("MAX_TRADES_PER_HOUR", "max_trades_per_hour", "Risk", "int", False, True, "Max Trades / Hour", "number", step=1),
+    _F("MAX_DAILY_LOSS_USD", "max_daily_loss_usd", "Risk", "float", False, True, "Daily Loss Limit (USD)", "number", step=1),
+    _F("COOLDOWN_AFTER_LOSS_SECONDS", "cooldown_after_loss_seconds", "Risk", "int", False, True, "Post-Loss Cooldown (s)", "number", step=5),
+    _F("MIN_BALANCE_MULTIPLIER", "min_balance_multiplier", "Risk", "float", False, True, "Min Balance Multiplier", "number", step=1),
 ]
 
 _BY_ENV = {f.env: f for f in FIELDS}
@@ -108,33 +136,68 @@ def _coerce_display(value: Any, field: _F) -> Any:
 def read_settings(settings_obj: Any) -> dict:
     """Return the grouped, secret-masked settings snapshot for the UI.
 
-    Shape::
+    Shape (docs/dashboard-plan.md §7 — consumed by ``components/settings.js``)::
 
-        {"groups": {<group>: [{"env","attr","label","value","type","secret",
-                               "requires_restart"}, ...]},
+        {"groups": [{"id","title","icon","subtitle","span2",
+                     "fields": [{"key","attr","label","hint","type","value",
+                                 "secret","requires_restart","step","variant"}, ...]}, ...],
          "detected": {"ssid_mode": "DEMO"|"LIVE"|"UNKNOWN"}}
 
-    Secrets are masked; their real values are never returned.
+    ``key`` is the env-var name (the POST body is keyed by it). ``type`` is the UI
+    control type. Secrets are masked; their real values are never returned.
     """
-    groups: dict[str, list] = {}
+    by_group: dict[str, list] = {}
     for f in FIELDS:
         raw = getattr(settings_obj, f.attr, None)
         # trade_mode is a StrEnum; render its value
         if f.attr == "trade_mode" and raw is not None:
             raw = getattr(raw, "value", str(raw))
-        groups.setdefault(f.group, []).append({
-            "env": f.env,
+        field: dict[str, Any] = {
+            "key": f.env,
             "attr": f.attr,
             "label": f.label,
+            "type": f.control,
             "value": _coerce_display(raw, f),
-            "type": f.kind,
             "secret": f.secret,
             "requires_restart": f.requires_restart,
-        })
+        }
+        if f.hint:
+            field["hint"] = f.hint
+        if f.step is not None:
+            field["step"] = f.step
+        by_group.setdefault(f.group, []).append(field)
 
     ssid = getattr(settings_obj, "po_ssid", "") or ""
     demo = ssid_is_demo(ssid)
     ssid_mode = "UNKNOWN" if demo is None else ("DEMO" if demo else "LIVE")
+
+    # Inject a read-only "Detected Mode" pill into the PocketOption group so the
+    # UI shows what the SSID decodes to (matches the mockup). Not a real setting.
+    pill_value = {"DEMO": "DEMO · valid", "LIVE": "LIVE", "UNKNOWN": "no SSID"}[ssid_mode]
+    pill_variant = {"DEMO": "win", "LIVE": "put", "UNKNOWN": "draw"}[ssid_mode]
+    by_group.setdefault("PocketOption WS", []).append({
+        "key": "_detected_mode", "label": "Detected Mode", "hint": "from is_demo()",
+        "type": "pill", "value": pill_value, "variant": pill_variant,
+        "secret": False, "requires_restart": False, "readonly": True,
+    })
+
+    groups: list[dict] = []
+    for group_name, fields in by_group.items():
+        meta = GROUP_META.get(group_name, {
+            "id": group_name, "title": group_name, "icon": "", "subtitle": "", "order": 99,
+        })
+        groups.append({
+            "id": meta["id"],
+            "title": meta.get("title", group_name),
+            "icon": meta.get("icon", ""),
+            "subtitle": meta.get("subtitle", ""),
+            "span2": bool(meta.get("span2", False)),
+            "fields": fields,
+            "_order": meta.get("order", 99),
+        })
+    groups.sort(key=lambda g: g["_order"])
+    for g in groups:
+        del g["_order"]
 
     return {"groups": groups, "detected": {"ssid_mode": ssid_mode}}
 

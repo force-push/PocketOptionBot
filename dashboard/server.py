@@ -128,7 +128,15 @@ def create_app() -> FastAPI:
         configured = settings.dashboard_token
         if not configured:
             return  # auth disabled
-        supplied = request.headers.get("X-Dashboard-Token") or token
+        # Accept any of: X-Dashboard-Token header, Authorization: Bearer <tok>
+        # (what the web client sends), or a ?token= query param.
+        supplied = request.headers.get("X-Dashboard-Token")
+        if not supplied:
+            auth = request.headers.get("Authorization", "")
+            if auth.lower().startswith("bearer "):
+                supplied = auth[7:].strip()
+        if not supplied:
+            supplied = token
         if supplied != configured:
             raise HTTPException(status_code=401, detail="invalid or missing dashboard token")
 
@@ -298,7 +306,22 @@ async def _drain_events(events: Path, offset: int, broadcaster: Broadcaster) -> 
             except (ValueError, TypeError):
                 continue
             if isinstance(evt, dict) and "type" in evt:
-                await broadcaster.broadcast({"type": evt["type"], "data": evt.get("data", {})})
+                etype = evt["type"]
+                data = evt.get("data", {})
+                # Normalise row-bearing events through the same projection REST
+                # uses, so live-appended rows match GET /api/history exactly
+                # (raw DecisionRow uses our_direction/our_confluence_score/etc).
+                if etype in ("history", "trade_resolved") and isinstance(data, dict):
+                    norm = analytics.history_row(data)
+                    if etype == "trade_resolved":
+                        # preserve resolution extras the UI needs (balance chip,
+                        # active-card flash) that history_row doesn't carry
+                        if "balance_after" in data:
+                            norm["balance_after"] = data.get("balance_after")
+                        if data.get("trade_id") is not None:
+                            norm["trade_id"] = data.get("trade_id")
+                    data = norm
+                await broadcaster.broadcast({"type": etype, "data": data})
         return new_offset
     except Exception:
         return offset

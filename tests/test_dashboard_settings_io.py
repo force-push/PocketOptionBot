@@ -69,11 +69,15 @@ def test_ssid_is_demo_decode():
 
 # ── read_settings: masking + grouping ─────────────────────────────────────────
 
+def _flat_fields(out):
+    """Flatten the grouped array into {key: field} (the UI shape)."""
+    return {f["key"]: f for grp in out["groups"] for f in grp["fields"]}
+
+
 def test_read_settings_masks_secrets():
     out = sio.read_settings(make_settings())
-    groups = out["groups"]
+    flat = _flat_fields(out)
     # secrets present in groups but masked
-    flat = {f["env"]: f for grp in groups.values() for f in grp}
     assert flat["TELEGRAM_API_HASH"]["value"] == sio.MASK
     assert flat["PO_SSID"]["value"] == sio.MASK
     # real secret value never appears anywhere
@@ -89,9 +93,28 @@ def test_read_settings_masks_secrets():
 
 def test_read_settings_groups_mirror_mockup():
     out = sio.read_settings(make_settings())
-    assert set(out["groups"].keys()) == {
-        "Safety & Trade Mode", "Telegram", "PocketOption WS", "Signal Gate", "Risk",
-    }
+    # groups is an ORDERED array of cards with display metadata (UI shape).
+    assert isinstance(out["groups"], list)
+    ids = [g["id"] for g in out["groups"]]
+    assert ids == ["safety", "telegram", "pocketoption", "gate", "risk"]
+    safety = out["groups"][0]
+    assert safety["span2"] is True and safety["title"] == "Safety & Trade Mode"
+    assert all("fields" in g and g["fields"] for g in out["groups"])
+
+
+def test_read_settings_ui_control_types():
+    """Lock the control-type contract consumed by components/settings.js."""
+    flat = _flat_fields(sio.read_settings(make_settings()))
+    assert flat["TRADE_MODE"]["type"] == "mode"
+    assert flat["DRY_RUN"]["type"] == "toggle"
+    assert flat["PAIR_SELECT_MIN_WIN_RATE"]["type"] == "ratio"
+    assert flat["PO_SSID"]["type"] == "secret"
+    assert flat["STAKE_AMOUNT"]["type"] == "number" and flat["STAKE_AMOUNT"]["step"] == 0.5
+    # the read-only "Detected Mode" pill is injected into the PocketOption card
+    assert flat["_detected_mode"]["type"] == "pill"
+    assert flat["_detected_mode"]["value"].startswith("DEMO")
+    # POST body is keyed by env var name — every real field exposes `key`
+    assert flat["MAX_DAILY_LOSS_USD"]["label"] == "Daily Loss Limit (USD)"
 
 
 def test_read_settings_empty_secret_not_masked():
@@ -99,7 +122,7 @@ def test_read_settings_empty_secret_not_masked():
     s.po_ssid = ""
     s.telegram_api_hash = None
     out = sio.read_settings(s)
-    flat = {f["env"]: f for grp in out["groups"].values() for f in grp}
+    flat = _flat_fields(out)
     assert flat["PO_SSID"]["value"] == ""
     assert flat["TELEGRAM_API_HASH"]["value"] == ""
     assert out["detected"]["ssid_mode"] == "UNKNOWN"

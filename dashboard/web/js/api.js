@@ -24,6 +24,11 @@ export function setToken(tok) {
   catch (e) { /* ignore */ }
 }
 
+/** Current dashboard token (if any) — used to authorise the WebSocket too. */
+export function getToken() {
+  return readToken();
+}
+
 function headers(extra = {}) {
   const h = { Accept: 'application/json', ...extra };
   const tok = readToken();
