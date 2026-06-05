@@ -377,7 +377,7 @@ input[type=range]::-moz-range-thumb{ width:14px; height:14px; border:0; border-r
    RESPONSIVE — down to ~1280px
    ============================================================ */
 @media (max-width: 1480px) {
-  .kpis { grid-template-columns: repeat(3, 1fr); }
+  /* Keep KPI strip at 6 columns for single row; other elements respond below */
 }
 @media (max-width: 1280px) {
   body { overflow: auto; }
@@ -385,7 +385,7 @@ input[type=range]::-moz-range-thumb{ width:14px; height:14px; border:0; border-r
   .grid { grid-template-columns: 1fr; }
   .panel { min-height: 320px; }
   .panel.perf { order: 1 !important; }
-  .kpis { grid-template-columns: repeat(2, 1fr); }
+  /* Keep .kpis at 6 columns for single row */
   .settings-grid { grid-template-columns: 1fr; }
 }
 
