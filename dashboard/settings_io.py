@@ -59,7 +59,7 @@ GROUP_META: dict[str, dict] = {
     "Safety & Trade Mode": {"id": "safety", "title": "Safety & Trade Mode", "icon": "🛡️",
                             "subtitle": "Hard-defaults to DEMO. LIVE must be explicit.", "span2": True, "order": 0},
     "Signal Gate": {"id": "gate", "title": "Signal Gate", "icon": "🎯",
-                    "subtitle": "Gate 1: ≥N signals agree on direction | Gate 2: score ≥ floor", "order": 1},
+                    "subtitle": "3 v2 thresholds: pair filter + agreement count + confluence score", "order": 1},
     "TA Signals": {"id": "ta", "title": "TA Signal Parameters", "icon": "📊",
                    "subtitle": "Candle resolution + per-indicator thresholds. Restart required.", "order": 2},
     "Risk": {"id": "risk", "title": "Risk Manager", "icon": "⚖️",
@@ -85,13 +85,13 @@ FIELDS: list[_F] = [
     # PocketOption WS
     _F("PO_SSID", "po_ssid", "PocketOption WS", "str", True, True, "SSID", "secret",
        hint='full 42["auth",{…}] frame'),
-    # Signal Gate
-    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, True, "Min Win Rate", "ratio",
-       hint="bot pair gate"),
-    _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, True, "Min Confluence Score", "ratio",
-       hint="weighted signal score floor"),
-    _F("MIN_SIGNAL_AGREEMENT", "min_signal_agreement", "Signal Gate", "int", False, True, "Min Signals Agree", "number",
-       hint="signals on same side (1–5)", step=1),
+    # Signal Gate (v2 confluence gates — all configurable)
+    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, True, "Pair Filter: Min Bot Win %", "ratio",
+       hint="Telegram bot pair selection gate (0.0=disabled for testing)"),
+    _F("MIN_SIGNAL_AGREEMENT", "min_signal_agreement", "Signal Gate", "int", False, True, "Gate 1: Min Signals Agree", "number",
+       hint="how many of 5 signals must agree (1–5)", step=1),
+    _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, True, "Gate 2: Min Confluence Score", "ratio",
+       hint="weighted confidence sum floor"),
     _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, True, "Click Trade Anyway", "toggle",
        hint="auto-dismiss nag screens"),
     # TA Signals

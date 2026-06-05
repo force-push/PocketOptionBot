@@ -97,7 +97,10 @@ class BotSettings(BaseSettings):
     click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
 
-    # ── Gating thresholds ──
+    # ── Legacy gating thresholds (v1 CDP path, NOT in v2 live path) ──
+    # v2 uses confluence engine gates (min_signal_agreement + min_confluence_score).
+    # These are kept for backward compat but NOT exposed in dashboard, NOT used
+    # in main_v2.py, and NOT visible in Settings panel.
     min_channel_win_rate: float = Field(
         default=0.80, alias="MIN_CHANNEL_WIN_RATE", ge=0.0, le=1.0
     )
