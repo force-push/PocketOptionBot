@@ -58,14 +58,14 @@ class _F:
 GROUP_META: dict[str, dict] = {
     "Safety & Trade Mode": {"id": "safety", "title": "Safety & Trade Mode", "icon": "🛡️",
                             "subtitle": "Hard-defaults to DEMO. LIVE must be explicit.", "span2": True, "order": 0},
-    "Telegram": {"id": "telegram", "title": "Telegram Session", "icon": "✈️",
-                 "subtitle": "Telethon user session (MTProto)", "order": 1},
-    "PocketOption WS": {"id": "pocketoption", "title": "PocketOption WS", "icon": "📡",
-                        "subtitle": "Trading-terminal auth frame", "order": 2},
     "Signal Gate": {"id": "gate", "title": "Signal Gate", "icon": "🎯",
-                    "subtitle": "Entry thresholds", "order": 3},
+                    "subtitle": "Entry thresholds — bot win rate & confluence score", "order": 1},
     "Risk": {"id": "risk", "title": "Risk Manager", "icon": "⚖️",
-             "subtitle": "Hard limits & cooldowns", "order": 4},
+             "subtitle": "Hard limits & cooldowns", "order": 2},
+    "Telegram": {"id": "telegram", "title": "Telegram Session", "icon": "✈️",
+                 "subtitle": "Telethon user session (MTProto)", "order": 3},
+    "PocketOption WS": {"id": "pocketoption", "title": "PocketOption WS", "icon": "📡",
+                        "subtitle": "Trading-terminal auth frame", "order": 4},
 }
 
 
@@ -84,10 +84,10 @@ FIELDS: list[_F] = [
     _F("PO_SSID", "po_ssid", "PocketOption WS", "str", True, True, "SSID", "secret",
        hint='full 42["auth",{…}] frame'),
     # Signal Gate
-    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, False, "Min Win Rate", "ratio",
+    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, True, "Min Win Rate", "ratio",
        hint="bot pair gate"),
-    _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, False, "Min Confluence", "ratio"),
-    _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, False, "Click Trade Anyway", "toggle",
+    _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, True, "Min Confluence", "ratio"),
+    _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, True, "Click Trade Anyway", "toggle",
        hint="auto-dismiss nag screens"),
     # Risk
     _F("MAX_TRADES_PER_HOUR", "max_trades_per_hour", "Risk", "int", False, True, "Max Trades / Hour", "number", step=1),

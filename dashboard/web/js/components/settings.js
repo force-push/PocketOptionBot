@@ -35,8 +35,11 @@ export function initSettings({ rootSel, onChanged } = {}) {
           mode is DEMO. Keep DEMO as the default for testing.</div>
       </div>
       <div id="restart-banner" class="restart-banner" hidden>
-        <span>↻</span><div>Some changes require a <b>bot restart</b> to take effect:
-          <span id="restart-fields"></span></div>
+        <span>↻</span>
+        <div>
+          <b>Bot restart required</b> — stop and re-run <code>python3 main_v2.py</code> to apply:
+          <span id="restart-fields" style="color:var(--accent)"></span>
+        </div>
       </div>
       <div id="save-status" class="save-status" hidden></div>
       <div class="settings-grid">
