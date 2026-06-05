@@ -102,8 +102,9 @@ class Navigator:
 
         # Check if we're on stake selection screen (stuck between direction and execution)
         # If so, click Main Menu to escape
-        for msg in await self._recent(limit=5):
-            if is_stake_selection_screen(msg.text or ""):
+        for msg_tuple in await self._recent(limit=5):
+            msg, text, btns = msg_tuple
+            if is_stake_selection_screen(text):
                 log.debug("Detected stake selection screen — clicking Main Menu")
                 if await self._click(lambda x: "main menu" in x.lower(), limit=8):
                     await asyncio.sleep(2)
