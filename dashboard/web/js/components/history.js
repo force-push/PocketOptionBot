@@ -83,9 +83,10 @@ export function initHistory(rootSel, countSel) {
     const newCls = h._new  ? ' row-new'  : '';
     const skipCls = isSkip ? ' row-skip' : '';
 
+    const result = h.outcome || h.result;  // outcome from resolved event, fallback to result
     const resultCell = isSkip
       ? `<span class="res-sym draw" title="skipped">–</span><span class="muted" style="margin-left:7px">SKIP</span>`
-      : `<span class="res-sym ${h.result || 'draw'}">${fmt.resSym(h.result)}</span>` +
+      : `<span class="res-sym ${result || 'draw'}">${fmt.resSym(result)}</span>` +
         `<span class="${fmt.pnlClass(h.pnl)}" style="margin-left:7px">${fmt.pnl(h.pnl)}</span>`;
 
     return `<tr data-i="${i}" class="hist-row${newCls}${skipCls}" tabindex="0" role="button" aria-label="View trade detail">
@@ -121,14 +122,15 @@ export function initHistory(rootSel, countSel) {
 
 function detailHtml(d) {
   const isSkip   = d.decision === 'SKIP';
-  const isWin    = d.result === 'win';
-  const isLoss   = d.result === 'loss';
+  const result   = d.outcome || d.result;  // outcome from resolved event, fallback to result
+  const isWin    = result === 'win';
+  const isLoss   = result === 'loss';
   const parts    = fmt.pairParts(d.pair_raw);
   const pairLabel = `${parts.base}${parts.otc ? ' <span class="otc" style="font-size:11px">OTC</span>' : ''}`;
   const dir      = d.bot_direction || d.dir || '';
   const dirCls   = dir.toLowerCase();
   const resCls   = isWin ? 'up' : isLoss ? 'down' : 'muted';
-  const resLabel = isSkip ? 'SKIP' : (d.result || 'PENDING').toUpperCase();
+  const resLabel = isSkip ? 'SKIP' : (result || 'PENDING').toUpperCase();
 
   // ── Header ────────────────────────────────────────────────────────────────
   const header = `
