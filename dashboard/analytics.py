@@ -326,17 +326,24 @@ def kpis(
 
     at_risk = round(sum(_num(a.get("stake")) or 0.0 for a in active_list), 6)
 
-    # Weekly profit projection: calculate P&L rate per minute, extrapolate to 7 days
+    # Weekly profit projection: calculate P&L rate per minute from ALL historical trades
     weekly_projection = 0.0
-    if today_trades and today_pnl != 0.0:
-        # Find earliest and latest trade timestamp
-        timestamps = [_parse_ts(r) for r in today_trades]
+    all_trades = [r for r in recs if _is_trade(r)]
+    if all_trades:
+        # Sum all resolved trade P&L
+        total_pnl = 0.0
+        for r in all_trades:
+            if _normalize_result(r) is not None:  # only resolved trades
+                total_pnl += _num(r.get("pnl")) or 0.0
+
+        # Find earliest and latest trade timestamp across all history
+        timestamps = [_parse_ts(r) for r in all_trades]
         timestamps = [t for t in timestamps if t is not None]
-        if len(timestamps) >= 2:
+        if len(timestamps) >= 2 and total_pnl != 0.0:
             earliest = min(timestamps)
             latest = max(timestamps)
             elapsed_minutes = max((latest - earliest).total_seconds() / 60, 1)  # avoid div by zero
-            pnl_per_minute = today_pnl / elapsed_minutes
+            pnl_per_minute = total_pnl / elapsed_minutes
             minutes_per_week = 7 * 24 * 60
             weekly_projection = pnl_per_minute * minutes_per_week
 
