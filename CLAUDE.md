@@ -33,6 +33,9 @@ pip3 install -r requirements.txt
 python3 main_v2.py               # run indefinitely
 python3 main_v2.py --cycles 5   # run exactly 5 cycles then exit
 
+# Dashboard (separate process; reads decisions.jsonl + live_state.json)
+python3 -m dashboard.server      # http://127.0.0.1:8787 (requires fastapi, uvicorn)
+
 # Smoke test — one dry-run cycle against real bot (DRY_RUN forced true)
 python3 tools/v2_smoke.py
 python3 tools/v2_smoke.py --pair GBPUSD_otc   # skip navigation, test TA only
@@ -210,6 +213,26 @@ po_broker_bot (Telegram)
    `_build_components()`.
 3. Add a test in `tests/test_signals.py` (build a DataFrame with `o/h/l/c/v`
    columns and a `date_range` index, assert on `result.direction`/`confidence`).
+
+## Dashboard
+
+The optional web UI (`python3 -m dashboard.server`, http://127.0.0.1:8787) reads
+live trade data from `data/decisions.jsonl` and `data/live_state.json`. Key features:
+
+- **Top chips:** Balance, Est. Weekly projection (from all historical trades),
+  connection status, trading mode.
+- **Est. Weekly:** Calculated as `(total_pnl / minutes_elapsed) × (7×24×60)`.
+  Color-coded: green if positive, red if negative, orange if no data.
+- **KPI strip:** Traded/Skipped counts, Win Rate, Avg Confluence, P&L.
+- **Active Trades panel:** In-progress trades with entry, expiry, at-risk amount.
+- **Performance chart:** Equity curve and win/loss distribution over 1H/1D/1W/ALL.
+- **Trade History table:** Clickable rows open detail modals showing:
+  - Full signal breakdown (each of 5 signals + confluence gate result)
+  - Bot direction + win rate from po_broker_bot
+  - Our TA direction + confidence scores
+  - Outcome, P&L, balance after, PO trade ID
+- **Settings tab:** Live-editable configuration (Pydantic BotSettings singleton),
+  persists to `.env` via python-dotenv.
 
 ## Conventions
 
