@@ -107,18 +107,20 @@ po_broker_bot (Telegram)
         ▼  strategy/trade_logger.py
   Write DecisionRow → data/decisions.jsonl
         │
-        ├─ SKIP → back_to_menu
+        ├─ SKIP → back_to_menu (background task)
         └─ TRADE → strategy/risk.py → broker/po_api.py buy/sell()
                  ↓ (immediately, non-blocking)
-                 navigator.back_to_menu()
-                 ↓ (main loop continues — don't wait for expiry)
-                 ┌─────────────────────────────────────┐
-                 │ Background async resolver:          │
-                 │ - Wait for expiry time              │
-                 │ - check_win(trade_id)               │
-                 │ - backfill_outcome()                │
-                 │ - record() win/loss for tracking    │
-                 └─────────────────────────────────────┘
+                 asyncio.create_task(back_to_menu)
+                 ↓ (main loop continues immediately for next pair analysis)
+                 ┌──────────────────────────────────────┐
+                 │ Background async tasks run parallel: │
+                 │ 1. Menu navigation                   │
+                 │ 2. Trade outcome resolution:         │
+                 │    - Wait for expiry time            │
+                 │    - check_win(trade_id)             │
+                 │    - backfill_outcome()              │
+                 │    - record() win/loss for tracking  │
+                 └──────────────────────────────────────┘
 ```
 
 ### Components
