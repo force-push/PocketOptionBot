@@ -28,6 +28,11 @@ import sys
 from config.settings import settings, TradeMode
 from utils.logger import log, setup_logger
 
+try:
+    from telethon.errors import FloodWaitError
+except ImportError:
+    FloodWaitError = Exception  # type: ignore[misc,assignment]
+
 # ── setup_logger must be called once before any use of `log` ─────────────────
 import pathlib
 setup_logger(pathlib.Path(__file__).parent)
@@ -145,6 +150,11 @@ async def main(cycles: int = 0) -> None:
                 await manager.run_once()
             except KeyboardInterrupt:
                 raise
+            except FloodWaitError as e:
+                wait = getattr(e, "seconds", 60) or 60
+                log.warning("Telegram FloodWait — sleeping {}s before next cycle", wait)
+                await asyncio.sleep(wait)
+                continue
             except Exception as exc:
                 log.opt(exception=True).error("run_once error (will retry): {}", exc)
 

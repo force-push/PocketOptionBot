@@ -82,7 +82,13 @@ class Navigator:
         return None
 
     async def start_autotrade(self) -> None:
-        await self._c.send_message(self._bot, "/start")
+        try:
+            await self._c.send_message(self._bot, "/start")
+        except FloodWaitError as e:
+            wait = getattr(e, "seconds", 60) or 60
+            log.warning("FloodWait on /start — sleeping {}s before continuing", wait)
+            await asyncio.sleep(wait)
+            await self._c.send_message(self._bot, "/start")
         await asyncio.sleep(2.5)
         for label in ("🚀 Start Autotrade", "Start Autotrade", "Start Trade"):
             if await self._click(lambda x, L=label: L in x):
