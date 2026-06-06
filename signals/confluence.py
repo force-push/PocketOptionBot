@@ -87,7 +87,7 @@ class ConfluenceEngine:
                 reason="Conflicting signals (CALL ≈ PUT)",
             )
 
-        # Require ≥3 signals to agree on the winning direction.
+        # Require ≥min_agreement signals to agree on the winning direction.
         # Previously this counted CALL + PUT together, which allowed trades to
         # fire when e.g. 2 signals said CALL and 1 said PUT — not "agreement".
         agreeing_count = sum(1 for r in results.values() if r.direction == direction)

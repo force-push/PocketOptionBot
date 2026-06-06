@@ -55,8 +55,17 @@ def _build_components():
     from telegram_feed.navigator import Navigator
 
     # ── Telethon client ───────────────────────────────────────────────────────
+    # Prefer StringSession (no file lock, safe alongside other bots using the
+    # same .session file). Fall back to the file session path if not set.
+    if settings.telegram_session_string:
+        from telethon.sessions import StringSession
+        _session = StringSession(settings.telegram_session_string)
+        log.info("Using Telegram StringSession (no file lock)")
+    else:
+        _session = settings.telegram_session
+        log.info("Using Telegram file session: {}", settings.telegram_session)
     tg_client = TelegramClient(
-        settings.telegram_session,
+        _session,
         settings.telegram_api_id,
         settings.telegram_api_hash,
     )
@@ -152,6 +161,9 @@ async def main(cycles: int = 0) -> None:
     log.info("TA config: candle_interval={}s  history_length={}  expiry={}s",
              settings.candle_interval_seconds, settings.history_length,
              settings.default_expiry_seconds)
+    log.info("Trade config: stake=${:.2f}  pair_min_wr={:.0f}%  max_trades_hr={}",
+             settings.stake_amount, settings.pair_select_min_win_rate * 100,
+             settings.max_trades_per_hour)
 
     if settings.trade_mode == TradeMode.LIVE and not settings.dry_run:
         log.warning("⚠  LIVE mode active — real money at stake!")
