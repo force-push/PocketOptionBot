@@ -107,6 +107,59 @@ class WinRateTracker:
             key, outcome, self._data[key],
         )
 
+    def seed_from_po_history(self, deals: list[dict], default_expiry_seconds: int = 30) -> int:
+        """Seed the tracker from PocketOption closed-deal history.
+
+        Only seeds when ``self._data`` is empty — skips entirely if any records
+        already exist, to avoid double-counting on subsequent runs.
+
+        For each deal: maps direction ("buy"→"CALL", "sell"→"PUT"), validates the
+        result ("win"/"loss"/"draw"), and derives expiry from the deal's
+        ``timestamp`` dict (``closed``-``created``, clamped to 5–3600s) falling
+        back to ``default_expiry_seconds``. Calls ``record()`` per valid deal.
+
+        Returns the count of seeded records. Saves once at the end if count > 0.
+        """
+        if self._data:
+            log.debug("WinRateTracker.seed_from_po_history: data not empty — skipping seed")
+            return 0
+
+        seeded = 0
+        for deal in deals:
+            try:
+                asset = deal.get("asset")
+                raw_dir = deal.get("direction")
+                result = deal.get("result")
+                if not asset or not raw_dir or not result:
+                    continue
+                direction = {"buy": "CALL", "sell": "PUT"}.get(str(raw_dir).lower())
+                if direction is None:
+                    continue
+                outcome = str(result).lower()
+                if outcome not in _OUTCOMES:
+                    continue
+
+                expiry_seconds = default_expiry_seconds
+                ts = deal.get("timestamp")
+                if isinstance(ts, dict):
+                    created = ts.get("created", ts.get("open"))
+                    closed = ts.get("closed", ts.get("close"))
+                    if isinstance(created, int) and isinstance(closed, int):
+                        duration = closed - created
+                        if 5 <= duration <= 3600:
+                            expiry_seconds = duration
+
+                self.record(asset, direction, expiry_seconds, outcome)
+                seeded += 1
+            except Exception as exc:
+                log.debug("WinRateTracker.seed_from_po_history: skipping deal: {}", exc)
+                continue
+
+        if seeded > 0:
+            self.save()
+        log.info("WinRateTracker.seed_from_po_history: seeded {} records", seeded)
+        return seeded
+
     def rate(self, pair: str, direction: str, expiry_seconds: int) -> Tuple[float, int]:
         """Return (win_rate, n) for the given key.
 

@@ -34,6 +34,11 @@ class StrategyManagerV2:
         # Background trade resolver: maps trade_id → (log_path, row, expires_at)
         self._open_trades: dict = {}
 
+    @property
+    def tracker(self):
+        """The WinRateTracker instance (owned here; exposed for startup seeding)."""
+        return self._tracker
+
     def _next_cycle_id(self) -> str:
         global _cycle_counter
         _cycle_counter += 1
@@ -157,6 +162,23 @@ class StrategyManagerV2:
                      cid, pair_api, payout_pct, settings.min_payout_pct)
             await self._nav.back_to_menu()
             return
+
+        # EV gate: skip if our tracked win rate produces negative expected value
+        # EV = win_rate * (payout/100 + 1) - 1   →   break-even at 52.1% for 92% payout
+        tracked_rate, n_tracked = self._tracker.rate(pair_api, dscreen.direction, expiry)
+        if payout_pct is not None and n_tracked >= settings.min_ev_samples:
+            ev = tracked_rate * (payout_pct / 100 + 1) - 1
+            if ev < settings.min_expected_value:
+                row.decision = "SKIP"; row.skip_reason = "negative_ev"
+                write_decision(log_path, row)
+                if self._bridge:
+                    self._bridge.on_decision(asdict(row))
+                log.info(
+                    "[{}] SKIP {}  reason=negative_ev  ev={:.3f}  wr={:.1%}  n={}  payout={}%",
+                    cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
+                )
+                await self._nav.back_to_menu()
+                return
 
         if not self._risk.is_allowed(balance_before):
             row.decision = "SKIP"; row.skip_reason = "risk_blocked"

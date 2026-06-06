@@ -173,6 +173,23 @@ async def main(cycles: int = 0) -> None:
     if settings.po_ssid:
         log.info("Connecting PocketOption API…")
         await api_client.connect()
+
+        # Log top active pairs by payout (informational)
+        active = await api_client.get_active_pairs()
+        if active:
+            top = active[:8]
+            log.info("Top pairs by payout: {}",
+                     "  ".join(f"{a['symbol']}={a['payout']}%" for a in top))
+
+        # Seed WinRateTracker from PO closed-deals history (background, non-blocking)
+        async def _seed_win_rates():
+            deals = await api_client.get_po_trade_history()
+            n = manager.tracker.seed_from_po_history(
+                deals, default_expiry_seconds=settings.default_expiry_seconds)
+            if n:
+                log.info("WinRateTracker seeded {} records from PO history", n)
+
+        asyncio.ensure_future(_seed_win_rates())
     else:
         log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
 

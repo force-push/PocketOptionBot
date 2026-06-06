@@ -372,6 +372,48 @@ class PocketOptionAPIClient:
             log.error("balance() failed: {}", exc)
             return None
 
+    async def get_active_pairs(self) -> list[dict]:
+        """Return active tradeable assets, sorted descending by payout.
+
+        Calls the library's ``active_assets()``, filters to ``is_active=True``,
+        and sorts by payout (highest first). Returns ``[]`` on error or if the
+        client is not connected.
+        """
+        if self._client is None:
+            return []
+        try:
+            assets = await self._client.active_assets()
+            active = [a for a in assets if a.get("is_active")]
+            active.sort(key=lambda a: a.get("payout") or 0, reverse=True)
+            return active
+        except Exception as exc:
+            log.error("get_active_pairs() failed: {}", exc)
+            return []
+
+    async def get_po_trade_history(self, max_deals: int = 500) -> list[dict]:
+        """Fetch closed-deal history from PocketOption.
+
+        Calls ``closed_deals()`` to get deal IDs (capped at ``max_deals``), then
+        fetches each deal via ``get_closed_deal(id)``, skipping ``None`` returns.
+        Returns the list of deal dicts, or ``[]`` on error.
+        """
+        if self._client is None:
+            return []
+        try:
+            log.info("Fetching PocketOption closed-deal history (max {})…", max_deals)
+            deal_ids = await self._client.closed_deals()
+            deal_ids = list(deal_ids)[:max_deals]
+            deals: list[dict] = []
+            for deal_id in deal_ids:
+                deal = await self._client.get_closed_deal(deal_id)
+                if deal is not None:
+                    deals.append(deal)
+            log.info("Fetched {} closed deals from PocketOption history", len(deals))
+            return deals
+        except Exception as exc:
+            log.error("get_po_trade_history() failed: {}", exc)
+            return []
+
     def get_payout(self, pair: str) -> int | None:
         """Return the current payout percentage for a pair (e.g. 92), or None on error."""
         if self._client is None:

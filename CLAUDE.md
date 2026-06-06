@@ -76,7 +76,11 @@ Key settings groups:
   `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (default
   `3.00`, live-editable in dashboard without restart),
   `MIN_PAYOUT_PCT` (default `92` — skip trade if PocketOption's live payout for
-  the pair is below this %; set to `0` to disable).
+  the pair is below this %; set to `0` to disable), `MIN_EXPECTED_VALUE` (default
+  `0.0` — EV gate; `EV = win_rate*(payout/100+1) - 1`, skip when EV is below this;
+  `-0.05` allows 5% below break-even for warmup) and `MIN_EV_SAMPLES` (default
+  `15` — tracked trades per (pair, direction, expiry) before the EV gate
+  activates; cold-start pass-through below this).
 - **TA thresholds:** `MIN_SIGNAL_AGREEMENT` (default `2` — how many of 5 signals must
   agree), `MIN_CONFLUENCE_SCORE` (default `0.40`, adaptive based on agreement count),
   `CANDLE_INTERVAL_SECONDS` (default `5` seconds — decoupled from expiry).
@@ -117,6 +121,10 @@ po_broker_bot (Telegram)
         └─ TRADE → broker/po_api.py get_payout(pair)
                  │  gate: payout ≥ MIN_PAYOUT_PCT (default 92%)
                  │
+                 ▼  EV gate (strategy/win_rate.py rate())
+                 │  EV = win_rate*(payout/100+1) - 1 ≥ MIN_EXPECTED_VALUE
+                 │  (only when n_tracked ≥ MIN_EV_SAMPLES; else pass-through)
+                 │
                  ▼  strategy/risk.py → broker/po_api.py buy/sell()
                  ↓ (immediately, non-blocking)
                  asyncio.create_task(back_to_menu)
@@ -154,7 +162,11 @@ po_broker_bot (Telegram)
 - **`broker/po_api.py`** — `PocketOptionAPIClient` wraps
   `binaryoptionstoolsv2.PocketOptionAsync(ssid)`. Exposes `buy/sell(pair, amount,
   expiry)`, `check_win(trade_id)`, `balance()`, `get_candles(pair, period, count)`,
-  `get_payout(pair) -> int | None`. `connect()` **must** await `wait_for_assets()`
+  `get_payout(pair) -> int | None`, `get_active_pairs() -> list[dict]` (active
+  assets sorted by payout, `[]` on error/not-connected), and
+  `get_po_trade_history(max_deals=500) -> list[dict]` (closed-deal history via
+  `closed_deals()`/`get_closed_deal()`, used to seed the win-rate tracker at
+  startup). `connect()` **must** await `wait_for_assets()`
   after constructing the client — the Rust backend initialises the WebSocket lazily,
   so skipping this makes the first `get_candles()` hang indefinitely.
   `get_candles(pair, period, count)` takes a candle **count** for our callers but
@@ -198,8 +210,11 @@ po_broker_bot (Telegram)
 - **`strategy/win_rate.py`** — `WinRateTracker` keeps per-(pair, direction,
   expiry-bucket) win/loss counts, persisted to `data/win_rates.json`. Methods:
   `record(key, outcome)`, `rate(key) -> (rate, n)`, `passes(key, min_rate,
-  min_samples)`. **Cold start:** when `n < MIN_TRACKED_SAMPLES`, the tracked-win
-  gate is skipped.
+  min_samples)`, `seed_from_po_history(deals, default_expiry_seconds=30) -> int`
+  (one-time bootstrap from PO closed-deal history — **only seeds when the tracker
+  is empty** to avoid double-counting; maps buy→CALL/sell→PUT, derives expiry from
+  the deal timestamp). **Cold start:** when `n < MIN_TRACKED_SAMPLES`, the
+  tracked-win gate is skipped.
 
 - **`strategy/risk.py`** — `RiskManager.is_allowed(balance)` checks, in order:
   min balance (`stake_amount × min_balance_multiplier`), max trades/hour (sliding

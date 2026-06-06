@@ -97,6 +97,11 @@ class BotSettings(BaseSettings):
     # Minimum payout % from PocketOption for a trade to proceed. 0 disables the gate.
     # Set to 92 to only trade when PO is offering ≥92% profit on a win.
     min_payout_pct: int = Field(default=92, alias="MIN_PAYOUT_PCT", ge=0, le=100)
+    # EV gate: minimum expected value to trade. EV = win_rate*(payout/100+1) - 1.
+    # 0.0 = break-even required; -0.05 = allow 5% below break-even (warmup tolerance).
+    # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
+    min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
+    min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
     click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
 
