@@ -414,12 +414,12 @@ class PocketOptionAPIClient:
             log.error("get_po_trade_history() failed: {}", exc)
             return []
 
-    def get_payout(self, pair: str) -> int | None:
+    async def get_payout(self, pair: str) -> int | None:
         """Return the current payout percentage for a pair (e.g. 92), or None on error."""
         if self._client is None:
             return None
         try:
-            result = self._client.payout(pair)
+            result = await self._client.payout(pair)
             if isinstance(result, dict):
                 return result.get(pair)
             return int(result) if result is not None else None

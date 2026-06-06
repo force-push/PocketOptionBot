@@ -155,7 +155,7 @@ class StrategyManagerV2:
             await self._nav.back_to_menu()
             return
 
-        payout_pct = self._api.get_payout(pair_api)
+        payout_pct = await self._api.get_payout(pair_api)
         row.payout_pct = payout_pct
         if settings.min_payout_pct > 0 and (payout_pct is None or payout_pct < settings.min_payout_pct):
             row.decision = "SKIP"; row.skip_reason = "low_payout"
