@@ -244,6 +244,10 @@ function detailHtml(d) {
             <div class="md-stat-val">${fmt.duration(d.expiry_seconds)}</div>
           </div>
           <div class="md-stat">
+            <div class="md-stat-label">Payout</div>
+            <div class="md-stat-val ${d.payout_pct != null ? (d.payout_pct >= 92 ? 'up' : d.payout_pct >= 85 ? 'warn' : 'down') : 'muted'}">${d.payout_pct != null ? d.payout_pct + '%' : '—'}</div>
+          </div>
+          <div class="md-stat">
             <div class="md-stat-label">P&amp;L</div>
             <div class="md-stat-val ${pnlCls}">${fmt.pnl(d.pnl)}</div>
           </div>
