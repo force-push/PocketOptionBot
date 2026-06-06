@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import statistics
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from config.settings import settings
 from data.candles import candles_to_df
@@ -275,8 +279,62 @@ class StrategyManagerV2:
             pnl_str = f"{pnl:+.2f}" if pnl is not None else "?"
             log.info("[{}] RESOLVED {}  pnl={}  balance={}", row.cycle_id, outcome.upper(), pnl_str, balance_after)
 
+            self._resolved_count = getattr(self, "_resolved_count", 0) + 1
+            if self._resolved_count % 10 == 0:
+                self._log_ev_summary()
+
         except Exception as e:
             log.error(f"Background resolution failed for {trade_id}: {e}")
         finally:
-            # Clean up
             self._open_trades.pop(trade_id, None)
+
+    def _log_ev_summary(self) -> None:
+        """Log a compact broker-calibration + EV table from decisions.jsonl."""
+        try:
+            path = Path(settings.decisions_log_path)
+            if not path.exists():
+                return
+            rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+            trades = [r for r in rows if r.get("decision") == "TRADE" and r.get("outcome") in ("win", "loss")]
+            if len(trades) < 5:
+                return
+
+            pair_stats: dict[str, dict] = defaultdict(lambda: {"w": 0, "l": 0, "bot_wrs": [], "payouts": []})
+            for r in trades:
+                p = r["pair_api"]
+                pair_stats[p]["w" if r["outcome"] == "win" else "l"] += 1
+                pair_stats[p]["bot_wrs"].append(r["bot_win_rate"])
+                # Back-calc payout from win pnl if payout_pct not stored
+                pp = r.get("payout_pct")
+                if pp is None and r["outcome"] == "win" and r.get("pnl") and r.get("stake"):
+                    pp = r["pnl"] / r["stake"] * 100
+                if pp is not None:
+                    pair_stats[p]["payouts"].append(float(pp))
+
+            total = len(trades)
+            wins = sum(1 for r in trades if r["outcome"] == "win")
+            overall_wr = wins / total
+            all_payouts = [p for d in pair_stats.values() for p in d["payouts"]]
+            median_po = statistics.median(all_payouts) if all_payouts else 92.0
+            overall_ev = overall_wr * (median_po / 100) - (1 - overall_wr)
+            avg_pred = statistics.mean(r["bot_win_rate"] for r in trades)
+
+            log.info(
+                "── EV SUMMARY ({} trades) ──  actual={:.1%}  predicted={:.1%}  "
+                "delta={:+.1%}  median_payout={:.0f}%  EV={:+.4f}",
+                total, overall_wr, avg_pred, overall_wr - avg_pred, median_po, overall_ev,
+            )
+            for pair in sorted(pair_stats, key=lambda p: -(pair_stats[p]["w"] + pair_stats[p]["l"])):
+                d = pair_stats[pair]
+                n = d["w"] + d["l"]
+                wr = d["w"] / n
+                pout = statistics.median(d["payouts"]) if d["payouts"] else median_po
+                ev = wr * (pout / 100) - (1 - wr)
+                bot_wr = statistics.mean(d["bot_wrs"])
+                flag = "✓" if ev >= 0 else "✗"
+                log.info(
+                    "  {:18s}  n={:3d}  act={:.1%}  bot={:.1%}  payout={:.0f}%  EV={:+.4f} {}",
+                    pair, n, wr, bot_wr, pout, ev, flag,
+                )
+        except Exception as exc:
+            log.debug("EV summary failed: {}", exc)
