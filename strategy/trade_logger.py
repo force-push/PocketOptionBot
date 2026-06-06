@@ -28,6 +28,7 @@ class DecisionRow:
     decision: str               # "TRADE" | "SKIP"
     skip_reason: str | None
     stake: float
+    payout_pct: int | None = None
     trade_id: str | None = None
     status: str = "PENDING"
     outcome: str | None = None  # "win" | "loss" | "draw"

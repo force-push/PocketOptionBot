@@ -146,6 +146,18 @@ class StrategyManagerV2:
             await self._nav.back_to_menu()
             return
 
+        payout_pct = self._api.get_payout(pair_api)
+        row.payout_pct = payout_pct
+        if settings.min_payout_pct > 0 and (payout_pct is None or payout_pct < settings.min_payout_pct):
+            row.decision = "SKIP"; row.skip_reason = "low_payout"
+            write_decision(log_path, row)
+            if self._bridge:
+                self._bridge.on_decision(asdict(row))
+            log.info("[{}] SKIP {}  reason=low_payout  payout={}% < gate={}%",
+                     cid, pair_api, payout_pct, settings.min_payout_pct)
+            await self._nav.back_to_menu()
+            return
+
         if not self._risk.is_allowed(balance_before):
             row.decision = "SKIP"; row.skip_reason = "risk_blocked"
             write_decision(log_path, row)
@@ -178,9 +190,9 @@ class StrategyManagerV2:
                 "confluence_score": conf.score,
             })
         log.info(
-            "[{}] TRADE {}  {}  @{:.2f}  exp={}s  prob={:.2f}  id={}",
+            "[{}] TRADE {}  {}  @{:.2f}  exp={}s  payout={}%  prob={:.2f}  id={}",
             cid, dscreen.direction, pair_api, settings.stake_amount,
-            expiry, d.combined_probability, row.trade_id,
+            expiry, payout_pct, d.combined_probability, row.trade_id,
         )
 
         # Schedule menu navigation in background (don't block main loop)

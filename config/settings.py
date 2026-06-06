@@ -94,6 +94,9 @@ class BotSettings(BaseSettings):
     # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
     # set to 0.82 for real runs (the "82%" rule).
     pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
+    # Minimum payout % from PocketOption for a trade to proceed. 0 disables the gate.
+    # Set to 92 to only trade when PO is offering ≥92% profit on a win.
+    min_payout_pct: int = Field(default=92, alias="MIN_PAYOUT_PCT", ge=0, le=100)
     click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
 

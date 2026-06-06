@@ -372,6 +372,19 @@ class PocketOptionAPIClient:
             log.error("balance() failed: {}", exc)
             return None
 
+    def get_payout(self, pair: str) -> int | None:
+        """Return the current payout percentage for a pair (e.g. 92), or None on error."""
+        if self._client is None:
+            return None
+        try:
+            result = self._client.payout(pair)
+            if isinstance(result, dict):
+                return result.get(pair)
+            return int(result) if result is not None else None
+        except Exception as exc:
+            log.debug("get_payout({}) failed: {}", pair, exc)
+            return None
+
     async def get_candles(
         self,
         pair: str,

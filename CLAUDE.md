@@ -74,7 +74,9 @@ Key settings groups:
 - **v2 gate settings:** `PAIR_SELECT_MIN_WIN_RATE` (default `0.0` = disabled
   during testing; set to `0.82` for real runs), `DEFAULT_EXPIRY_SECONDS` (30),
   `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (default
-  `3.00`, live-editable in dashboard without restart).
+  `3.00`, live-editable in dashboard without restart),
+  `MIN_PAYOUT_PCT` (default `92` — skip trade if PocketOption's live payout for
+  the pair is below this %; set to `0` to disable).
 - **TA thresholds:** `MIN_SIGNAL_AGREEMENT` (default `2` — how many of 5 signals must
   agree), `MIN_CONFLUENCE_SCORE` (default `0.40`, adaptive based on agreement count),
   `CANDLE_INTERVAL_SECONDS` (default `5` seconds — decoupled from expiry).
@@ -103,7 +105,7 @@ po_broker_bot (Telegram)
         │
         ▼  broker/po_api.py → data/candles.py → signals/confluence.py
   5-signal TA engine (RSI, MACD, Bollinger, EMA Cross, Candle Patterns)
-        │  ≥3 signals same direction + score ≥ MIN_CONFLUENCE_SCORE
+        │  ≥MIN_SIGNAL_AGREEMENT signals same direction + score ≥ MIN_CONFLUENCE_SCORE
         │
         ▼  strategy/decision.py
   Decision(trade, combined_probability, skip_reason)
@@ -112,7 +114,10 @@ po_broker_bot (Telegram)
   Write DecisionRow → data/decisions.jsonl
         │
         ├─ SKIP → back_to_menu (background task)
-        └─ TRADE → strategy/risk.py → broker/po_api.py buy/sell()
+        └─ TRADE → broker/po_api.py get_payout(pair)
+                 │  gate: payout ≥ MIN_PAYOUT_PCT (default 92%)
+                 │
+                 ▼  strategy/risk.py → broker/po_api.py buy/sell()
                  ↓ (immediately, non-blocking)
                  asyncio.create_task(back_to_menu)
                  ↓ (main loop continues immediately for next pair analysis)
@@ -148,13 +153,15 @@ po_broker_bot (Telegram)
 
 - **`broker/po_api.py`** — `PocketOptionAPIClient` wraps
   `binaryoptionstoolsv2.PocketOptionAsync(ssid)`. Exposes `buy/sell(pair, amount,
-  expiry)`, `check_win(trade_id)`, `balance()`, `get_candles(pair, period, count)`.
-  `connect()` **must** await `wait_for_assets()` after constructing the client —
-  the Rust backend initialises the WebSocket lazily, so skipping this makes the
-  first `get_candles()` hang indefinitely. `get_candles(pair, period, count)`
-  takes a candle **count** for our callers but converts it to the library's
-  `offset` arg (historical seconds = `count * period`). **Critical safety
-  function:** enforces the demo guard using the API-native
+  expiry)`, `check_win(trade_id)`, `balance()`, `get_candles(pair, period, count)`,
+  `get_payout(pair) -> int | None`. `connect()` **must** await `wait_for_assets()`
+  after constructing the client — the Rust backend initialises the WebSocket lazily,
+  so skipping this makes the first `get_candles()` hang indefinitely.
+  `get_candles(pair, period, count)` takes a candle **count** for our callers but
+  converts it to the library's `offset` arg (historical seconds = `count * period`).
+  `get_payout(pair)` calls the library's synchronous `payout(asset)` method and
+  returns the current payout percentage (e.g. `92`) from the live WebSocket asset
+  data. **Critical safety function:** enforces the demo guard using the API-native
   `is_demo()`/`is_ssid_valid()` methods (with SSID-string fallback); if SSID is
   live but `TRADE_MODE=DEMO`, the trade is **aborted** (fail-closed). Honors
   `DRY_RUN` (log, skip API call).

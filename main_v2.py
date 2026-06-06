@@ -161,9 +161,9 @@ async def main(cycles: int = 0) -> None:
     log.info("TA config: candle_interval={}s  history_length={}  expiry={}s",
              settings.candle_interval_seconds, settings.history_length,
              settings.default_expiry_seconds)
-    log.info("Trade config: stake=${:.2f}  pair_min_wr={:.0f}%  max_trades_hr={}",
+    log.info("Trade config: stake=${:.2f}  pair_min_wr={:.0f}%  min_payout={}%  max_trades_hr={}",
              settings.stake_amount, settings.pair_select_min_win_rate * 100,
-             settings.max_trades_per_hour)
+             settings.min_payout_pct, settings.max_trades_per_hour)
 
     if settings.trade_mode == TradeMode.LIVE and not settings.dry_run:
         log.warning("⚠  LIVE mode active — real money at stake!")
