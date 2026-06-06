@@ -37,10 +37,10 @@ class _F:
     # is the UI widget type the frontend renders (docs/dashboard-plan.md §7):
     # mode | toggle | ratio | number | secret | text.
     __slots__ = ("env", "attr", "group", "kind", "secret", "requires_restart",
-                 "label", "control", "hint", "step")
+                 "label", "control", "hint", "step", "min", "max")
 
     def __init__(self, env, attr, group, kind, secret, requires_restart, label,
-                 control, hint=None, step=None):
+                 control, hint=None, step=None, min=None, max=None):
         self.env = env
         self.attr = attr
         self.group = group
@@ -51,6 +51,8 @@ class _F:
         self.control = control
         self.hint = hint
         self.step = step
+        self.min = min
+        self.max = max
 
 
 # Group display metadata (mirrors the Carbon mockup's Settings cards). Keyed by
@@ -92,6 +94,12 @@ FIELDS: list[_F] = [
        hint="how many of 5 signals must agree (1–5)", step=1),
     _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, True, "Gate 2: Min Confluence Score", "ratio",
        hint="weighted confidence sum floor"),
+    _F("MIN_PAYOUT_PCT", "min_payout_pct", "Signal Gate", "int", False, False, "Min Payout %", "number",
+       hint="skip trade if PO payout below this (0=disabled)", step=1, min=0, max=100),
+    _F("MIN_EXPECTED_VALUE", "min_expected_value", "Signal Gate", "float", False, False, "Min Expected Value", "number",
+       hint="EV gate: 0=break-even, -0.05=warmup tolerance", step=0.01, min=-1.0, max=1.0),
+    _F("MIN_EV_SAMPLES", "min_ev_samples", "Signal Gate", "int", False, False, "Min EV Samples", "number",
+       hint="tracked trades per pair before EV gate activates", step=1, min=1, max=100),
     _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, True, "Click Trade Anyway", "toggle",
        hint="auto-dismiss nag screens"),
     # TA Signals
@@ -187,6 +195,10 @@ def read_settings(settings_obj: Any) -> dict:
             field["hint"] = f.hint
         if f.step is not None:
             field["step"] = f.step
+        if f.min is not None:
+            field["min"] = f.min
+        if f.max is not None:
+            field["max"] = f.max
         by_group.setdefault(f.group, []).append(field)
 
     ssid = getattr(settings_obj, "po_ssid", "") or ""
