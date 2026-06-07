@@ -62,16 +62,28 @@ class StrategyManagerV2:
             return
 
         top = pred.top_pick()
-        pair_api = normalize_pair(top.pair_raw)
-        if pair_api is None:
-            log.info("[{}] could not normalize pair {!r}", cid, top.pair_raw)
+        
+        # Cycle through available pairs in the prediction screen to find one that's not blocked.
+        # Extract pair buttons (exclude Main Menu) and try each in order.
+        valid_pair_api = None
+        for btn_text in pred_btns:
+            if "main menu" in btn_text.lower():
+                continue
+            candidate = normalize_pair(btn_text)
+            if candidate is None:
+                continue
+            # Skip blocked pairs; use the first valid one.
+            if candidate not in settings.blocked_pairs:
+                valid_pair_api = candidate
+                break
+        
+        if valid_pair_api is None:
+            # All available pairs are blocked; log and skip.
+            log.info("[{}] all proposed pairs are in blocked_pairs list; skipping", cid)
             return
-
-        # Block underperforming pairs early to avoid wasted analysis
-        if pair_api in settings.blocked_pairs:
-            log.info("[{}] {} is in blocked pairs list — skipping", cid, pair_api)
-            return
-
+        
+        pair_api = valid_pair_api
+        
         if top.win_rate < settings.pair_select_min_win_rate:
             log.info("[{}] {} win% {:.0f} below gate {:.0f} — skip",
                      cid, pair_api, top.win_rate * 100, settings.pair_select_min_win_rate * 100)
