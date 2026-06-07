@@ -48,7 +48,7 @@ class MACDSignal(BaseSignal):
     """MACD crossover + trend-direction signal."""
 
     name = "MACD"
-    weight = 0.20
+    weight = 0.18
 
     def __init__(
         self,

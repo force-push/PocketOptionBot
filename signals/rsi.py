@@ -21,7 +21,7 @@ class RSISignal(BaseSignal):
     """
 
     name = "RSI"
-    weight = 0.20
+    weight = 0.12
 
     def __init__(self, period: int = 14, oversold: float = 30.0, overbought: float = 70.0):
         self.period = period

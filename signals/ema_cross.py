@@ -44,7 +44,7 @@ class EMASignal(BaseSignal):
     """EMA crossover + trend-direction signal."""
 
     name = "EMA_Cross"
-    weight = 0.15
+    weight = 0.12
 
     def __init__(
         self,

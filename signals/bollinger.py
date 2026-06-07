@@ -19,7 +19,7 @@ class BollingerSignal(BaseSignal):
     """
 
     name = "Bollinger"
-    weight = 0.20
+    weight = 0.33
 
     def __init__(self, period: int = 20, std_dev: float = 2.0):
         self.period = period

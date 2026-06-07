@@ -36,13 +36,13 @@ class BotSettings(BaseSettings):
     # 0.75 required near-perfect confidence from all signals simultaneously —
     # only achievable on fresh crossovers, blocking most valid trend entries.
     min_confluence_score: float = Field(
-        default=0.40, alias="MIN_CONFLUENCE_SCORE", ge=0.0, le=1.0
+        default=0.35, alias="MIN_CONFLUENCE_SCORE", ge=0.0, le=1.0
     )
     # Minimum number of signals that must agree on the same direction.
     # Separate from the score floor: both gates must pass independently.
     # Set to 2 during initial calibration so trades reach execution and
     # real outcomes can inform threshold tuning. Raise to 3+ for stricter entries.
-    min_signal_agreement: int = Field(default=2, alias="MIN_SIGNAL_AGREEMENT", ge=1, le=5)
+    min_signal_agreement: int = Field(default=3, alias="MIN_SIGNAL_AGREEMENT", ge=1, le=5)
     max_trades_per_hour: int = Field(default=10, alias="MAX_TRADES_PER_HOUR", ge=1)
     max_daily_loss_usd: float = Field(default=20.0, alias="MAX_DAILY_LOSS_USD", ge=0)
     # Candle resolution fed to TA signals. Deliberately decoupled from the trade
