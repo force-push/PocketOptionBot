@@ -67,6 +67,11 @@ class StrategyManagerV2:
             log.info("[{}] could not normalize pair {!r}", cid, top.pair_raw)
             return
 
+        # Block underperforming pairs early to avoid wasted analysis
+        if pair_api in settings.blocked_pairs:
+            log.info("[{}] {} is in blocked pairs list — skipping", cid, pair_api)
+            return
+
         if top.win_rate < settings.pair_select_min_win_rate:
             log.info("[{}] {} win% {:.0f} below gate {:.0f} — skip",
                      cid, pair_api, top.win_rate * 100, settings.pair_select_min_win_rate * 100)

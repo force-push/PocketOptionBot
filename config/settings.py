@@ -104,6 +104,9 @@ class BotSettings(BaseSettings):
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
     click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
+    # List of pair_api values (e.g., "EURUSD_otc") to block at pair selection.
+    # This prevents wasting time on analysis for known underperforming pairs.
+    blocked_pairs: list[str] = Field(default=["EURUSD_otc", "ETHUSD_otc"], alias="BLOCKED_PAIRS")
 
     # ── Legacy gating thresholds (v1 CDP path, NOT in v2 live path) ──
     # v2 uses confluence engine gates (min_signal_agreement + min_confluence_score).

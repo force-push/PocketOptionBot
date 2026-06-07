@@ -250,7 +250,9 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `DEFAULT_EXPIRY_SECONDS` | `30` | Trade expiry. Snapped to nearest allowed value. |
 | `CLICK_TRADE_ANYWAY` | `true` | Auto-click the "low-balance" nag page when it appears. |
 | `DECISIONS_LOG_PATH` | `data/decisions.jsonl` | Path for the structured decision log. |
-| `MIN_CONFLUENCE_SCORE` | `0.75` | Minimum TA confluence score to agree with a signal. |
+| `MIN_CONFLUENCE_SCORE` | `0.35` | Minimum TA confluence score to agree with a signal (reduced from 0.75 to allow more trades during testing; actual threshold is adaptive based on signal agreement). |
+| `MIN_SIGNAL_AGREEMENT` | `3` | Minimum number of signals that must agree on same direction (increased from 2 to 3 for stricter confluence). |
+| `BLOCKED_PAIRS` | `["EURUSD_otc", "ETHUSD_otc"]` | List of pair API symbols (e.g., `"EURUSD_otc"`) to block at pair selection to avoid wasting analysis on underperforming pairs. |
 
 ### Risk settings
 
