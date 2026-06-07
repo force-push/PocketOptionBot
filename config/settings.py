@@ -148,6 +148,18 @@ class BotSettings(BaseSettings):
             return str(Path(v).expanduser())
         return v
 
+    @field_validator("blocked_pairs", mode="before")
+    @classmethod
+    def _parse_blocked_pairs(cls, v):
+        # Accept comma-separated string or list; normalize to list
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
+
     model_config = ConfigDict(
         env_file=_PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",

@@ -102,6 +102,8 @@ FIELDS: list[_F] = [
        hint="tracked trades per pair before EV gate activates", step=1, min=1, max=100),
     _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, True, "Click Trade Anyway", "toggle",
        hint="auto-dismiss nag screens"),
+    _F("BLOCKED_PAIRS", "blocked_pairs", "Signal Gate", "list", False, True, "Blocked Pairs", "text",
+       hint="comma-separated pair symbols (e.g. EURUSD_otc,ETHUSD_otc)"),
     # TA Signals
     _F("CANDLE_INTERVAL_SECONDS", "candle_interval_seconds", "TA Signals", "int", False, True, "Candle Interval (s)", "number",
        hint="5 s recommended for 30 s expiry", step=1),
@@ -160,6 +162,9 @@ def _coerce_display(value: Any, field: _F) -> Any:
     if field.secret:
         # mask any non-empty secret; empty stays empty so the UI shows "unset"
         return MASK if value not in (None, "") else ""
+    if field.kind == "list" and isinstance(value, list):
+        # Convert list to comma-separated string for display
+        return ",".join(str(v) for v in value)
     return value
 
 
@@ -257,12 +262,24 @@ def _coerce_incoming(value: Any, kind: str) -> Any:
         return int(value)
     if kind == "float":
         return float(value)
+    if kind == "list":
+        # Accept list or comma-separated string
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            return [v.strip() for v in value.split(",") if v.strip()]
+        return value if value is None else str(value)
     return value if value is None else str(value)
 
 
 def _env_str(value: Any, kind: str) -> str:
     if kind == "bool":
         return "true" if value else "false"
+    if kind == "list":
+        # Serialize list as comma-separated string for .env
+        if isinstance(value, list):
+            return ",".join(str(v) for v in value)
+        return str(value)
     return str(value)
 
 
