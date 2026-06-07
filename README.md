@@ -252,7 +252,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `DECISIONS_LOG_PATH` | `data/decisions.jsonl` | Path for the structured decision log. |
 | `MIN_CONFLUENCE_SCORE` | `0.35` | Minimum TA confluence score to agree with a signal (reduced from 0.75 to allow more trades during testing; actual threshold is adaptive based on signal agreement). |
 | `MIN_SIGNAL_AGREEMENT` | `3` | Minimum number of signals that must agree on same direction (increased from 2 to 3 for stricter confluence). |
-| `BLOCKED_PAIRS` | `["EURUSD_otc", "ETHUSD_otc"]` | List of pair API symbols (e.g., `"EURUSD_otc"`) to block at pair selection to avoid wasting analysis on underperforming pairs. |
+| `BLOCKED_PAIRS` | `["EURUSD_otc", "ETHUSD_otc"]` | List of pair API symbols (e.g., `"EURUSD_otc"`) to skip during pair selection. When the bot presents a list of candidate pairs, the navigator cycles through and selects the first non-blocked pair, avoiding wasted analysis time. If all pairs are blocked, the cycle is skipped. |
 
 ### Risk settings
 
