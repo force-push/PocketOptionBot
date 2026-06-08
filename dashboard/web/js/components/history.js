@@ -195,7 +195,7 @@ function detailHtml(d) {
   const totalSig = Object.keys(breakdown).length;
 
   const settings = store.get('settings') || {};
-  const minAgreement = settings.min_signal_agreement ?? 3;
+  const minAgreement = settings.min_signal_agreement ?? 2;
   let displayDir = ourDir;
   if (!displayDir) {
     // Count signals per direction to find the winner
