@@ -217,7 +217,7 @@ function detailHtml(d) {
           <div>${displayDir ? `<b>${displayDir}</b>` : '<span class="muted">No direction</span>'} &nbsp;·&nbsp; ${agreed}/${totalSig} signals agree</div>
           <div class="${gatePass ? 'gate-pass' : 'gate-fail'}">${ourDir ? (agreed >= minAgreement ? '✓ Gate passed (≥' + minAgreement + ' agree)' : `✗ Gate failed: only ${agreed} signal(s) on ${ourDir} (need ≥${minAgreement})`) : '✗ Gate failed (tie or no signals)'}</div>
         </div>
-        ${d.combined_probability != null ? `<div class="mono" style="font-size:12px;color:var(--tx-1)">prob&nbsp;<b>${(d.combined_probability*100).toFixed(1)}%</b></div>` : ''}
+        ${d.combined_probability != null ? `<div class="mono" style="font-size:12px;color:var(--tx-1)">confidence&nbsp;<b>${(d.combined_probability*100).toFixed(1)}%</b>${d.calibrated_probability != null ? ` &nbsp;·&nbsp; <span style="color:var(--ac-1)">P(win)&nbsp;<b>${(d.calibrated_probability*100).toFixed(1)}%</b></span>` : ''}</div>` : ''}
       </div>
       <div class="md-agree-row">
         ${d.agreement

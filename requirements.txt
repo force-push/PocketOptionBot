@@ -4,6 +4,7 @@ playwright>=1.40.0
 # Data & Analysis
 pandas>=2.1.0
 numpy>=1.24.0
+scikit-learn>=1.4  # probability calibrator (strategy/probability_calibrator.py)
 # pandas-ta>=0.3.14b0  # disabled - not compatible with Python 3.14
 
 # Configuration

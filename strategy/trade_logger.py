@@ -23,11 +23,12 @@ class DecisionRow:
     our_confluence_score: float
     our_signal_breakdown: dict[str, Any]
     agreement: bool
-    combined_probability: float
+    combined_probability: float       # heuristic confidence: mean(bot_win_rate, our_confluence)
     expiry_seconds: int
     decision: str               # "TRADE" | "SKIP"
     skip_reason: str | None
     stake: float
+    calibrated_probability: float | None = None  # learned P(win); None until a model exists
     payout_pct: int | None = None
     trade_id: str | None = None
     status: str = "PENDING"

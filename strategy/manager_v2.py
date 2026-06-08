@@ -14,6 +14,7 @@ from config.settings import settings
 from data.candles import candles_to_df
 from strategy.decision import decide
 from strategy.expiry import select_expiry
+from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
 from telegram_feed.direction_parser import parse_direction_screen
 from telegram_feed.pair_norm import normalize_pair
@@ -37,6 +38,9 @@ class StrategyManagerV2:
         self._bridge = bridge
         # Background trade resolver: maps trade_id → (log_path, row, expires_at)
         self._open_trades: dict = {}
+        # Calibrated win-probability model. Loads the saved model if present;
+        # otherwise predict() falls back to the heuristic mean (never raises).
+        self._calibrator = ProbabilityCalibrator.load()
 
     @property
     def tracker(self):
@@ -179,6 +183,20 @@ class StrategyManagerV2:
             decision="TRADE" if d.trade else "SKIP", skip_reason=d.skip_reason,
             stake=settings.stake_amount, balance_before=balance_before,
         )
+        # Calibrated P(win), recorded ALONGSIDE the heuristic confidence for
+        # observation only. This value is intentionally NOT used by decide(), the
+        # EV gate, or risk sizing — it is display/diagnostic data while the model
+        # matures (current AUC ~0.53). Falls back to the heuristic mean when no
+        # trained model is loaded; left None for non-trades.
+        if d.trade:
+            row.calibrated_probability = self._calibrator.predict({
+                "bot_win_rate": top.win_rate,
+                "our_confluence": conf.score,
+                "agreement": conf.direction == dscreen.direction,
+                "agreeing_signals": agreeing,
+                "payout_pct": payout_pct,
+                "bot_is_top_pick": top.is_top,
+            })
 
         if not d.trade:
             write_decision(log_path, row)

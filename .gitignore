@@ -10,6 +10,7 @@ data/win_rates.json
 data/decisions.jsonl
 data/live_state.json
 data/events.jsonl
+data/models/
 *.session
 *.session-journal
 htmlcov/

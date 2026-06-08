@@ -134,6 +134,7 @@ def full_detail_row(rec: dict) -> dict:
         "our_signal_breakdown": rec.get("our_signal_breakdown") or {},
         "agreement": rec.get("agreement"),
         "combined_probability": _num(rec.get("combined_probability")),
+        "calibrated_probability": _num(rec.get("calibrated_probability")),
         "balance_before": _num(rec.get("balance_before")),
         "balance_after": _num(rec.get("balance_after")),
         "pnl_currency": rec.get("pnl_currency") or "USD",

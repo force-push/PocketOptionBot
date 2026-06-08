@@ -31,6 +31,7 @@
   },
   "agreement": true,
   "combined_probability": 0.85,
+  "calibrated_probability": 0.61,
   "balance_before": 100.00,
   "balance_after": 101.38,
   "pnl_currency": "USD",
