@@ -6,6 +6,7 @@ import pandas as pd
 
 from signals.base import BaseSignal, SignalResult
 from utils.logger import log
+from config.settings import settings
 
 
 @dataclass(frozen=True)
@@ -31,9 +32,9 @@ class ConfluenceEngine:
     or vice versa.
     """
 
-    def __init__(self, signals: list[BaseSignal], min_agreement: int = 3):
+    def __init__(self, signals: list[BaseSignal], min_agreement: int = None):
         self.signals = signals
-        self.min_agreement = min_agreement
+        self.min_agreement = min_agreement if min_agreement is not None else settings.min_signal_agreement
         # Normalize weights
         total = sum(s.weight for s in signals)
         self.weights = {s.name: s.weight / total for s in signals} if total > 0 else {}

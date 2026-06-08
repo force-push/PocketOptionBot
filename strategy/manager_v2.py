@@ -66,6 +66,7 @@ class StrategyManagerV2:
         # Cycle through available pairs in the prediction screen to find one that's not blocked.
         # Extract pair buttons (exclude Main Menu) and try each in order.
         valid_pair_api = None
+        selected_pair_button = None  # Track which button we selected
         for btn_text in pred_btns:
             if "main menu" in btn_text.lower():
                 continue
@@ -75,6 +76,7 @@ class StrategyManagerV2:
             # Skip blocked pairs; use the first valid one.
             if candidate not in settings.blocked_pairs:
                 valid_pair_api = candidate
+                selected_pair_button = btn_text  # Remember the button text for later
                 break
         
         if valid_pair_api is None:
@@ -83,6 +85,16 @@ class StrategyManagerV2:
             return
         
         pair_api = valid_pair_api
+        
+        # If we selected a different pair than the top pick, find its metadata from pred.pairs
+        pair_raw = top.pair_raw  # Default to top's display name
+        if pair_api != normalize_pair(top.pair_raw):
+            # We cycled to a different pair; find its raw name and metadata
+            for p in pred.pairs:
+                if normalize_pair(p.pair_raw) == pair_api:
+                    pair_raw = p.pair_raw
+                    top = p  # Use this pair's metadata instead
+                    break
         
         if top.win_rate < settings.pair_select_min_win_rate:
             log.info("[{}] {} win% {:.0f} below gate {:.0f} — skip",
