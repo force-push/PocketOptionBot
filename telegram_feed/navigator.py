@@ -190,16 +190,14 @@ class Navigator:
     async def back_to_menu(self) -> None:
         """Return to Main Menu via button click (no /start).
 
-        The next cycle's start_autotrade() will find the "Start Autotrade"
-        button at Main Menu and click it, using natural button flow instead
-        of spamming /start commands.
+        The next cycle's start_autotrade() handles all recovery cases — if the
+        Main Menu button is not found here (e.g. the next cycle already navigated
+        away, or a stale inline keyboard), do nothing. Sending /start here would
+        race with the next cycle and spam the bot.
         """
         clicked = await self._click(lambda x: "main menu" in x.lower())
         if clicked:
             log.debug("Clicked Main Menu — next cycle will navigate from here")
             await asyncio.sleep(1.5)
         else:
-            # Fallback: if Main Menu button not found, send /start to reset
-            log.warning("Main Menu button not found — sending /start fallback")
-            await self._c.send_message(self._bot, "/start")
-            await asyncio.sleep(2)
+            log.debug("back_to_menu: Main Menu button not found — next cycle will recover")
