@@ -38,6 +38,10 @@ class StrategyManagerV2:
         self._bridge = bridge
         # Background trade resolver: maps trade_id → (log_path, row, expires_at)
         self._open_trades: dict = {}
+        # Concurrent trade cap: never hold more than 6 unresolved trades at once.
+        # Each slot is claimed at placement and released in _resolve_trade_background.
+        self._open_trade_count: int = 0
+        self._max_concurrent_trades: int = 6
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
@@ -272,10 +276,25 @@ class StrategyManagerV2:
                 await self._nav.back_to_menu()
                 return
 
+        # Concurrent trade cap: skip rather than queue if we're at max capacity.
+        if self._open_trade_count >= self._max_concurrent_trades:
+            row.decision = "SKIP"; row.skip_reason = "max_concurrent_trades"
+            write_decision(log_path, row)
+            log.info("[{}] SKIP {}  reason=max_concurrent_trades  open={}/{}",
+                     cid, pair_api, self._open_trade_count, self._max_concurrent_trades)
+            await self._nav.back_to_menu()
+            return
+        self._open_trade_count += 1
+
         api_call = self._api.buy if dscreen.direction == "CALL" else self._api.sell
         trade = await api_call(pair_api, settings.stake_amount, expiry)
         row.trade_id = getattr(trade, "trade_id", None)
         row.status = getattr(trade, "status", "PENDING")
+
+        # If the API call failed to place the trade, release the slot immediately.
+        if row.status in ("ERROR", "DRY_RUN") or not row.trade_id:
+            self._open_trade_count = max(0, self._open_trade_count - 1)
+
         write_decision(log_path, row)
         if self._bridge:
             _now = datetime.now(timezone.utc)
@@ -330,10 +349,20 @@ class StrategyManagerV2:
             now = datetime.now(timezone.utc)
             sleep_secs = max(0, (expires_at - now).total_seconds())
             if sleep_secs > 0:
-                await asyncio.sleep(sleep_secs + 1)  # +1s buffer for API
+                await asyncio.sleep(sleep_secs + 2)  # +2s buffer for API
 
-            # Check outcome and update
-            outcome = await self._api.check_win(trade_id)
+            # Poll closed_deals instead of check_win: polling does not hold a
+            # WebSocket subscription, so concurrent buy() calls are not blocked.
+            outcome = await self._api.poll_trade_outcome(trade_id, max_polls=6, poll_interval=4.0)
+            if outcome == "unknown":
+                # Fallback to check_win only after polling exhausted — by this
+                # point there are no in-flight buy() calls this trade can block.
+                log.warning("[{}] poll exhausted for {} — falling back to check_win", row.cycle_id, trade_id)
+                try:
+                    outcome = await self._api.check_win(trade_id)
+                except Exception as cw_exc:
+                    log.error("check_win fallback failed for {}: {}", trade_id, cw_exc)
+                    outcome = "unknown"
             balance_after = await self._api.balance()
             pnl = (balance_after - balance_before) if (balance_after is not None and balance_before is not None) else None
 
@@ -370,6 +399,7 @@ class StrategyManagerV2:
             log.error(f"Background resolution failed for {trade_id}: {e}")
         finally:
             self._open_trades.pop(trade_id, None)
+            self._open_trade_count = max(0, self._open_trade_count - 1)
 
     def _log_ev_summary(self) -> None:
         """Log a compact broker-calibration + EV table from decisions.jsonl."""

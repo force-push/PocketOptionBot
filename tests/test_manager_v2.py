@@ -29,10 +29,12 @@ async def test_one_cycle_trades_and_logs(tmp_path, monkeypatch):
     api = MagicMock()
     api.get_candles = AsyncMock(return_value=[{"time": i, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1} for i in range(60)])
     api.balance = AsyncMock(return_value=48592.71)
+    api.get_payout = AsyncMock(return_value=92)
     trade = MagicMock(); trade.status = "PENDING"; trade.trade_id = "tid42"; trade.id = "trade_1"
     api.buy = AsyncMock(return_value=trade)
     api.sell = AsyncMock(return_value=trade)
     api.check_win = AsyncMock(return_value="win")
+    api.poll_trade_outcome = AsyncMock(return_value="win")
 
     conf = MagicMock()
     conf_result = MagicMock(); conf_result.direction = "CALL"; conf_result.score = 0.81
@@ -40,7 +42,7 @@ async def test_one_cycle_trades_and_logs(tmp_path, monkeypatch):
     conf.score = AsyncMock(return_value=conf_result)
 
     risk = MagicMock(); risk.is_allowed = MagicMock(return_value=True); risk.record_trade = MagicMock()
-    tracker = MagicMock(); tracker.record = MagicMock()
+    tracker = MagicMock(); tracker.record = MagicMock(); tracker.rate = MagicMock(return_value=(0.55, 0))
 
     mgr = StrategyManagerV2(navigator=nav, api_client=api, confluence_engine=conf,
                             risk_manager=risk, tracker=tracker)

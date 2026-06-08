@@ -342,7 +342,8 @@ class PocketOptionAPIClient:
     async def check_win(self, trade_id: str) -> str:
         """Wait for trade resolution and return 'win', 'loss', or 'draw'.
 
-        Blocks until the trade expires.
+        Blocks until the trade expires. Prefer poll_trade_outcome() for concurrent
+        trading — check_win holds a WebSocket subscription that can block buy() calls.
         """
         if self._client is None:
             raise RuntimeError("API client not connected.")
@@ -361,6 +362,50 @@ class PocketOptionAPIClient:
             return "draw"
         else:
             return result_str
+
+    def _parse_deal_outcome(self, deal: Any) -> str:
+        """Extract 'win'/'loss'/'draw'/'unknown' from a closed-deal dict."""
+        if isinstance(deal, dict):
+            result_str = str(deal.get("result", "")).lower()
+            if "win" in result_str:
+                return "win"
+            if "loss" in result_str or "lose" in result_str:
+                return "loss"
+            if "draw" in result_str or "tie" in result_str:
+                return "draw"
+        return "unknown"
+
+    async def poll_trade_outcome(
+        self,
+        trade_id: str,
+        max_polls: int = 6,
+        poll_interval: float = 4.0,
+    ) -> str:
+        """Poll closed_deals to determine trade outcome without a blocking subscription.
+
+        Unlike check_win(), this does not hold a WebSocket subscription, so concurrent
+        buy() calls are not blocked. Call after the trade expiry has passed.
+
+        Returns 'win', 'loss', 'draw', or 'unknown' if not found within max_polls.
+        """
+        import asyncio as _asyncio
+        if self._client is None:
+            return "unknown"
+        for attempt in range(max_polls):
+            try:
+                deal_ids = list(await self._client.closed_deals())
+                if trade_id in deal_ids:
+                    deal = await self._client.get_closed_deal(trade_id)
+                    if deal is not None:
+                        outcome = self._parse_deal_outcome(deal)
+                        log.debug("poll_trade_outcome({}) found on attempt {}: {}", trade_id, attempt + 1, outcome)
+                        return outcome
+            except Exception as exc:
+                log.debug("poll_trade_outcome({}) attempt {} error: {}", trade_id, attempt + 1, exc)
+            if attempt < max_polls - 1:
+                await _asyncio.sleep(poll_interval)
+        log.warning("poll_trade_outcome({}): not resolved after {} polls", trade_id, max_polls)
+        return "unknown"
 
     async def balance(self) -> Optional[float]:
         """Return the current account balance, or None on error."""
