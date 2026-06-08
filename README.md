@@ -253,6 +253,7 @@ All settings live in `.env`. See `.env.example` for the full list.
 | `MIN_CONFLUENCE_SCORE` | `0.35` | Minimum TA confluence score to agree with a signal (reduced from 0.75 to allow more trades during testing; actual threshold is adaptive based on signal agreement). |
 | `MIN_SIGNAL_AGREEMENT` | `3` | Minimum number of signals that must agree on same direction (increased from 2 to 3 for stricter confluence). |
 | `BLOCKED_PAIRS` | `["EURUSD_otc", "ETHUSD_otc"]` | List of pair API symbols (e.g., `"EURUSD_otc"`) to skip during pair selection. When the bot presents a list of candidate pairs, the navigator cycles through and selects the first non-blocked pair, avoiding wasted analysis time. If all pairs are blocked, the cycle is skipped. |
+| `SHADOW_RECORD_MODE` | `false` | **Research/data-collection mode (DEMO only).** When `true` and `TRADE_MODE=DEMO`, the bot stops *blocking* at the TA-agreement, EV, and risk gates — it places the bot-direction trade anyway, tags the row `shadow=true` with `would_skip_reason`, and records the outcome. This builds an **uncensored** dataset (normally we only see outcomes for trades that passed every gate). Hard-guarded: ignored in LIVE; `low_payout` is still enforced; shadow outcomes are written to `decisions.jsonl` but do **not** feed the production win-rate tracker or risk stats. See [Research & Calibration](#research--calibration). |
 
 ### Risk settings
 
@@ -299,12 +300,15 @@ TRADE  → bot direction matches our TA direction + both gates pass
 SKIP   → one of: no_direction · ta_disagree · ta_low_score · risk_blocked
 ```
 
-**Combined probability** (logged, not gated):
+**Confidence** (logged, not gated) — stored as `combined_probability`, shown in the
+dashboard as **confidence** (it is a heuristic score, not a calibrated probability):
 ```
-combined = (bot_win_rate + our_confluence_score) / 2
+confidence = (bot_win_rate + our_confluence_score) / 2
 ```
 
-This is the number to calibrate against real outcomes over time.
+A learned, calibrated `P(win)` is also recorded per trade as `calibrated_probability`
+when a model exists — see [Research & Calibration](#research--calibration). It is
+display/diagnostic only and never influences trade decisions.
 
 ---
 
@@ -323,8 +327,11 @@ One JSON line per evaluated signal. Key fields:
   "our_confluence_score": 0.78,
   "agreement": true,
   "combined_probability": 0.84,
+  "calibrated_probability": 0.61,
   "decision": "TRADE",
   "skip_reason": null,
+  "shadow": false,
+  "would_skip_reason": null,
   "stake": 1.5,
   "trade_id": "trade_abc123",
   "outcome": "WIN",
@@ -337,6 +344,62 @@ One JSON line per evaluated signal. Key fields:
 ```
 
 Use this log to calibrate signal quality, tune gates, and identify which pairs perform well over time.
+
+---
+
+## Research & Calibration
+
+Tooling for understanding *why* trades win or lose and for improving the signal stack.
+
+### Signal-attribution report
+
+```bash
+python scripts/analyze_signals.py            # full report
+python scripts/analyze_signals.py --min-n 30 # raise the min sample for flags
+```
+
+Read-only analysis over `data/decisions.jsonl`. For resolved trades it reports, per
+signal, the win rate when the signal **agrees / is neutral / opposes** the traded
+direction (with Wilson CIs and lift), confluence-score and agreement-count buckets,
+per-pair win rates, the break-even edge vs observed payouts, and a censoring summary.
+It flags signals that hurt when they agree, look inverted (opposing beats base), or
+never fire. When shadow data exists it also breaks outcomes down by `would_skip_reason`.
+
+### Probability calibrator
+
+A learned win-probability model (L2 logistic regression) that records a real
+`calibrated_probability` alongside the heuristic `confidence`.
+
+```bash
+python -m strategy.train_calibrator   # train from decisions.jsonl → data/models/
+```
+
+- `strategy/probability_calibrator.py` — model + graceful fallback to the heuristic
+  mean when no model/sklearn is present (never raises).
+- **Decision-inert:** the calibrated value is display/diagnostic only; `decide()`, the
+  EV gate, and risk sizing are unaffected.
+- Model artifacts in `data/models/` are gitignored (regenerable). Retrain as data grows.
+
+> The model is only as good as the data. On the first ~300 trades it sits near
+> AUC 0.53 (no better than the average) — keep it dormant until the dataset is larger.
+
+### Building an uncensored dataset (shadow mode)
+
+The decision log is **censored**: outcomes only exist for trades that passed every
+gate, so the disagreement cases needed to calibrate signals are never observed. Enable
+`SHADOW_RECORD_MODE=true` (DEMO only) to trade and record the would-be-skipped cases:
+
+```bash
+# .env
+TRADE_MODE=DEMO
+SHADOW_RECORD_MODE=true
+```
+
+The bot then places bot-direction trades it would normally skip (`no_direction`,
+`ta_disagree`, `negative_ev`, `risk_blocked`), tags them `shadow=true` with the
+`would_skip_reason`, and records outcomes — **without** feeding the production
+win-rate tracker or risk stats. Let it run, then re-run `analyze_signals.py` to see
+which gates actually earn their keep.
 
 ---
 
