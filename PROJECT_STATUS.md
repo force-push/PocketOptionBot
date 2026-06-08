@@ -1,9 +1,9 @@
 # PocketOptionBot — Project Status
 
-**Date:** 2026-06-05
-**Branch:** `feature/telebot-evolution` → merged to `main`
-**Version:** 0.2.0 (v2 — Telegram-driven)
-**Status:** ✅ v2 COMPLETE — 100 tests passing
+**Date:** 2026-06-09
+**Branch:** `main`
+**Version:** 0.2.1 (v2 — concurrent trade support)
+**Status:** ✅ OPERATIONAL — concurrent trading enabled, up to 6 simultaneous open trades
 
 ---
 
@@ -16,7 +16,7 @@ PocketOptionBot evolved from a DOM-scraping CDP bot (v0.1) into a **Telegram-dri
 | Signal source | DOM price scraper, time-driven | po_broker_bot Telegram DMs, event-driven |
 | Trade execution | Playwright button clicks | PocketOption WS API (`binaryoptionstoolsv2`) |
 | Direction signal | Internal TA only | Bot direction + internal TA confirmation |
-| Outcome tracking | `PENDING` only (no DOM feedback) | Real WIN/LOSS via `check_win()` |
+| Outcome tracking | `PENDING` only (no DOM feedback) | Real WIN/LOSS via `closed_deals()` polling (non-blocking) |
 | Risk limits | Cooldown/daily-loss ineffective | Fully effective (fed real outcomes) |
 | Learning log | `data/trades.jsonl` (basic) | `data/decisions.jsonl` (full decision audit trail) |
 | Win rate tracker | None | Per-pair `data/win_rates.json` |
@@ -78,7 +78,7 @@ PocketOptionBot evolved from a DOM-scraping CDP bot (v0.1) into a **Telegram-dri
 
 | Module | Description |
 |---|---|
-| `po_api.py` | `PocketOptionAPIClient`: wraps `binaryoptionstoolsv2.PocketOptionAsync`. Enforces demo guard (API-native `is_demo()` + SSID fallback), `DRY_RUN` gate, and fail-closed behavior. Exposes `buy/sell/check_win/balance/get_candles`. |
+| `po_api.py` | `PocketOptionAPIClient`: wraps `binaryoptionstoolsv2.PocketOptionAsync`. Enforces demo guard (API-native `is_demo()` + SSID fallback), `DRY_RUN` gate, and fail-closed behavior. Exposes `buy/sell/balance/get_candles/poll_trade_outcome`. `poll_trade_outcome()` replaces `check_win()` for concurrent-safe outcome detection. |
 | `connector.py` | Legacy CDP connector (unwired). |
 | `scraper.py` | Legacy DOM scraper (unwired). |
 | `executor.py` | Legacy CDP executor (unwired). |
@@ -87,7 +87,7 @@ PocketOptionBot evolved from a DOM-scraping CDP bot (v0.1) into a **Telegram-dri
 
 | Module | Description |
 |---|---|
-| `manager_v2.py` | `StrategyManagerV2.run_once()`: full orchestrator. navigate → parse → TA → decide → log → [trade] → check_win → backfill. |
+| `manager_v2.py` | `StrategyManagerV2.run_once()`: full orchestrator. navigate → parse → TA → decide → log → [trade] → background resolution. Supports up to 6 concurrent open trades via `_open_trade_count` gate. Background resolution uses `poll_trade_outcome()` (non-blocking). |
 | `decision.py` | Pure function: bot + our direction agreement → `Decision(trade, combined_probability, skip_reason)`. |
 | `expiry.py` | `select_expiry()`: snaps a requested duration to the nearest allowed expiry. |
 | `trade_logger.py` | `write_decision()`: append a `DecisionRow` to JSONL. `backfill_outcome()`: rewrite file to update trade outcome after check_win. |
@@ -142,4 +142,26 @@ PocketOptionBot evolved from a DOM-scraping CDP bot (v0.1) into a **Telegram-dri
 
 ---
 
-**Last Updated:** 2026-06-05
+---
+
+## Changelog
+
+### v0.2.1 — 2026-06-09: Concurrent Trade Support
+- **Fixed:** Trades were being blocked while a previous trade was awaiting its outcome.
+  Root cause: `check_win()` holds an open WebSocket subscription for the full 30-second
+  expiry window, consuming messages that concurrent `buy()` calls need for their
+  acknowledgment.
+- **Fix:** Replaced `check_win()` in `_resolve_trade_background` with `poll_trade_outcome()`,
+  which calls `closed_deals()` + `get_closed_deal()` after expiry — no persistent
+  subscription, no interference with new trades. `check_win()` kept as fallback only.
+- **Added:** Max 6 concurrent open trades cap (`_open_trade_count` / `_max_concurrent_trades`).
+  Cycles that hit the cap skip with `reason=max_concurrent_trades` and navigate back to menu
+  rather than queuing. Slot released in `finally` block of background resolver.
+
+### v0.2.0 — 2026-06-05: v2 Telegram-driven bot
+- Full rewrite from DOM/CDP to Telegram-driven + WebSocket API execution.
+- See prior tasks for full breakdown.
+
+---
+
+**Last Updated:** 2026-06-09

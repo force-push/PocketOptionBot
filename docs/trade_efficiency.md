@@ -147,6 +147,24 @@ After each change:
 4. Only keep changes that increase WR by >2%
 5. Document in this file
 
+## Concurrent Trading (2026-06-09)
+
+The bot previously serialised trade resolution: while `check_win()` waited for a 30-second
+expiry outcome it held an open WebSocket subscription, blocking `buy()` calls for the next
+valid signal.
+
+**Fix applied:** `_resolve_trade_background` now uses `poll_trade_outcome()` (polls
+`closed_deals()` after expiry) instead of `check_win()`. No persistent subscription →
+new `buy()` calls are not blocked.
+
+**Concurrency cap:** Maximum 6 open trades at a time (`MAX_CONCURRENT_TRADES=6`). Cycles
+that exceed this skip with `reason=max_concurrent_trades`. At 30-second expiry and one
+signal every ~30-40 seconds, you will rarely hit this cap in normal operation.
+
+**Expected throughput impact:** ~2-3× more trades per session when signals arrive
+faster than the expiry window (e.g. multiple valid pairs in quick succession). Win rate
+impact should be neutral — the same signal gates apply.
+
 ## Notes
 
 - **Do NOT** reduce thresholds further (more trades ≠ more profit)

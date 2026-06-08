@@ -34,9 +34,11 @@ po_broker_bot (Telegram)
   PocketOption API (binaryoptionstoolsv2)
         │  buy/sell(pair, $1.50, expiry)
         │  Never clicks the martingale bot's amount button
+        │  Up to 6 trades open concurrently
         ▼
-  check_win(trade_id) → WIN / LOSS / DRAW
-        │
+  Background resolver (non-blocking)
+        │  poll_trade_outcome() → polls closed_deals() after expiry
+        │  WIN / LOSS / DRAW (check_win fallback if polling exhausted)
         ▼
   decisions.jsonl  +  WinRateTracker  +  RiskManager
 ```
