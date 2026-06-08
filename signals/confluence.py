@@ -32,12 +32,23 @@ class ConfluenceEngine:
     or vice versa.
     """
 
-    def __init__(self, signals: list[BaseSignal], min_agreement: int = None):
+    def __init__(self, signals: list[BaseSignal], min_agreement: int = None,
+                 decision_signals: set[str] | None = None):
         self.signals = signals
         self.min_agreement = min_agreement if min_agreement is not None else settings.min_signal_agreement
-        # Normalize weights
-        total = sum(s.weight for s in signals)
-        self.weights = {s.name: s.weight / total for s in signals} if total > 0 else {}
+        # Decision signals actually drive the trade (direction / agreement / score).
+        # Any other signal is still evaluated and recorded in the breakdown for
+        # research, but contributes nothing to the gate. This lets us keep the bad
+        # signals (RSI/Bollinger/CandlePattern) on the books for analysis while the
+        # data shows MACD+EMA are the only ones that carry a positive edge.
+        if decision_signals is None:
+            self.decision_signals = {s.name for s in signals}
+        else:
+            self.decision_signals = set(decision_signals)
+        # Normalize weights over decision signals only.
+        decision = [s for s in signals if s.name in self.decision_signals]
+        total = sum(s.weight for s in decision)
+        self.weights = {s.name: s.weight / total for s in decision} if total > 0 else {}
 
     async def score(self, df: pd.DataFrame) -> ConfluenceResult:
         """Evaluate all signals and return confluence result."""
@@ -59,6 +70,9 @@ class ConfluenceEngine:
                 result = await signal.evaluate(df)
                 results[signal.name] = result
 
+                # Only decision signals contribute to the direction/score.
+                if signal.name not in self.decision_signals:
+                    continue
                 if result.direction == "CALL":
                     call_score += result.confidence * self.weights.get(signal.name, 0.0)
                 elif result.direction == "PUT":
@@ -91,7 +105,8 @@ class ConfluenceEngine:
         # Require ≥min_agreement signals to agree on the winning direction.
         # Previously this counted CALL + PUT together, which allowed trades to
         # fire when e.g. 2 signals said CALL and 1 said PUT — not "agreement".
-        agreeing_count = sum(1 for r in results.values() if r.direction == direction)
+        agreeing_count = sum(1 for r in results.values()
+                             if r.direction == direction and r.name in self.decision_signals)
         breakdown = {r.name: (r.direction, r.confidence, r.reason) for r in results.values()}
         if agreeing_count < self.min_agreement:
             return ConfluenceResult(
@@ -135,5 +150,6 @@ class ConfluenceEngine:
             direction=direction,
             score=final_score,
             breakdown=breakdown,
-            reason=f"{direction} confluence={final_score:.2f} ({agreeing_count}/5 agree)",
+            reason=f"{direction} confluence={final_score:.2f} "
+                   f"({agreeing_count}/{len(self.decision_signals)} agree)",
         )

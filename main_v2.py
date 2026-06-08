@@ -102,7 +102,15 @@ def _build_components():
         ),
         CandlePatternSignal(),
     ]
-    confluence = ConfluenceEngine(signals, min_agreement=settings.min_signal_agreement)
+    # Data (2026-06-09, ~410 trades) showed only MACD + EMA carry a positive edge;
+    # RSI/Bollinger/CandlePattern are noise or negative and 3-signal agreement won
+    # LESS than 2-signal. So the gate now decides on MACD + EMA only — the other
+    # three are still evaluated and recorded in the breakdown for ongoing research.
+    confluence = ConfluenceEngine(
+        signals,
+        min_agreement=settings.min_signal_agreement,
+        decision_signals={"MACD", "EMA_Cross"},
+    )
 
     # ── Risk + win-rate tracker ───────────────────────────────────────────────
     risk = RiskManager(

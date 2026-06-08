@@ -146,5 +146,42 @@ async def test_confluence_empty_df_returns_none():
     assert result.score == 0.0
 
 
+@pytest.mark.asyncio
+async def test_decision_signals_gate_only_on_subset():
+    """Only decision_signals drive direction/agreement; others are recorded but inert.
+
+    MACD+EMA agree CALL while three 'noise' signals say PUT. The gate must follow
+    MACD+EMA (CALL), and the breakdown must still contain all five signals.
+    """
+    signals = [
+        _stub_signal("MACD", 0.2, "CALL"),
+        _stub_signal("EMA_Cross", 0.2, "CALL"),
+        _stub_signal("RSI", 0.2, "PUT"),
+        _stub_signal("Bollinger", 0.2, "PUT"),
+        _stub_signal("CandlePattern", 0.2, "PUT"),
+    ]
+    engine = ConfluenceEngine(signals, min_agreement=2,
+                              decision_signals={"MACD", "EMA_Cross"})
+    result = await engine.score(_make_df())
+    assert result.direction == "CALL"
+    assert set(result.breakdown.keys()) == {"MACD", "EMA_Cross", "RSI", "Bollinger", "CandlePattern"}
+
+
+@pytest.mark.asyncio
+async def test_decision_signals_noise_cannot_force_trade():
+    """Noise signals agreeing cannot create a trade when decision signals disagree."""
+    signals = [
+        _stub_signal("MACD", 0.2, "CALL"),
+        _stub_signal("EMA_Cross", 0.2, "PUT"),   # decision signals split
+        _stub_signal("RSI", 0.2, "CALL"),
+        _stub_signal("Bollinger", 0.2, "CALL"),
+        _stub_signal("CandlePattern", 0.2, "CALL"),
+    ]
+    engine = ConfluenceEngine(signals, min_agreement=2,
+                              decision_signals={"MACD", "EMA_Cross"})
+    result = await engine.score(_make_df())
+    assert result.direction is None  # only 1 decision signal per side → no trade
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

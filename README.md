@@ -287,7 +287,13 @@ All signals consume an `o/h/l/c/v` time-indexed DataFrame from `data/candles.py`
 | EMA Cross | 0.15 | Fast EMA crosses above slow EMA | Fast EMA crosses below slow EMA |
 | Candle Patterns | 0.25 | Bullish engulfing / hammer | Bearish engulfing / shooting star |
 
-**Confluence rule:** ≥ 3 signals must agree on the **same** direction AND the weighted score must exceed `MIN_CONFLUENCE_SCORE`. A tie returns `None` (no trade).
+**Confluence rule (updated 2026-06-09):** the trade decision is now gated on **MACD + EMA
+only** (`decision_signals`) — both must agree on the same direction. RSI, Bollinger, and
+CandlePattern are still evaluated and recorded in the decision log for research, but they no
+longer affect whether a trade is taken. Data over ~410 trades showed only MACD/EMA carry a
+positive edge and that 3-signal agreement won *less* than 2-signal. See
+[`docs/signal-strategy-research.md`](docs/signal-strategy-research.md) for the full analysis
+and the candidate signals (ADX, ATR, Supertrend, …) queued for testing.
 
 ---
 
