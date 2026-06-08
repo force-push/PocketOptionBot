@@ -105,6 +105,14 @@ class StrategyManagerV2:
             log.info("[{}] pair select failed for {}", cid, pair_api)
             return
 
+        # Fetch payout early so we skip low-payout pairs before doing any TA
+        payout_pct = await self._api.get_payout(pair_api)
+        if settings.min_payout_pct > 0 and (payout_pct is None or payout_pct < settings.min_payout_pct):
+            log.info("[{}] SKIP {}  reason=low_payout  payout={}% < gate={}%",
+                     cid, pair_api, payout_pct, settings.min_payout_pct)
+            await self._nav.back_to_menu()
+            return
+
         dir_text, _ = await self._nav.read_latest_text()
         dscreen = parse_direction_screen(dir_text)
         if dscreen is None:
@@ -184,17 +192,7 @@ class StrategyManagerV2:
             await self._nav.back_to_menu()
             return
 
-        payout_pct = await self._api.get_payout(pair_api)
-        row.payout_pct = payout_pct
-        if settings.min_payout_pct > 0 and (payout_pct is None or payout_pct < settings.min_payout_pct):
-            row.decision = "SKIP"; row.skip_reason = "low_payout"
-            write_decision(log_path, row)
-            if self._bridge:
-                self._bridge.on_decision(asdict(row))
-            log.info("[{}] SKIP {}  reason=low_payout  payout={}% < gate={}%",
-                     cid, pair_api, payout_pct, settings.min_payout_pct)
-            await self._nav.back_to_menu()
-            return
+        # payout already checked early in cycle
 
         # EV gate: skip if our tracked win rate produces negative expected value
         # EV = win_rate * (payout/100 + 1) - 1   →   break-even at 52.1% for 92% payout
