@@ -106,7 +106,13 @@ class BotSettings(BaseSettings):
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
     # List of pair_api values (e.g., "EURUSD_otc") to block at pair selection.
     # This prevents wasting time on analysis for known underperforming pairs.
-    blocked_pairs: list[str] = Field(default=["EURUSD_otc", "ETHUSD_otc"], alias="BLOCKED_PAIRS")
+    # Empirical losers to skip even when the bot rates them highly (2026-06-09 research,
+    # n>=8 each). See docs/signal-strategy-research.md.
+    blocked_pairs: list[str] = Field(
+        default=["EURUSD_otc", "ETHUSD_otc", "AUDCHF_otc", "USDARS_otc",
+                 "EURTRY_otc", "USDPHP_otc", "CHFNOK_otc"],
+        alias="BLOCKED_PAIRS",
+    )
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
     # the bot-direction trade anyway and records the outcome, tagging the row with
