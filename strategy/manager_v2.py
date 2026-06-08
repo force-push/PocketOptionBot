@@ -10,7 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from config.settings import settings
+from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide
 from strategy.expiry import select_expiry
@@ -198,17 +198,41 @@ class StrategyManagerV2:
                 "bot_is_top_pick": top.is_top,
             })
 
+        # Research/data-collection mode (DEMO only): instead of blocking at the
+        # TA-agreement / EV / risk gates, place the bot-direction trade and record
+        # the outcome. Hard-guarded to DEMO and to a real bot direction so it can
+        # never widen LIVE trading. Each overridden gate tags would_skip_reason.
+        shadow_active = (
+            settings.shadow_record_mode
+            and settings.trade_mode == TradeMode.DEMO
+            and dscreen.direction in ("CALL", "PUT")
+        )
+
+        def _shadow_override(reason: str) -> None:
+            """Convert a skip into a recorded shadow trade (first reason wins)."""
+            row.shadow = True
+            if row.would_skip_reason is None:
+                row.would_skip_reason = reason
+            row.decision = "TRADE"
+            row.skip_reason = None
+
         if not d.trade:
-            write_decision(log_path, row)
-            if self._bridge:
-                self._bridge.on_decision(asdict(row))
-            log.info(
-                "[{}] SKIP {}  reason={}  (bot={} our={} prob={:.2f})",
-                cid, pair_api, d.skip_reason,
-                dscreen.direction, conf.direction or "None", d.combined_probability,
-            )
-            await self._nav.back_to_menu()
-            return
+            if shadow_active:
+                _shadow_override(d.skip_reason or "no_direction")
+                log.info("[{}] SHADOW {}  would_skip={}  (bot={} our={})",
+                         cid, pair_api, row.would_skip_reason,
+                         dscreen.direction, conf.direction or "None")
+            else:
+                write_decision(log_path, row)
+                if self._bridge:
+                    self._bridge.on_decision(asdict(row))
+                log.info(
+                    "[{}] SKIP {}  reason={}  (bot={} our={} prob={:.2f})",
+                    cid, pair_api, d.skip_reason,
+                    dscreen.direction, conf.direction or "None", d.combined_probability,
+                )
+                await self._nav.back_to_menu()
+                return
 
         # payout already checked early in cycle
 
@@ -218,25 +242,35 @@ class StrategyManagerV2:
         if payout_pct is not None and n_tracked >= settings.min_ev_samples:
             ev = tracked_rate * (payout_pct / 100 + 1) - 1
             if ev < settings.min_expected_value:
-                row.decision = "SKIP"; row.skip_reason = "negative_ev"
+                if shadow_active:
+                    _shadow_override("negative_ev")
+                    log.info("[{}] SHADOW {}  would_skip=negative_ev  ev={:.3f}",
+                             cid, pair_api, ev)
+                else:
+                    row.decision = "SKIP"; row.skip_reason = "negative_ev"
+                    write_decision(log_path, row)
+                    if self._bridge:
+                        self._bridge.on_decision(asdict(row))
+                    log.info(
+                        "[{}] SKIP {}  reason=negative_ev  ev={:.3f}  wr={:.1%}  n={}  payout={}%",
+                        cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
+                    )
+                    await self._nav.back_to_menu()
+                    return
+
+        if not self._risk.is_allowed(balance_before):
+            if shadow_active:
+                _shadow_override("risk_blocked")
+                log.warning("[{}] SHADOW {}  would_skip=risk_blocked: {}",
+                            cid, pair_api, getattr(self._risk, "block_reason", ""))
+            else:
+                row.decision = "SKIP"; row.skip_reason = "risk_blocked"
                 write_decision(log_path, row)
                 if self._bridge:
                     self._bridge.on_decision(asdict(row))
-                log.info(
-                    "[{}] SKIP {}  reason=negative_ev  ev={:.3f}  wr={:.1%}  n={}  payout={}%",
-                    cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
-                )
+                log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
                 await self._nav.back_to_menu()
                 return
-
-        if not self._risk.is_allowed(balance_before):
-            row.decision = "SKIP"; row.skip_reason = "risk_blocked"
-            write_decision(log_path, row)
-            if self._bridge:
-                self._bridge.on_decision(asdict(row))
-            log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
-            await self._nav.back_to_menu()
-            return
 
         api_call = self._api.buy if dscreen.direction == "CALL" else self._api.sell
         trade = await api_call(pair_api, settings.stake_amount, expiry)
@@ -307,9 +341,13 @@ class StrategyManagerV2:
                              pnl=pnl if pnl is not None else 0.0,
                              balance_before=balance_before, balance_after=balance_after,
                              pnl_currency="USD")
-            self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
-            risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
-            self._risk.record_trade(row.bot_direction, row.stake, risk_result)
+            # Shadow trades are data-collection only: record their outcome to
+            # decisions.jsonl (done above) but do NOT feed the production win-rate
+            # tracker or risk stats, or they would contaminate live EV gating.
+            if not getattr(row, "shadow", False):
+                self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
+                risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
+                self._risk.record_trade(row.bot_direction, row.stake, risk_result)
 
             # Notify dashboard with complete resolved data
             if self._bridge:

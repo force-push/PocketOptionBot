@@ -172,6 +172,24 @@ def report(rows: list[dict], min_n: int) -> None:
     for w, n, p in sorted(pair_stats, reverse=True):
         print(f"  {p:<16} n={n:>4}  WR={fmt_pct(w)}")
 
+    # ── Shadow (record-all) outcomes by would-skip reason ────────────────────
+    shadow = [r for r in resolved if r.get("shadow")]
+    if shadow:
+        print("\n" + "-" * 68)
+        print(f"SHADOW TRADES: outcomes for trades that would normally be SKIPPED "
+              f"({len(shadow)} resolved)")
+        print("-" * 68)
+        by_reason: dict[str, list[dict]] = defaultdict(list)
+        for r in shadow:
+            by_reason[r.get("would_skip_reason") or "?"].append(r)
+        for reason, rs in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
+            w, n = win_rate(rs)
+            note = ""
+            if w is not None and base is not None and n >= min_n:
+                note = "  ← gate was RIGHT to skip" if w < base - 0.03 else (
+                    "  ← gate may be over-filtering" if w > base + 0.03 else "")
+            print(f"  would_skip={reason:<14} n={n:>4}  WR={fmt_pct(w)}{note}")
+
     # ── Censoring summary ────────────────────────────────────────────────────
     print("\n" + "-" * 68)
     print("CENSORING: decisions we never got an outcome for (gate filtered)")

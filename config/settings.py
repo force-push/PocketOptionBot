@@ -107,6 +107,14 @@ class BotSettings(BaseSettings):
     # List of pair_api values (e.g., "EURUSD_otc") to block at pair selection.
     # This prevents wasting time on analysis for known underperforming pairs.
     blocked_pairs: list[str] = Field(default=["EURUSD_otc", "ETHUSD_otc"], alias="BLOCKED_PAIRS")
+    # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
+    # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
+    # the bot-direction trade anyway and records the outcome, tagging the row with
+    # shadow=True and would_skip_reason. This builds an UNCENSORED dataset (we
+    # otherwise only ever see outcomes for trades that passed every gate).
+    # HARD GUARD: ignored in LIVE — it can never widen real-money trading.
+    # The low_payout gate is still enforced to keep demo economics comparable.
+    shadow_record_mode: bool = Field(default=False, alias="SHADOW_RECORD_MODE")
 
     # ── Legacy gating thresholds (v1 CDP path, NOT in v2 live path) ──
     # v2 uses confluence engine gates (min_signal_agreement + min_confluence_score).

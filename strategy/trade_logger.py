@@ -29,6 +29,8 @@ class DecisionRow:
     skip_reason: str | None
     stake: float
     calibrated_probability: float | None = None  # learned P(win); None until a model exists
+    shadow: bool = False                # True if traded only to collect data (would_skip_reason set)
+    would_skip_reason: str | None = None  # gate that WOULD have skipped this in normal mode
     payout_pct: int | None = None
     trade_id: str | None = None
     status: str = "PENDING"
