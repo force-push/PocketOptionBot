@@ -160,7 +160,7 @@ class Navigator:
         return text, btns
 
     async def wait_for_prediction(
-        self, timeout: float = 30.0, interval: float = 2.0
+        self, timeout: float = 60.0, interval: float = 2.0
     ) -> tuple[str, list[str]]:
         """Poll until the actionable Bot Prediction screen (with pair buttons) arrives.
 
@@ -168,6 +168,8 @@ class Navigator:
         status and only produces the prediction screen several seconds later. We
         poll read_latest_text until we see a 'Bot Prediction' message that has
         pair buttons, dismissing any nag screen encountered along the way.
+
+        Timeout is 60s by default to survive FloodWait delays (up to ~40s).
 
         Returns (text, buttons) of the prediction screen, or ("", []) on timeout.
         """

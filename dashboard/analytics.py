@@ -117,6 +117,8 @@ def history_row(rec: dict) -> dict:
         "bot_win_rate": _num(rec.get("bot_win_rate")),
         "entry": rec.get("entry"),
         "skip_reason": rec.get("skip_reason"),
+        "shadow": bool(rec.get("shadow")),
+        "would_skip_reason": rec.get("would_skip_reason"),
         "trade_id": rec.get("trade_id"),
     }
 

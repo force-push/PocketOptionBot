@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_LINE_RE = re.compile(r"([A-Z]{2,5}/[A-Z]{2,5}(?:\s+OTC)?)\s*:\s*Win rate\s*[≈~]?\s*(\d+)%", re.IGNORECASE)
+# Match pair: Win rate XX% with flexible whitespace.
+# Handles: "AUD/USD OTC: Win rate ≈78%", "AUD/USD OTC : Win rate ≈ 78%"
+_LINE_RE = re.compile(
+    r"([A-Z]{2,5}/[A-Z]{2,5}(?:\s+OTC)?)\s*:\s*(?:Win\s+)?rate\s*[≈~]?\s*(\d+)\s*%",
+    re.IGNORECASE
+)
 _TOP_RE = re.compile(r"🏆")
 
 
@@ -30,6 +35,8 @@ class PredictionScreen:
 def parse_prediction(text: str) -> PredictionScreen | None:
     if not text or "bot prediction" not in text.lower():
         return None
+
+    from utils.logger import log
     out: list[PairPrediction] = []
     for line in text.splitlines():
         m = _LINE_RE.search(line)
@@ -40,4 +47,9 @@ def parse_prediction(text: str) -> PredictionScreen | None:
             win_rate=float(m.group(2)) / 100.0,
             is_top=bool(_TOP_RE.search(line)),
         ))
+
+    if not out:
+        # No pairs parsed; log the raw text for debugging
+        log.warning("parse_prediction: got 'bot prediction' marker but matched zero pairs. Text:\n{}", text)
+
     return PredictionScreen(pairs=tuple(out)) if out else None

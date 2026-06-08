@@ -198,6 +198,23 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 .hist-row.row-skip td { opacity: .55; }
 .hist-row.row-skip:hover td { opacity: .8; }
 
+/* Shadow (data-collection) trades — visually distinct from real strategy trades */
+.shadow-tag {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  font-size: 9px; font-weight: 800; letter-spacing: .5px; line-height: 15px;
+  color: var(--warn); border: 1px solid var(--warn); border-radius: 4px;
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  vertical-align: middle; text-transform: uppercase;
+}
+.hist-row.row-shadow td { background: color-mix(in srgb, var(--warn) 6%, transparent); }
+.hist-row.row-shadow td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.md-shadow-note {
+  margin: 8px 0 4px; padding: 8px 12px; font-size: 12px; line-height: 1.5;
+  color: var(--tx-1); border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
 /* new-row highlight on prepend */
 @keyframes rowIn {
   0% { background: rgba(45,212,191,.16); }

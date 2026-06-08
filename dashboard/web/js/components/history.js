@@ -82,6 +82,12 @@ export function initHistory(rootSel, countSel) {
     const dirCls = (h.dir || '').toLowerCase();
     const newCls = h._new  ? ' row-new'  : '';
     const skipCls = isSkip ? ' row-skip' : '';
+    // Shadow = a deliberate data-collection trade the strategy would normally skip.
+    // Mark it visually so real strategy trades aren't read together with test trades.
+    const shadowCls = h.shadow ? ' row-shadow' : '';
+    const shadowTag = h.shadow
+      ? `<span class="shadow-tag" title="Shadow trade — intentional data-collection trade (would skip: ${h.would_skip_reason || '?'}). Not a real strategy trade.">TEST</span>`
+      : '';
 
     const result = h.outcome || h.result;  // outcome from resolved event, fallback to result
     const resultCell = isSkip
@@ -89,11 +95,11 @@ export function initHistory(rootSel, countSel) {
       : `<span class="res-sym ${result || 'draw'}">${fmt.resSym(result)}</span>` +
         `<span class="${fmt.pnlClass(h.pnl)}" style="margin-left:7px">${fmt.pnl(h.pnl)}</span>`;
 
-    return `<tr data-i="${i}" class="hist-row${newCls}${skipCls}" tabindex="0" role="button" aria-label="View trade detail">
+    return `<tr data-i="${i}" class="hist-row${newCls}${skipCls}${shadowCls}" tabindex="0" role="button" aria-label="View trade detail">
       <td class="mono muted">${fmt.time(h.ts)}</td>
       <td>
         <span class="dir-arrow ${dirCls}" title="${h.dir || ''}">${fmt.dirSym(h.dir)}</span>
-        <span class="pair">${parts.base}${parts.otc ? '<span class="otc">otc</span>' : ''}</span>
+        <span class="pair">${parts.base}${parts.otc ? '<span class="otc">otc</span>' : ''}</span>${shadowTag}
       </td>
       <td class="num">${resultCell}</td>
     </tr>`;
@@ -141,8 +147,10 @@ function detailHtml(d) {
         ${isWin ? '▲' : isLoss ? '▼' : '○'} ${resLabel}
         ${!isSkip && d.pnl != null ? `&nbsp;${fmt.pnl(d.pnl)}` : ''}
       </span>
+      ${d.shadow ? `<span class="shadow-tag" title="Intentional data-collection trade">TEST</span>` : ''}
       <span class="md-time">${fmt.time(d.ts)}</span>
-    </div>`;
+    </div>
+    ${d.shadow ? `<div class="md-shadow-note">🧪 <b>Shadow trade</b> — intentionally placed for data collection (would normally skip: <b>${escHtml(d.would_skip_reason || '?')}</b>). Excluded from the real strategy's win-rate and risk stats.</div>` : ''}`;
 
   // ── Bot section ───────────────────────────────────────────────────────────
   const botSection = `
