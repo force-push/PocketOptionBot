@@ -72,7 +72,10 @@ async def run_smoke(override_pair: str | None = None) -> bool:
     from signals.confluence import ConfluenceEngine
     from signals.ema_cross import EMASignal
     from signals.macd import MACDSignal
+    from signals.parabolic_sar import ParabolicSARSignal
     from signals.rsi import RSISignal
+    from signals.stochastic import StochasticSignal
+    from signals.supertrend import SupertrendSignal
     from strategy.manager_v2 import StrategyManagerV2
     from strategy.risk import RiskManager
     from strategy.win_rate import WinRateTracker
@@ -94,8 +97,11 @@ async def run_smoke(override_pair: str | None = None) -> bool:
         BollingerSignal(),
         EMASignal(fast=9, slow=21),
         CandlePatternSignal(),
-        ADXDMISignal(period=14),  # Observation only
-        ATRSignal(period=14),      # Observation only
+        SupertrendSignal(period=10, multiplier=3.0),      # Tier 2
+        StochasticSignal(period=14, smooth_k=3, smooth_d=3),  # Tier 2
+        ParabolicSARSignal(initial_af=0.02, max_af=0.2, af_step=0.02),  # Tier 2
+        ADXDMISignal(period=14),   # Tier 1: Observation only
+        ATRSignal(period=14),      # Tier 1: Observation only
     ]
     confluence = ConfluenceEngine(signals)
     risk = RiskManager(

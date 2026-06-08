@@ -23,7 +23,10 @@ from signals.candle_pattern import CandlePatternSignal
 from signals.confluence import ConfluenceEngine
 from signals.ema_cross import EMASignal
 from signals.macd import MACDSignal
+from signals.parabolic_sar import ParabolicSARSignal
 from signals.rsi import RSISignal
+from signals.stochastic import StochasticSignal
+from signals.supertrend import SupertrendSignal
 from strategy.signal_gate import SignalGate, GateResult
 from strategy.win_rate import WinRateTracker
 from telegram_feed.parser import TelegramSignal
@@ -85,8 +88,11 @@ def confluence_engine():
         BollingerSignal(period=20, std_dev=2.0),
         EMASignal(fast=9, slow=21),
         CandlePatternSignal(),
-        ADXDMISignal(period=14),  # Observation only
-        ATRSignal(period=14),      # Observation only
+        SupertrendSignal(period=10, multiplier=3.0),      # Tier 2
+        StochasticSignal(period=14, smooth_k=3, smooth_d=3),  # Tier 2
+        ParabolicSARSignal(initial_af=0.02, max_af=0.2, af_step=0.02),  # Tier 2
+        ADXDMISignal(period=14),   # Tier 1: Observation only
+        ATRSignal(period=14),      # Tier 1: Observation only
     ]
     return ConfluenceEngine(signals)
 
