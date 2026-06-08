@@ -53,6 +53,7 @@ def _build_components():
     from signals.parabolic_sar import ParabolicSARSignal
     from signals.rsi import RSISignal
     from signals.stochastic import StochasticSignal
+    from signals.heikin_ashi import HeikinAshiSignal
     from signals.supertrend import SupertrendSignal
     from strategy.risk import RiskManager
     from strategy.win_rate import WinRateTracker
@@ -114,6 +115,8 @@ def _build_components():
         SupertrendSignal(period=10, multiplier=3.0),
         StochasticSignal(period=14, smooth_k=3, smooth_d=3),
         ParabolicSARSignal(initial_af=0.02, max_af=0.2, af_step=0.02),
+        # ── Tier 3: Momentum/exhaustion signals (observation-only) ──────────
+        HeikinAshiSignal(min_consecutive=3),
         # ── Tier 1: Observation-only signals (research only) ──────────────
         ADXDMISignal(period=14),
         ATRSignal(period=14),
