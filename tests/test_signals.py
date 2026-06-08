@@ -9,7 +9,6 @@ import pandas as pd
 import pytest
 
 from signals.base import BaseSignal, SignalResult
-from signals.bollinger import BollingerSignal
 from signals.confluence import ConfluenceEngine, ConfluenceResult
 from signals.rsi import RSISignal
 
@@ -157,14 +156,14 @@ async def test_decision_signals_gate_only_on_subset():
         _stub_signal("MACD", 0.2, "CALL"),
         _stub_signal("EMA_Cross", 0.2, "CALL"),
         _stub_signal("RSI", 0.2, "PUT"),
-        _stub_signal("Bollinger", 0.2, "PUT"),
-        _stub_signal("CandlePattern", 0.2, "PUT"),
+        _stub_signal("Stochastic", 0.2, "PUT"),
+        _stub_signal("HeikinAshi", 0.2, "PUT"),
     ]
     engine = ConfluenceEngine(signals, min_agreement=2,
                               decision_signals={"MACD", "EMA_Cross"})
     result = await engine.score(_make_df())
     assert result.direction == "CALL"
-    assert set(result.breakdown.keys()) == {"MACD", "EMA_Cross", "RSI", "Bollinger", "CandlePattern"}
+    assert set(result.breakdown.keys()) == {"MACD", "EMA_Cross", "RSI", "Stochastic", "HeikinAshi"}
 
 
 @pytest.mark.asyncio
@@ -174,8 +173,8 @@ async def test_decision_signals_noise_cannot_force_trade():
         _stub_signal("MACD", 0.2, "CALL"),
         _stub_signal("EMA_Cross", 0.2, "PUT"),   # decision signals split
         _stub_signal("RSI", 0.2, "CALL"),
-        _stub_signal("Bollinger", 0.2, "CALL"),
-        _stub_signal("CandlePattern", 0.2, "CALL"),
+        _stub_signal("Stochastic", 0.2, "CALL"),
+        _stub_signal("HeikinAshi", 0.2, "CALL"),
     ]
     engine = ConfluenceEngine(signals, min_agreement=2,
                               decision_signals={"MACD", "EMA_Cross"})

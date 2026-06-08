@@ -64,8 +64,6 @@ class BotSettings(BaseSettings):
     macd_signal_period: int = Field(default=9, alias="MACD_SIGNAL_PERIOD", ge=2)
     ema_fast: int = Field(default=9, alias="EMA_FAST", ge=2)
     ema_slow: int = Field(default=21, alias="EMA_SLOW", ge=3)
-    bollinger_period: int = Field(default=20, alias="BOLLINGER_PERIOD", ge=5)
-    bollinger_std: float = Field(default=2.0, alias="BOLLINGER_STD", ge=0.5, le=5.0)
 
     # ── Risk ──
     dry_run: bool = Field(default=True, alias="DRY_RUN")

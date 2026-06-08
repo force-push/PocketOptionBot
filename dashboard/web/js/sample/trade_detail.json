@@ -1,7 +1,7 @@
 {
   "cycle_id": "demo-0001",
-  "ts": "2026-06-05T14:38:21Z",
-  "time": "14:38:21",
+  "ts": "2026-06-09T08:50:00Z",
+  "time": "08:50:00",
   "pair_raw": "EUR/USD OTC",
   "pair_api": "EURUSD_otc",
   "otc": true,
@@ -25,9 +25,12 @@
   "our_signal_breakdown": {
     "RSI":          ["CALL", 0.750, "RSI oversold: 28.4"],
     "MACD":         ["CALL", 0.820, "MACD bullish crossover detected"],
-    "Bollinger":    ["CALL", 0.620, "Price bounced off lower band"],
     "EMA_Cross":    ["CALL", 0.810, "Fast EMA crossed above slow EMA"],
-    "CandlePattern": [null,  0.000, "No pattern detected"]
+    "Supertrend":   ["CALL", 0.680, "Price above Supertrend line"],
+    "Stochastic":   ["CALL", 0.620, "Stochastic oversold: K%=17.2"],
+    "HeikinAshi":   ["CALL", 0.500, "HA 4-bar bullish run"],
+    "RoC":          [null,   0.000, "RoC flat: +0.03% (threshold ±0.05%)"],
+    "StochRSI":     ["CALL", 0.450, "StochRSI oversold: K=18.3 D=22.1"]
   },
   "agreement": true,
   "combined_probability": 0.85,

@@ -13,9 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from signals.rsi import RSISignal
 from signals.macd import MACDSignal
-from signals.bollinger import BollingerSignal
 from signals.ema_cross import EMASignal
-from signals.candle_pattern import CandlePatternSignal
 from signals.confluence import ConfluenceEngine
 from config.settings import settings
 from utils.logger import setup_logger, log
@@ -74,9 +72,7 @@ async def main():
     signals = [
         RSISignal(period=14),
         MACDSignal(fast=12, slow=26, signal=9),
-        BollingerSignal(period=20, std_dev=2.0),
         EMASignal(fast=9, slow=21),
-        CandlePatternSignal(),
     ]
     for sig in signals:
         log.info(f"  ✓ {sig.name} (weight={sig.weight})")

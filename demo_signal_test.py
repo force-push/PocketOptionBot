@@ -30,8 +30,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config.settings import settings
 from data.candles import candles_to_df
-from signals.bollinger import BollingerSignal
-from signals.candle_pattern import CandlePatternSignal
 from signals.confluence import ConfluenceEngine
 from signals.ema_cross import EMASignal
 from signals.macd import MACDSignal
@@ -140,9 +138,7 @@ async def main() -> None:
     signals_list = [
         RSISignal(period=14),
         MACDSignal(fast=12, slow=26, signal=9),
-        BollingerSignal(period=20, std_dev=2.0),
         EMASignal(fast=9, slow=21),
-        CandlePatternSignal(),
     ]
     confluence_engine = ConfluenceEngine(signals_list)
     log.info(f"  ✓ ConfluenceEngine with {len(signals_list)} signals")
