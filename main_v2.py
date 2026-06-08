@@ -8,7 +8,7 @@ Usage
 The bot:
 1. Connects to po_broker_bot via an existing Telethon user session (MTProto).
 2. Navigates the bot menus to read the top pair + direction.
-3. Confirms with internal TA signals (ConfluenceEngine, 5 indicators).
+3. Confirms with internal TA signals (ConfluenceEngine, 5 decision + 2 observation indicators).
 4. Places a CALL/PUT trade via the PocketOption WebSocket API if all gates pass.
 5. Awaits the outcome and logs everything to data/decisions.jsonl.
 
@@ -43,6 +43,8 @@ def _build_components():
     from telethon import TelegramClient
 
     from broker.po_api import PocketOptionAPIClient
+    from signals.adx_dmi import ADXDMISignal
+    from signals.atr import ATRSignal
     from signals.bollinger import BollingerSignal
     from signals.candle_pattern import CandlePatternSignal
     from signals.confluence import ConfluenceEngine
@@ -78,9 +80,11 @@ def _build_components():
         dry_run=settings.dry_run,
     )
 
-    # ── 5-signal TA confluence engine ─────────────────────────────────────────
+    # ── 7-signal TA confluence engine (5 decision + 2 observation) ──────────────
     # All signal parameters are driven from settings so they can be tuned via
     # .env or the dashboard without touching this file.
+    # Decision signals (weight > 0): RSI, MACD, Bollinger, EMA_Cross, CandlePattern
+    # Observation signals (weight = 0): ADX_DMI, ATR (research/analysis only)
     signals = [
         RSISignal(
             period=settings.rsi_period,
@@ -101,6 +105,9 @@ def _build_components():
             slow=settings.ema_slow,
         ),
         CandlePatternSignal(),
+        # Tier 1 observation signals (weight=0.0, never affect trades, research only)
+        ADXDMISignal(period=14),
+        ATRSignal(period=14),
     ]
     # Data (2026-06-09, ~410 trades) showed only MACD + EMA carry a positive edge;
     # RSI/Bollinger/CandlePattern are noise or negative and 3-signal agreement won

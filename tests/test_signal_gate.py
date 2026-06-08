@@ -16,6 +16,8 @@ import pandas as pd
 import pytest
 
 from config.settings import settings
+from signals.adx_dmi import ADXDMISignal
+from signals.atr import ATRSignal
 from signals.bollinger import BollingerSignal
 from signals.candle_pattern import CandlePatternSignal
 from signals.confluence import ConfluenceEngine
@@ -83,6 +85,8 @@ def confluence_engine():
         BollingerSignal(period=20, std_dev=2.0),
         EMASignal(fast=9, slow=21),
         CandlePatternSignal(),
+        ADXDMISignal(period=14),  # Observation only
+        ATRSignal(period=14),      # Observation only
     ]
     return ConfluenceEngine(signals)
 

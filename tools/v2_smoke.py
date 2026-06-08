@@ -65,6 +65,8 @@ async def run_smoke(override_pair: str | None = None) -> bool:
     from telethon import TelegramClient
 
     from broker.po_api import PocketOptionAPIClient
+    from signals.adx_dmi import ADXDMISignal
+    from signals.atr import ATRSignal
     from signals.bollinger import BollingerSignal
     from signals.candle_pattern import CandlePatternSignal
     from signals.confluence import ConfluenceEngine
@@ -92,6 +94,8 @@ async def run_smoke(override_pair: str | None = None) -> bool:
         BollingerSignal(),
         EMASignal(fast=9, slow=21),
         CandlePatternSignal(),
+        ADXDMISignal(period=14),  # Observation only
+        ATRSignal(period=14),      # Observation only
     ]
     confluence = ConfluenceEngine(signals)
     risk = RiskManager(
