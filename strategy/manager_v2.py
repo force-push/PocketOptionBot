@@ -541,6 +541,12 @@ class StrategyManagerV2:
             )
             trades_placed += 1
 
+            # Stagger placements so PO doesn't receive a burst of simultaneous orders.
+            # Sleep after every trade except the last slot; still fires concurrently
+            # since resolution happens in background tasks started below.
+            if settings.trade_stagger_seconds > 0 and self._open_trade_count < self._max_concurrent_trades:
+                await asyncio.sleep(settings.trade_stagger_seconds)
+
             if row.trade_id:
                 expires_at = datetime.now(timezone.utc) + timedelta(seconds=expiry)
                 self._open_trades[row.trade_id] = {

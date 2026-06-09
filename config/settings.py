@@ -72,7 +72,8 @@ class BotSettings(BaseSettings):
 
     # ── Risk ──
     dry_run: bool = Field(default=True, alias="DRY_RUN")
-    max_open_trades: int = Field(default=1, alias="MAX_OPEN_TRADES", ge=1)
+    max_open_trades: int = Field(default=6, alias="MAX_OPEN_TRADES", ge=1)
+    trade_stagger_seconds: int = Field(default=5, alias="TRADE_STAGGER_SECONDS", ge=0)
     min_balance_multiplier: float = Field(default=5.0, alias="MIN_BALANCE_MULTIPLIER", ge=1.0)
 
     # ── Telegram (Telethon user session) ──
