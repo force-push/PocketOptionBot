@@ -41,7 +41,7 @@ class StrategyManagerV2:
         # Concurrent trade cap: never hold more than 6 unresolved trades at once.
         # Each slot is claimed at placement and released in _resolve_trade_background.
         self._open_trade_count: int = 0
-        self._max_concurrent_trades: int = 6
+        self._max_concurrent_trades: int = settings.max_open_trades
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
