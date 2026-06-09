@@ -43,10 +43,11 @@ class HeikinAshiSignal(BaseSignal):
     name = "HeikinAshi"
     weight = 0.12  # Tier 3: observation signal — orthogonal to MACD/EMA
 
-    def __init__(self, min_consecutive: int = 3):
+    def __init__(self, min_consecutive: int = 2):
         """
         Args:
             min_consecutive: Minimum consecutive same-colour HA bars for a trend signal.
+                            Lowered to 2 for OTC pairs where consistent 3-bar runs are rare.
         """
         self.min_consecutive = min_consecutive
 

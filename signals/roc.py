@@ -38,8 +38,8 @@ class RoCSignal(BaseSignal):
     def __init__(
         self,
         period: int = 5,
-        threshold: float = 0.05,
-        confidence_cap_pct: float = 0.30,
+        threshold: float = 0.20,
+        confidence_cap_pct: float = 0.50,
     ):
         """
         Args:

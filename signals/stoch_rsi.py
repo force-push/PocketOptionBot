@@ -43,8 +43,8 @@ class StochRSISignal(BaseSignal):
         stoch_period: int = 14,
         smooth_k: int = 3,
         smooth_d: int = 3,
-        oversold: float = 20.0,
-        overbought: float = 80.0,
+        oversold: float = 30.0,
+        overbought: float = 70.0,
     ):
         """
         Args:
