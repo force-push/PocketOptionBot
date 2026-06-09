@@ -16,11 +16,12 @@ class ADXDMISignal(BaseSignal):
 
     Returns CALL if +DI > -DI (uptrend), PUT if -DI > +DI (downtrend).
     Confidence scales with ADX strength (higher ADX = stronger trend = higher confidence).
-    Observation-only: weight=0.0, never affects trading decisions, only research logging.
+    Directional contributor: small weight so it participates in the confluence
+    vote and probability score (2026-06-10 — all signals enabled for decisions).
     """
 
     name = "ADX_DMI"
-    weight = 0.0  # Observation only
+    weight = 0.08  # Directional, modest weight (trend-strength confirmer)
 
     def __init__(self, period: int = 14):
         self.period = period

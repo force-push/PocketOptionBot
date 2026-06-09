@@ -187,6 +187,68 @@ async def test_signals_loop_no_direction_records_skip(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
+    """A real signals trade is replicated at each SHADOW_EXPIRY_SECONDS duration."""
+    from config.settings import settings, PredictionSource, TradeMode
+    api = MagicMock()
+    api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
+    api.get_candles = AsyncMock(return_value=_make_candles())
+    api.balance = AsyncMock(return_value=1000.0)
+    api.get_payout = AsyncMock(return_value=94)
+
+    # Distinct trade_id per placement so rows don't collide.
+    _ctr = {"n": 0}
+    def _new_trade(*a, **k):
+        _ctr["n"] += 1
+        t = MagicMock(); t.status = "PENDING"; t.trade_id = f"tid-{_ctr['n']}"
+        return t
+    api.buy = AsyncMock(side_effect=_new_trade)
+    api.sell = AsyncMock(side_effect=_new_trade)
+    api.poll_trade_outcome = AsyncMock(return_value="win")
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "trade_mode", TradeMode.DEMO)
+    monkeypatch.setattr(settings, "shadow_expiry_seconds", [50, 80, 130, 210])
+    monkeypatch.setattr(settings, "trade_stagger_seconds", 0)
+
+    await mgr.run_once()
+
+    rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
+    real = [r for r in rows if r["decision"] == "TRADE" and not r.get("shadow")]
+    shadow = [r for r in rows if r.get("shadow") and r.get("shadow_kind") == "expiry"]
+    # 1 real trade + 4 shadow expiry trades for the one pair
+    assert len(real) == 1
+    assert sorted(r["expiry_seconds"] for r in shadow) == [50, 80, 130, 210]
+    # All shadow rows carry the same pair + direction as the real trade
+    assert all(r["pair_api"] == real[0]["pair_api"] for r in shadow)
+    assert all(r["our_direction"] == real[0]["our_direction"] for r in shadow)
+
+
+@pytest.mark.asyncio
+async def test_shadow_expiry_disabled_when_empty(tmp_path, monkeypatch):
+    """No shadow expiry trades when SHADOW_EXPIRY_SECONDS is empty."""
+    from config.settings import settings, TradeMode
+    api = MagicMock()
+    api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
+    api.get_candles = AsyncMock(return_value=_make_candles())
+    api.balance = AsyncMock(return_value=1000.0)
+    trade = MagicMock(); trade.status = "PENDING"; trade.trade_id = "tid-only"
+    api.buy = AsyncMock(return_value=trade)
+    api.sell = AsyncMock(return_value=trade)
+    api.poll_trade_outcome = AsyncMock(return_value="win")
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "trade_mode", TradeMode.DEMO)
+    monkeypatch.setattr(settings, "shadow_expiry_seconds", [])
+
+    await mgr.run_once()
+
+    rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
+    shadow = [r for r in rows if r.get("shadow_kind") == "expiry"]
+    assert len(shadow) == 0
+
+
+@pytest.mark.asyncio
 async def test_broker_bot_mode_unchanged(tmp_path, monkeypatch):
     """With PREDICTION_SOURCE=broker_bot, the navigator path is invoked (not signals)."""
     from config.settings import settings, PredictionSource

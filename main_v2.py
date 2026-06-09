@@ -120,10 +120,18 @@ def _build_components():
         ADXDMISignal(period=14),
         ATRSignal(period=14),
     ]
+    # All directional signals now contribute to BOTH direction and probability.
+    # decision_signals=None means every signal participates in the confluence
+    # vote, agreement count, and weighted score (ATR is non-directional so it
+    # never votes; ADX_DMI carries a small weight — see signals/adx_dmi.py).
+    # Rationale: gather richer direction/probability data across the full signal
+    # set, especially for the shadow expiry experiment. Analysis (2026-06-10,
+    # n=855) showed MACD+EMA-only gating had no robust out-of-sample edge, so
+    # restricting the vote bought us nothing — widen it and let the data decide.
     confluence = ConfluenceEngine(
         signals,
         min_agreement=settings.min_signal_agreement,
-        decision_signals={"MACD", "EMA_Cross"},  # Tier 2 will contribute but not decide
+        decision_signals=None,  # all signals decide direction + probability
     )
 
     # ── Risk + win-rate tracker ───────────────────────────────────────────────

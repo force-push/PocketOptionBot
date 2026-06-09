@@ -94,7 +94,7 @@ class BotSettings(BaseSettings):
     # ── v2 (Telebot evolution) ──
     stake_amount: float = Field(default=1.5, alias="STAKE_AMOUNT", gt=0)
     default_expiry_seconds: int = Field(default=30, alias="DEFAULT_EXPIRY_SECONDS", gt=0)
-    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 60, 120, 300)
+    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 50, 60, 80, 120, 130, 210, 300)
     # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
     # set to 0.82 for real runs (the "82%" rule).
     pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
@@ -125,6 +125,14 @@ class BotSettings(BaseSettings):
     # HARD GUARD: ignored in LIVE — it can never widen real-money trading.
     # The low_payout gate is still enforced to keep demo economics comparable.
     shadow_record_mode: bool = Field(default=False, alias="SHADOW_RECORD_MODE")
+
+    # Shadow expiry experiment (signals loop only). For each real signals-loop
+    # trade, also place demo trades at these expiries (same pair + direction,
+    # shadow=True, shadow_kind="expiry") to compare win rate across durations.
+    # Empty list disables. Shadow trades NEVER feed the production win-rate
+    # tracker or risk stats, and never consume the real concurrency budget.
+    # HARD GUARD: ignored in LIVE — research only, demo balance only.
+    shadow_expiry_seconds: list[int] = Field(default=[], alias="SHADOW_EXPIRY_SECONDS")
 
     # ── Option A: Payout-First, Signals-Driven Loop ──
     # PREDICTION_SOURCE selects the trade loop driver:

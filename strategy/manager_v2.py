@@ -6,7 +6,7 @@ import asyncio
 import json
 import statistics
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -557,11 +557,67 @@ class StrategyManagerV2:
                 }
                 asyncio.create_task(self._resolve_trade_background(row.trade_id))
 
+                # Shadow expiry experiment: replicate this entry at other durations
+                # (demo only, research). Does not consume the real concurrency budget.
+                await self._place_shadow_expiry_trades(
+                    pair_api=pair_api, direction=conf.direction, base_row=row,
+                    log_path=log_path,
+                )
+
         log.info("[{}] signals cycle complete — {} trade(s) placed of {} evaluated",
                  cid, trades_placed, len(candidates))
         self._resolved_count = getattr(self, "_resolved_count", 0)
         if self._resolved_count > 0 and self._resolved_count % 10 == 0:
             self._log_ev_summary()
+
+    async def _place_shadow_expiry_trades(self, *, pair_api, direction, base_row, log_path) -> None:
+        """Place demo shadow trades at each configured experiment expiry.
+
+        For every real signals-loop trade we replicate the same pair + direction
+        at the durations in SHADOW_EXPIRY_SECONDS (e.g. 50/80/130/210s). Each is
+        flagged shadow=True, shadow_kind="expiry" so it:
+          • never feeds the production win-rate tracker or risk stats
+            (guarded in _resolve_trade_background by `if not row.shadow`),
+          • never consumes the real concurrency budget (_open_trade_count),
+          • is excluded from the UI history (decision=TRADE but shadow=True).
+        HARD GUARD: research only — skipped entirely in LIVE.
+        """
+        expiries = settings.shadow_expiry_seconds or []
+        if not expiries or settings.trade_mode == TradeMode.LIVE:
+            return
+        api_call = self._api.buy if direction == "CALL" else self._api.sell
+        for exp in expiries:
+            try:
+                bal = await self._api.balance()
+                trade = await api_call(pair_api, settings.stake_amount, exp)
+                tid = getattr(trade, "trade_id", None)
+                status = getattr(trade, "status", "PENDING")
+                srow = replace(
+                    base_row,
+                    expiry_seconds=exp,
+                    shadow=True,
+                    shadow_kind="expiry",
+                    would_skip_reason=None,
+                    trade_id=tid,
+                    status=status,
+                    balance_before=bal,
+                    outcome=None, pnl=None, balance_after=None,
+                    ts=datetime.now(timezone.utc).isoformat(),
+                )
+                write_decision(log_path, srow)
+                log.info("[{}] SHADOW-EXP {}  {}  exp={}s  id={}",
+                         base_row.cycle_id, direction, pair_api, exp, tid)
+                if tid and status not in ("ERROR", "DRY_RUN"):
+                    self._open_trades[tid] = {
+                        "log_path": log_path,
+                        "row": srow,
+                        "balance_before": bal,
+                        "expires_at": datetime.now(timezone.utc) + timedelta(seconds=exp),
+                    }
+                    asyncio.create_task(self._resolve_trade_background(tid))
+            except Exception as exc:
+                log.warning("[{}] shadow expiry {}s failed for {}: {}",
+                            base_row.cycle_id, exp, pair_api, exc)
 
     async def _resolve_trade_background(self, trade_id: str) -> None:
         """Background task: wait for trade expiry, check outcome, update decisions.jsonl."""
