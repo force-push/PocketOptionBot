@@ -13,20 +13,19 @@ from signals.base import BaseSignal, SignalResult
 
 
 class ATRSignal(BaseSignal):
-    """ATR volatility observation signal.
+    """ATR volatility-based reversal signal.
 
     ATR (Average True Range) measures the average size of price movements.
-    Returns None (no direction), but records ATR value and volatility regime in confidence/reason.
-    Observation-only: weight=0.0, never affects trading decisions, only research logging.
+    Extreme volatility often precedes mean reversion: very high ATR (>80th) suggests
+    a squeeze may follow → PUT (bearish correction). Very low ATR (<20th) suggests
+    momentum building → CALL (upside break). Normal volatility returns no signal.
 
-    Volatility regimes (relative to recent history):
-    - Low (<20th percentile): quiet market, may need wider stops
-    - Normal (20-80th percentile): typical conditions
-    - High (>80th percentile): volatile, risk management critical
+    This orthogonal view catches "quiet before the storm" setups that MA-based
+    signals miss. Weight raised from 0.0 to 0.10 to participate in decisions.
     """
 
     name = "ATR"
-    weight = 0.0  # Observation only
+    weight = 0.10  # Now a direction-producing signal
 
     def __init__(self, period: int = 14):
         self.period = period
@@ -77,21 +76,24 @@ class ATRSignal(BaseSignal):
             else:
                 atr_percentile = 0.5
 
-            # Determine regime
+            # Determine regime and direction
             if atr_percentile < 0.20:
                 regime = "low_volatility"
-                confidence = atr_percentile  # Scales down as volatility decreases
+                direction = "CALL"  # Low ATR → momentum may break upward
+                confidence = 1.0 - atr_percentile  # Higher confidence when deeper in the low zone
             elif atr_percentile > 0.80:
                 regime = "high_volatility"
-                confidence = atr_percentile  # High value = high volatility
+                direction = "PUT"  # High ATR → momentum may reverse downward
+                confidence = atr_percentile  # Higher confidence when deeper in the high zone
             else:
                 regime = "normal_volatility"
-                confidence = 0.5
+                direction = None  # Middle ground = neutral
+                confidence = 0.0
 
             return SignalResult(
                 name=self.name,
-                direction=None,  # ATR has no direction
-                confidence=confidence,  # Used for logging volatility intensity
+                direction=direction,
+                confidence=confidence,
                 reason=(
                     f"ATR {regime}: {current_atr:.6f} "
                     f"(min={atr_min:.6f}, max={atr_max:.6f}, percentile={atr_percentile:.1%})"

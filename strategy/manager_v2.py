@@ -6,13 +6,13 @@ import asyncio
 import json
 import statistics
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from config.settings import settings, TradeMode
+from config.settings import settings, TradeMode, PredictionSource
 from data.candles import candles_to_df
-from strategy.decision import decide
+from strategy.decision import decide, decide_signals
 from strategy.expiry import select_expiry
 from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
@@ -41,7 +41,7 @@ class StrategyManagerV2:
         # Concurrent trade cap: never hold more than 6 unresolved trades at once.
         # Each slot is claimed at placement and released in _resolve_trade_background.
         self._open_trade_count: int = 0
-        self._max_concurrent_trades: int = 6
+        self._max_concurrent_trades: int = settings.max_open_trades
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
@@ -57,6 +57,13 @@ class StrategyManagerV2:
         return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{_cycle_counter:04d}"
 
     async def run_once(self) -> None:
+        """Dispatch to the configured loop driver (signals or broker_bot)."""
+        if settings.prediction_source == PredictionSource.SIGNALS:
+            await self._run_once_signals()
+        else:
+            await self._run_once_broker_bot()
+
+    async def _run_once_broker_bot(self) -> None:
         cid = self._next_cycle_id()
         log_path = settings.decisions_log_path
 
@@ -334,6 +341,284 @@ class StrategyManagerV2:
             # Start background resolver (non-blocking)
             asyncio.create_task(self._resolve_trade_background(row.trade_id))
 
+    async def _run_once_signals(self) -> None:
+        """Option A: payout-first, signals-driven loop.
+
+        Each cycle:
+          1. Fetch all active pairs ≥ MIN_PAYOUT_PCT, sorted payout desc.
+          2. For each pair (up to concurrency cap / MAX_PAIRS_PER_CYCLE):
+             fetch candles → run confluence → decide_signals → risk gates → execute.
+          3. Shadow signals are recorded for every evaluated pair (FR-5).
+        Telegram navigator is NOT called in this path.
+        """
+        cid = self._next_cycle_id()
+        log_path = settings.decisions_log_path
+
+        all_pairs = await self._api.get_active_pairs()  # is_active filtered, sorted payout desc
+        candidates = [
+            p for p in all_pairs
+            if p.get("symbol") not in settings.blocked_pairs
+            and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
+        ]
+        if settings.max_pairs_per_cycle > 0:
+            candidates = candidates[:settings.max_pairs_per_cycle]
+
+        log.info("[{}] signals scan: {}/{} pairs ≥{}% payout  blocked={} max_per_cycle={}",
+                 cid, len(candidates), len(all_pairs), settings.min_payout_pct,
+                 len(settings.blocked_pairs), settings.max_pairs_per_cycle or "all")
+
+        if not candidates:
+            log.info("[{}] no pairs above payout floor — skipping cycle", cid)
+            return
+
+        balance_before = await self._api.balance()
+        if self._bridge:
+            self._bridge.heartbeat(
+                mode=settings.trade_mode.value, dry_run=settings.dry_run,
+                connected=True, balance=balance_before, currency="USD",
+                active=[], last_cycle={"cycle_id": cid, "status": "scanning", "skip_reason": None},
+                risk_block_reason=None,
+            )
+
+        expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
+        candle_period = settings.candle_interval_seconds
+        trades_placed = 0
+
+        for pair_info in candidates:
+            pair_api = pair_info["symbol"]
+            payout_pct = pair_info.get("payout") or 0
+
+            # Stop scanning if concurrency cap already full
+            if self._open_trade_count >= self._max_concurrent_trades:
+                log.info("[{}] concurrency cap reached ({}/{}) — stopping scan",
+                         cid, self._open_trade_count, self._max_concurrent_trades)
+                break
+
+            candle_list = await self._api.get_candles(
+                pair_api, period=candle_period, count=settings.history_length
+            )
+            df = candles_to_df(candle_list)
+            if df.empty or len(df) < 30:
+                log.debug("[{}] {} — insufficient candle data ({}) — skip", cid, pair_api, len(df))
+                continue
+
+            conf = await self._conf.score(df)
+
+            agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
+            total_signals = len(conf.breakdown or {})
+            gate = "✓ PASS" if conf.direction is not None else "✗ FAIL"
+
+            # Only log the full per-signal table when the confluence gate passes (trade candidate).
+            # On FAIL, emit a single compact summary line to keep logs readable across 64 pairs.
+            if conf.direction is not None:
+                for name, vals in (conf.breakdown or {}).items():
+                    sig_dir, sig_conf, sig_reason = (list(vals) + [None, None, None])[:3]
+                    log.info("[{}]   TA  {:14s} {}  conf={:.3f}  {}",
+                             cid, name, f"{sig_dir or '----':<4}", sig_conf or 0.0, sig_reason or "")
+                log.info(
+                    "[{}]   CONF {}  score={:.3f}  agreed={}/{}  {}  ({})  payout={}%",
+                    cid, conf.direction, conf.score, agreeing, total_signals,
+                    gate, conf.reason, payout_pct,
+                )
+            else:
+                log.debug(
+                    "[{}]   {} CONF ✗  agreed={}/{}  ({})  payout={}%",
+                    cid, pair_api, agreeing, total_signals, conf.reason, payout_pct,
+                )
+
+            # Get tracked win rate for P(win) and EV gate
+            tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
+
+            d = decide_signals(
+                our_direction=conf.direction,
+                our_confluence=conf.score,
+                tracked_win_rate=tracked_rate,
+            )
+
+            # In signals mode, bot_direction = conf.direction (the direction we trade).
+            # _resolve_trade_background records tracker + risk entries using bot_direction,
+            # so this must match the actual traded direction.
+            row = DecisionRow(
+                cycle_id=cid, pair_raw=pair_api, pair_api=pair_api,
+                bot_win_rate=tracked_rate, bot_is_top_pick=False,
+                bot_direction=conf.direction or "",
+                bot_setup="signals",
+                bot_indicators_raw="",
+                our_direction=conf.direction, our_confluence_score=conf.score,
+                our_signal_breakdown={k: list(v[:3]) for k, v in (conf.breakdown or {}).items()},
+                agreement=True,
+                combined_probability=d.combined_probability, expiry_seconds=expiry,
+                decision="TRADE" if d.trade else "SKIP", skip_reason=d.skip_reason,
+                stake=settings.stake_amount, balance_before=balance_before,
+                payout_pct=payout_pct,
+            )
+            if d.trade:
+                row.calibrated_probability = self._calibrator.predict({
+                    "bot_win_rate": tracked_rate,
+                    "our_confluence": conf.score,
+                    "agreement": True,
+                    "agreeing_signals": agreeing,
+                    "payout_pct": payout_pct,
+                    "bot_is_top_pick": False,
+                })
+
+            if not d.trade:
+                write_decision(log_path, row)
+                if self._bridge:
+                    self._bridge.on_decision(asdict(row))
+                log.info(
+                    "[{}] SKIP {}  reason={}  (conf={}  score={:.2f}  payout={}%)",
+                    cid, pair_api, d.skip_reason,
+                    conf.direction or "None", conf.score, payout_pct,
+                )
+                continue
+
+            # EV gate
+            if payout_pct and n_tracked >= settings.min_ev_samples:
+                ev = tracked_rate * (payout_pct / 100 + 1) - 1
+                if ev < settings.min_expected_value:
+                    row.decision = "SKIP"; row.skip_reason = "negative_ev"
+                    write_decision(log_path, row)
+                    if self._bridge:
+                        self._bridge.on_decision(asdict(row))
+                    log.info(
+                        "[{}] SKIP {}  reason=negative_ev  ev={:.3f}  wr={:.1%}  n={}  payout={}%",
+                        cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
+                    )
+                    continue
+
+            # Risk gate — session-wide block, stop scanning all pairs
+            if not self._risk.is_allowed(balance_before):
+                row.decision = "SKIP"; row.skip_reason = "risk_blocked"
+                write_decision(log_path, row)
+                if self._bridge:
+                    self._bridge.on_decision(asdict(row))
+                log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
+                break
+
+            # Concurrency cap (re-check; may have filled from a prior pair this cycle)
+            if self._open_trade_count >= self._max_concurrent_trades:
+                row.decision = "SKIP"; row.skip_reason = "max_concurrent_trades"
+                write_decision(log_path, row)
+                log.info("[{}] SKIP {}  reason=max_concurrent_trades  open={}/{}",
+                         cid, pair_api, self._open_trade_count, self._max_concurrent_trades)
+                break
+            self._open_trade_count += 1
+
+            # Capture balance at the moment this specific trade is placed.
+            # All concurrent trades in a burst share the same cycle-start `balance_before`
+            # above, which makes individual pnl = balance_after - balance_before meaningless
+            # (wins show negative pnl because prior concurrent losses already reduced the
+            # balance). Fetching fresh here gives an accurate per-trade baseline.
+            balance_at_placement = await self._api.balance()
+            row.balance_before = balance_at_placement
+
+            api_call = self._api.buy if conf.direction == "CALL" else self._api.sell
+            trade = await api_call(pair_api, settings.stake_amount, expiry)
+            row.trade_id = getattr(trade, "trade_id", None)
+            row.status = getattr(trade, "status", "PENDING")
+
+            if row.status in ("ERROR", "DRY_RUN") or not row.trade_id:
+                self._open_trade_count = max(0, self._open_trade_count - 1)
+
+            write_decision(log_path, row)
+            if self._bridge:
+                _now = datetime.now(timezone.utc)
+                self._bridge.trade_opened({
+                    "trade_id": row.trade_id, "pair_raw": pair_api, "pair_api": pair_api,
+                    "dir": conf.direction, "stake": settings.stake_amount,
+                    "entry": getattr(trade, "entry", None),
+                    "opened_at": _now.isoformat(),
+                    "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
+                    "expiry_seconds": expiry,
+                    "confluence_n": agreeing,
+                    "confluence_score": conf.score,
+                })
+            log.info(
+                "[{}] TRADE {}  {}  @{:.2f}  exp={}s  payout={}%  prob={:.2f}  id={}",
+                cid, conf.direction, pair_api, settings.stake_amount,
+                expiry, payout_pct, d.combined_probability, row.trade_id,
+            )
+            trades_placed += 1
+
+            # Stagger placements so PO doesn't receive a burst of simultaneous orders.
+            # Sleep after every trade except the last slot; still fires concurrently
+            # since resolution happens in background tasks started below.
+            if settings.trade_stagger_seconds > 0 and self._open_trade_count < self._max_concurrent_trades:
+                await asyncio.sleep(settings.trade_stagger_seconds)
+
+            if row.trade_id:
+                expires_at = datetime.now(timezone.utc) + timedelta(seconds=expiry)
+                self._open_trades[row.trade_id] = {
+                    "log_path": log_path,
+                    "row": row,
+                    "balance_before": balance_at_placement,
+                    "expires_at": expires_at,
+                }
+                asyncio.create_task(self._resolve_trade_background(row.trade_id))
+
+                # Shadow expiry experiment: replicate this entry at other durations
+                # (demo only, research). Does not consume the real concurrency budget.
+                await self._place_shadow_expiry_trades(
+                    pair_api=pair_api, direction=conf.direction, base_row=row,
+                    log_path=log_path,
+                )
+
+        log.info("[{}] signals cycle complete — {} trade(s) placed of {} evaluated",
+                 cid, trades_placed, len(candidates))
+        self._resolved_count = getattr(self, "_resolved_count", 0)
+        if self._resolved_count > 0 and self._resolved_count % 10 == 0:
+            self._log_ev_summary()
+
+    async def _place_shadow_expiry_trades(self, *, pair_api, direction, base_row, log_path) -> None:
+        """Place demo shadow trades at each configured experiment expiry.
+
+        For every real signals-loop trade we replicate the same pair + direction
+        at the durations in SHADOW_EXPIRY_SECONDS (e.g. 50/80/130/210s). Each is
+        flagged shadow=True, shadow_kind="expiry" so it:
+          • never feeds the production win-rate tracker or risk stats
+            (guarded in _resolve_trade_background by `if not row.shadow`),
+          • never consumes the real concurrency budget (_open_trade_count),
+          • is excluded from the UI history (decision=TRADE but shadow=True).
+        HARD GUARD: research only — skipped entirely in LIVE.
+        """
+        expiries = settings.shadow_expiry_seconds or []
+        if not expiries or settings.trade_mode == TradeMode.LIVE:
+            return
+        api_call = self._api.buy if direction == "CALL" else self._api.sell
+        for exp in expiries:
+            try:
+                bal = await self._api.balance()
+                trade = await api_call(pair_api, settings.stake_amount, exp)
+                tid = getattr(trade, "trade_id", None)
+                status = getattr(trade, "status", "PENDING")
+                srow = replace(
+                    base_row,
+                    expiry_seconds=exp,
+                    shadow=True,
+                    shadow_kind="expiry",
+                    would_skip_reason=None,
+                    trade_id=tid,
+                    status=status,
+                    balance_before=bal,
+                    outcome=None, pnl=None, balance_after=None,
+                    ts=datetime.now(timezone.utc).isoformat(),
+                )
+                write_decision(log_path, srow)
+                log.info("[{}] SHADOW-EXP {}  {}  exp={}s  id={}",
+                         base_row.cycle_id, direction, pair_api, exp, tid)
+                if tid and status not in ("ERROR", "DRY_RUN"):
+                    self._open_trades[tid] = {
+                        "log_path": log_path,
+                        "row": srow,
+                        "balance_before": bal,
+                        "expires_at": datetime.now(timezone.utc) + timedelta(seconds=exp),
+                    }
+                    asyncio.create_task(self._resolve_trade_background(tid))
+            except Exception as exc:
+                log.warning("[{}] shadow expiry {}s failed for {}: {}",
+                            base_row.cycle_id, exp, pair_api, exc)
+
     async def _resolve_trade_background(self, trade_id: str) -> None:
         """Background task: wait for trade expiry, check outcome, update decisions.jsonl."""
         if trade_id not in self._open_trades:
@@ -364,10 +649,21 @@ class StrategyManagerV2:
                     log.error("check_win fallback failed for {}: {}", trade_id, cw_exc)
                     outcome = "unknown"
             balance_after = await self._api.balance()
-            pnl = (balance_after - balance_before) if (balance_after is not None and balance_before is not None) else None
+            # Deterministic pnl: avoid concurrent balance noise by computing from
+            # outcome + payout instead of measuring balance_after - balance_before.
+            # With staggered concurrent trades, balance movements overlap and corrupt
+            # the measurement. True P&L is always: win → +stake×(payout/100),
+            # loss → -stake, draw → 0.
+            payout_pct = row.payout_pct or 0.0
+            if outcome.lower() == "win":
+                pnl = row.stake * (payout_pct / 100.0)
+            elif outcome.lower() == "loss":
+                pnl = -row.stake
+            else:
+                pnl = 0.0
 
             backfill_outcome(log_path, trade_id=trade_id, outcome=outcome,
-                             pnl=pnl if pnl is not None else 0.0,
+                             pnl=pnl,
                              balance_before=balance_before, balance_after=balance_after,
                              pnl_currency="USD")
             # Shadow trades are data-collection only: record their outcome to

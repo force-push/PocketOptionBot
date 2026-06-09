@@ -87,16 +87,16 @@ class StochasticSignal(BaseSignal):
             confidence = 0.0
             reason = ""
 
-            # Oversold: K% < 20
-            if current_k < 20:
+            # Oversold: K% < 30 (loosened from 20 for more signals on OTC)
+            if current_k < 30:
                 direction = "CALL"
-                confidence = min(1.0, (20 - current_k) / 20)
+                confidence = min(1.0, (30 - current_k) / 30)
                 reason = f"Stochastic oversold: K%={current_k:.1f} (D%={current_d:.1f})"
 
-            # Overbought: K% > 80
-            elif current_k > 80:
+            # Overbought: K% > 70 (loosened from 80 for more signals on OTC)
+            elif current_k > 70:
                 direction = "PUT"
-                confidence = min(1.0, (current_k - 80) / 20)
+                confidence = min(1.0, (current_k - 70) / 30)
                 reason = f"Stochastic overbought: K%={current_k:.1f} (D%={current_d:.1f})"
 
             # Bullish crossover: K% crosses above D%

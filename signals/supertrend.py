@@ -54,7 +54,7 @@ class SupertrendSignal(BaseSignal):
         atr = tr.rolling(window=self.period).mean()
 
         # Forward-fill initial ATR NaN values to stabilize bands early
-        atr = atr.fillna(method='bfill').fillna(tr.mean())
+        atr = atr.bfill().fillna(tr.mean())
 
         # Basic bands
         basic_ub = hl_avg + self.multiplier * atr

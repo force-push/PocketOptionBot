@@ -15,6 +15,11 @@ class TradeMode(StrEnum):
     LIVE = "LIVE"
 
 
+class PredictionSource(StrEnum):
+    SIGNALS = "signals"
+    BROKER_BOT = "broker_bot"
+
+
 class BotSettings(BaseSettings):
     """All configuration loaded from .env or environment variables."""
 
@@ -64,12 +69,11 @@ class BotSettings(BaseSettings):
     macd_signal_period: int = Field(default=9, alias="MACD_SIGNAL_PERIOD", ge=2)
     ema_fast: int = Field(default=9, alias="EMA_FAST", ge=2)
     ema_slow: int = Field(default=21, alias="EMA_SLOW", ge=3)
-    bollinger_period: int = Field(default=20, alias="BOLLINGER_PERIOD", ge=5)
-    bollinger_std: float = Field(default=2.0, alias="BOLLINGER_STD", ge=0.5, le=5.0)
 
     # ── Risk ──
     dry_run: bool = Field(default=True, alias="DRY_RUN")
-    max_open_trades: int = Field(default=1, alias="MAX_OPEN_TRADES", ge=1)
+    max_open_trades: int = Field(default=6, alias="MAX_OPEN_TRADES", ge=1)
+    trade_stagger_seconds: int = Field(default=5, alias="TRADE_STAGGER_SECONDS", ge=0)
     min_balance_multiplier: float = Field(default=5.0, alias="MIN_BALANCE_MULTIPLIER", ge=1.0)
 
     # ── Telegram (Telethon user session) ──
@@ -90,7 +94,7 @@ class BotSettings(BaseSettings):
     # ── v2 (Telebot evolution) ──
     stake_amount: float = Field(default=1.5, alias="STAKE_AMOUNT", gt=0)
     default_expiry_seconds: int = Field(default=30, alias="DEFAULT_EXPIRY_SECONDS", gt=0)
-    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 60, 120, 300)
+    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 50, 60, 80, 120, 128, 216, 300)
     # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
     # set to 0.82 for real runs (the "82%" rule).
     pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
@@ -122,6 +126,25 @@ class BotSettings(BaseSettings):
     # The low_payout gate is still enforced to keep demo economics comparable.
     shadow_record_mode: bool = Field(default=False, alias="SHADOW_RECORD_MODE")
 
+    # Shadow expiry experiment (signals loop only). For each real signals-loop
+    # trade, also place demo trades at these expiries (same pair + direction,
+    # shadow=True, shadow_kind="expiry") to compare win rate across durations.
+    # Empty list disables. Shadow trades NEVER feed the production win-rate
+    # tracker or risk stats, and never consume the real concurrency budget.
+    # HARD GUARD: ignored in LIVE — research only, demo balance only.
+    shadow_expiry_seconds: list[int] = Field(default=[], alias="SHADOW_EXPIRY_SECONDS")
+
+    # ── Option A: Payout-First, Signals-Driven Loop ──
+    # PREDICTION_SOURCE selects the trade loop driver:
+    #   signals    — payout-first: scan all pairs ≥ MIN_PAYOUT_PCT, direction from TA confluence
+    #   broker_bot — prediction-first: drive po_broker_bot Telegram UI (original behaviour)
+    # Invalid value fails closed to broker_bot with a warning.
+    prediction_source: PredictionSource = Field(
+        default=PredictionSource.SIGNALS, alias="PREDICTION_SOURCE"
+    )
+    # Max pairs to evaluate per cycle in signals mode (0 = all ≥ floor).
+    max_pairs_per_cycle: int = Field(default=0, alias="MAX_PAIRS_PER_CYCLE", ge=0)
+
     # ── Legacy gating thresholds (v1 CDP path, NOT in v2 live path) ──
     # v2 uses confluence engine gates (min_signal_agreement + min_confluence_score).
     # These are kept for backward compat but NOT exposed in dashboard, NOT used
@@ -141,6 +164,21 @@ class BotSettings(BaseSettings):
     dashboard_token: Optional[str] = Field(default=None, alias="DASHBOARD_TOKEN")
     live_state_path: str = Field(default="data/live_state.json", alias="LIVE_STATE_PATH")
     events_log_path: str = Field(default="data/events.jsonl", alias="EVENTS_LOG_PATH")
+
+    @field_validator("prediction_source", mode="before")
+    @classmethod
+    def _normalize_prediction_source(cls, v):
+        if v is None:
+            return PredictionSource.SIGNALS
+        normalized = str(v).strip().lower()
+        if normalized not in (PredictionSource.SIGNALS, PredictionSource.BROKER_BOT):
+            import warnings
+            warnings.warn(
+                f"Invalid PREDICTION_SOURCE: {v!r}. Falling back to 'broker_bot'.",
+                UserWarning, stacklevel=2,
+            )
+            return PredictionSource.BROKER_BOT
+        return PredictionSource(normalized)
 
     @field_validator("trade_mode", mode="before")
     @classmethod

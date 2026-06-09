@@ -45,13 +45,14 @@ def _build_components():
     from broker.po_api import PocketOptionAPIClient
     from signals.adx_dmi import ADXDMISignal
     from signals.atr import ATRSignal
-    from signals.bollinger import BollingerSignal
-    from signals.candle_pattern import CandlePatternSignal
     from signals.confluence import ConfluenceEngine
     from signals.ema_cross import EMASignal
+    from signals.heikin_ashi import HeikinAshiSignal
     from signals.macd import MACDSignal
     from signals.parabolic_sar import ParabolicSARSignal
+    from signals.roc import RoCSignal
     from signals.rsi import RSISignal
+    from signals.stoch_rsi import StochRSISignal
     from signals.stochastic import StochasticSignal
     from signals.supertrend import SupertrendSignal
     from strategy.risk import RiskManager
@@ -83,14 +84,16 @@ def _build_components():
         dry_run=settings.dry_run,
     )
 
-    # ── 10-signal TA confluence engine (5 Tier0 + 3 Tier2 + 2 observation) ───────
-    # All signal parameters are driven from settings so they can be tuned via
-    # .env or the dashboard without touching this file.
-    # Tier 0 (original, weight > 0): RSI, MACD, Bollinger, EMA_Cross, CandlePattern
-    # Tier 2 (new, weight > 0): Supertrend, Stochastic, Parabolic SAR
-    # Tier 1 observation (weight = 0): ADX_DMI, ATR (research/analysis only)
+    # ── TA confluence engine ──────────────────────────────────────────────────
+    # Signal tiers (2026-06-09, ~440 resolved trades):
+    #   Gate (decision_signals): MACD + EMA_Cross only — confirmed positive edge
+    #   Tier 0 (weight > 0, no gate): RSI — noise but harmless, kept for research
+    #   Tier 2 (weight > 0, no gate): Supertrend, Stochastic, Parabolic SAR
+    #   Tier 3 (weight > 0, no gate): HeikinAshi, RoC, StochRSI — new, observation-only
+    #   Tier 1 (weight = 0): ADX_DMI, ATR — pure research counters
+    #   REMOVED: Bollinger (inverted), CandlePattern (0/291 direction, dead)
     signals = [
-        # ── Tier 0: Original signals ──────────────────────────────────────
+        # ── Gate-eligible (Tier 0) ─────────────────────────────────────────
         RSISignal(
             period=settings.rsi_period,
             oversold=settings.rsi_oversold,
@@ -101,33 +104,34 @@ def _build_components():
             slow=settings.macd_slow,
             signal=settings.macd_signal_period,
         ),
-        BollingerSignal(
-            period=settings.bollinger_period,
-            std_dev=settings.bollinger_std,
-        ),
         EMASignal(
             fast=settings.ema_fast,
             slow=settings.ema_slow,
         ),
-        CandlePatternSignal(),
-        # ── Tier 2: New high-quality trend signals ────────────────────────
+        # ── Tier 2: Trend confirmers ───────────────────────────────────────
         SupertrendSignal(period=10, multiplier=3.0),
         StochasticSignal(period=14, smooth_k=3, smooth_d=3),
         ParabolicSARSignal(initial_af=0.02, max_af=0.2, af_step=0.02),
-        # ── Tier 1: Observation-only signals (research only) ──────────────
+        # ── Tier 3: Momentum/exhaustion (observation-only) ────────────────
+        HeikinAshiSignal(min_consecutive=3),
+        RoCSignal(period=5, threshold=0.05),
+        StochRSISignal(rsi_period=14, stoch_period=14, smooth_k=3, smooth_d=3),
+        # ── Tier 1: Research counters (weight=0) ──────────────────────────
         ADXDMISignal(period=14),
         ATRSignal(period=14),
     ]
-    # Data (2026-06-09, ~440 resolved trades) showed only MACD + EMA carry a positive edge;
-    # RSI/Bollinger/CandlePattern are noise or negative. Tier 2 signals (Supertrend,
-    # Stochastic, Parabolic SAR) contribute to confluence scoring (weight > 0) for
-    # research, but don't gate trades (not in decision_signals). Once we collect data
-    # on their individual correlations, we'll either promote them to the gate or
-    # keep them observation-only. Tier 1 signals (ADX/ATR) are pure research (weight=0).
+    # All directional signals now contribute to BOTH direction and probability.
+    # decision_signals=None means every signal participates in the confluence
+    # vote, agreement count, and weighted score (ATR is non-directional so it
+    # never votes; ADX_DMI carries a small weight — see signals/adx_dmi.py).
+    # Rationale: gather richer direction/probability data across the full signal
+    # set, especially for the shadow expiry experiment. Analysis (2026-06-10,
+    # n=855) showed MACD+EMA-only gating had no robust out-of-sample edge, so
+    # restricting the vote bought us nothing — widen it and let the data decide.
     confluence = ConfluenceEngine(
         signals,
         min_agreement=settings.min_signal_agreement,
-        decision_signals={"MACD", "EMA_Cross"},  # Tier 2 will contribute but not decide
+        decision_signals=None,  # all signals decide direction + probability
     )
 
     # ── Risk + win-rate tracker ───────────────────────────────────────────────
@@ -182,6 +186,9 @@ async def main(cycles: int = 0) -> None:
     """
     log.info("PocketOptionBot v2 starting — mode={} dry_run={} cycles={}",
              settings.trade_mode, settings.dry_run, cycles or "∞")
+    log.info("Loop driver: {}  (payout_floor={}%  max_pairs_per_cycle={})",
+             settings.prediction_source.value, settings.min_payout_pct,
+             settings.max_pairs_per_cycle or "all")
     log.info("Signal gates: min_agreement={}/5  min_confluence_score={}",
              settings.min_signal_agreement, settings.min_confluence_score)
     log.info("TA config: candle_interval={}s  history_length={}  expiry={}s",

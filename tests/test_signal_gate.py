@@ -18,8 +18,6 @@ import pytest
 from config.settings import settings
 from signals.adx_dmi import ADXDMISignal
 from signals.atr import ATRSignal
-from signals.bollinger import BollingerSignal
-from signals.candle_pattern import CandlePatternSignal
 from signals.confluence import ConfluenceEngine
 from signals.ema_cross import EMASignal
 from signals.macd import MACDSignal
@@ -85,14 +83,12 @@ def confluence_engine():
     signals = [
         RSISignal(period=14),
         MACDSignal(fast=12, slow=26, signal=9),
-        BollingerSignal(period=20, std_dev=2.0),
         EMASignal(fast=9, slow=21),
-        CandlePatternSignal(),
-        SupertrendSignal(period=10, multiplier=3.0),      # Tier 2
-        StochasticSignal(period=14, smooth_k=3, smooth_d=3),  # Tier 2
-        ParabolicSARSignal(initial_af=0.02, max_af=0.2, af_step=0.02),  # Tier 2
-        ADXDMISignal(period=14),   # Tier 1: Observation only
-        ATRSignal(period=14),      # Tier 1: Observation only
+        SupertrendSignal(period=10, multiplier=3.0),
+        StochasticSignal(period=14, smooth_k=3, smooth_d=3),
+        ParabolicSARSignal(initial_af=0.02, max_af=0.2, af_step=0.02),
+        ADXDMISignal(period=14),
+        ATRSignal(period=14),
     ]
     return ConfluenceEngine(signals)
 

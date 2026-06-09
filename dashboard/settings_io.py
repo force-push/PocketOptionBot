@@ -119,8 +119,6 @@ FIELDS: list[_F] = [
     _F("MACD_SIGNAL_PERIOD", "macd_signal_period", "TA Signals", "int", False, True, "MACD Signal Period", "number", step=1),
     _F("EMA_FAST", "ema_fast", "TA Signals", "int", False, True, "EMA Fast", "number", step=1),
     _F("EMA_SLOW", "ema_slow", "TA Signals", "int", False, True, "EMA Slow", "number", step=1),
-    _F("BOLLINGER_PERIOD", "bollinger_period", "TA Signals", "int", False, True, "Bollinger Period", "number", step=1),
-    _F("BOLLINGER_STD", "bollinger_std", "TA Signals", "float", False, True, "Bollinger Std Dev", "number", step=0.5),
     # Risk
     _F("MAX_TRADES_PER_HOUR", "max_trades_per_hour", "Risk", "int", False, True, "Max Trades / Hour", "number", step=1),
     _F("MAX_DAILY_LOSS_USD", "max_daily_loss_usd", "Risk", "float", False, True, "Daily Loss Limit (USD)", "number", step=1),
