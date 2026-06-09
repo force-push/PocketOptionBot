@@ -62,15 +62,15 @@ export function initHistory(rootSel, countSel) {
 
   function render(list) {
     rows = Array.isArray(list) ? list : [];
+    const traded = rows.filter(r => r.decision !== 'SKIP');
     if (countEl) {
-      const resolved = rows.filter(r => r.decision !== 'SKIP').length;
-      countEl.textContent = `resolved · ${resolved}`;
+      countEl.textContent = `resolved · ${traded.length}`;
     }
-    if (!rows.length) {
+    if (!traded.length) {
       tbody.innerHTML = `<tr class="empty-row"><td colspan="3"><div class="empty">No trades yet</div></td></tr>`;
       return;
     }
-    tbody.innerHTML = rows.map((h, i) => rowHtml(h, i)).join('');
+    tbody.innerHTML = traded.map((h, i) => rowHtml(h, i)).join('');
 
     const fresh = rows.filter(r => r._new);
     if (fresh.length) setTimeout(() => { fresh.forEach(r => { delete r._new; }); }, 1600);
