@@ -100,16 +100,15 @@ class Navigator:
         """
         await asyncio.sleep(2)
 
-        # Check if we're on stake selection screen (stuck between direction and execution)
-        # If so, click Main Menu to escape
+        # Check if we're on stake selection screen — click Main Menu to escape
+        on_stake_screen = False
         for msg_tuple in await self._recent(limit=5):
             msg, text, btns = msg_tuple
             if is_stake_selection_screen(text):
+                on_stake_screen = True
                 log.debug("Detected stake selection screen — clicking Main Menu")
                 if await self._click(lambda x: "main menu" in x.lower(), limit=8):
-                    await asyncio.sleep(2)
-                    break
-                # If Main Menu not found, try /start
+                    await asyncio.sleep(4)  # wait longer for Main Menu to render
                 break
 
         # Try to find Start Autotrade button directly (natural flow from Main Menu)
@@ -118,14 +117,20 @@ class Navigator:
                 await asyncio.sleep(3)
                 return
 
-        # Fallback: send /start if button not found (e.g., connection reset)
+        # If we came from stake screen and still can't find Start Autotrade,
+        # the Main Menu rendered — just return and let next cycle retry cleanly.
+        if on_stake_screen:
+            log.debug("start_autotrade: came from stake screen, returning to let next cycle retry")
+            return
+
+        # Fallback: send /start only if we have no idea where we are
         try:
             await self._c.send_message(self._bot, "/start")
         except FloodWaitError as e:
-            wait = getattr(e, "seconds", 60) or 60
-            log.warning("FloodWait on /start fallback — sleeping {}s", wait)
+            wait = min(getattr(e, "seconds", 60) or 60, 30)
+            log.warning("FloodWait on /start fallback — sleeping {}s (capped at 30s)", wait)
             await asyncio.sleep(wait)
-            await self._c.send_message(self._bot, "/start")
+            return
         await asyncio.sleep(2.5)
         for label in ("🚀 Start Autotrade", "Start Autotrade", "Start Trade"):
             if await self._click(lambda x, L=label: L in x):
