@@ -593,10 +593,21 @@ class StrategyManagerV2:
                     log.error("check_win fallback failed for {}: {}", trade_id, cw_exc)
                     outcome = "unknown"
             balance_after = await self._api.balance()
-            pnl = (balance_after - balance_before) if (balance_after is not None and balance_before is not None) else None
+            # Deterministic pnl: avoid concurrent balance noise by computing from
+            # outcome + payout instead of measuring balance_after - balance_before.
+            # With staggered concurrent trades, balance movements overlap and corrupt
+            # the measurement. True P&L is always: win → +stake×(payout/100),
+            # loss → -stake, draw → 0.
+            payout_pct = row.payout_pct or 0.0
+            if outcome.lower() == "win":
+                pnl = row.stake * (payout_pct / 100.0)
+            elif outcome.lower() == "loss":
+                pnl = -row.stake
+            else:
+                pnl = 0.0
 
             backfill_outcome(log_path, trade_id=trade_id, outcome=outcome,
-                             pnl=pnl if pnl is not None else 0.0,
+                             pnl=pnl,
                              balance_before=balance_before, balance_after=balance_after,
                              pnl_currency="USD")
             # Shadow trades are data-collection only: record their outcome to
