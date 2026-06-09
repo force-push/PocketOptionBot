@@ -404,20 +404,27 @@ class StrategyManagerV2:
 
             conf = await self._conf.score(df)
 
-            # Per-signal table (same format as broker_bot path)
-            for name, vals in (conf.breakdown or {}).items():
-                sig_dir, sig_conf, sig_reason = (list(vals) + [None, None, None])[:3]
-                log.info("[{}]   TA  {:14s} {}  conf={:.3f}  {}",
-                         cid, name, f"{sig_dir or '----':<4}", sig_conf or 0.0, sig_reason or "")
-
             agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
             total_signals = len(conf.breakdown or {})
             gate = "✓ PASS" if conf.direction is not None else "✗ FAIL"
-            log.info(
-                "[{}]   CONF {}  score={:.3f}  agreed={}/{}  {}  ({})  payout={}%",
-                cid, conf.direction or "----", conf.score, agreeing, total_signals,
-                gate, conf.reason, payout_pct,
-            )
+
+            # Only log the full per-signal table when the confluence gate passes (trade candidate).
+            # On FAIL, emit a single compact summary line to keep logs readable across 64 pairs.
+            if conf.direction is not None:
+                for name, vals in (conf.breakdown or {}).items():
+                    sig_dir, sig_conf, sig_reason = (list(vals) + [None, None, None])[:3]
+                    log.info("[{}]   TA  {:14s} {}  conf={:.3f}  {}",
+                             cid, name, f"{sig_dir or '----':<4}", sig_conf or 0.0, sig_reason or "")
+                log.info(
+                    "[{}]   CONF {}  score={:.3f}  agreed={}/{}  {}  ({})  payout={}%",
+                    cid, conf.direction, conf.score, agreeing, total_signals,
+                    gate, conf.reason, payout_pct,
+                )
+            else:
+                log.debug(
+                    "[{}]   {} CONF ✗  agreed={}/{}  ({})  payout={}%",
+                    cid, pair_api, agreeing, total_signals, conf.reason, payout_pct,
+                )
 
             # Get tracked win rate for P(win) and EV gate
             tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
