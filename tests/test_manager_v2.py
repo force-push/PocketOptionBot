@@ -12,10 +12,12 @@ DIR_BUY = ("🟢 Strong Bullish Setup Detected\n\nMACD up, RSI fine.\n\nDirectio
 
 @pytest.mark.asyncio
 async def test_one_cycle_trades_and_logs(tmp_path, monkeypatch):
-    from config.settings import settings
+    from config.settings import settings, PredictionSource
     monkeypatch.setattr(settings, "pair_select_min_win_rate", 0.0)
     monkeypatch.setattr(settings, "min_confluence_score", 0.0)
     monkeypatch.setattr(settings, "decisions_log_path", str(tmp_path / "decisions.jsonl"))
+    # This test exercises the broker-bot path; force it regardless of default.
+    monkeypatch.setattr(settings, "prediction_source", PredictionSource.BROKER_BOT)
 
     nav = MagicMock()
     nav.start_autotrade = AsyncMock()

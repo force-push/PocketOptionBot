@@ -178,6 +178,9 @@ async def main(cycles: int = 0) -> None:
     """
     log.info("PocketOptionBot v2 starting — mode={} dry_run={} cycles={}",
              settings.trade_mode, settings.dry_run, cycles or "∞")
+    log.info("Loop driver: {}  (payout_floor={}%  max_pairs_per_cycle={})",
+             settings.prediction_source.value, settings.min_payout_pct,
+             settings.max_pairs_per_cycle or "all")
     log.info("Signal gates: min_agreement={}/5  min_confluence_score={}",
              settings.min_signal_agreement, settings.min_confluence_score)
     log.info("TA config: candle_interval={}s  history_length={}  expiry={}s",

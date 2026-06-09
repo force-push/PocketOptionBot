@@ -15,6 +15,11 @@ class TradeMode(StrEnum):
     LIVE = "LIVE"
 
 
+class PredictionSource(StrEnum):
+    SIGNALS = "signals"
+    BROKER_BOT = "broker_bot"
+
+
 class BotSettings(BaseSettings):
     """All configuration loaded from .env or environment variables."""
 
@@ -120,6 +125,17 @@ class BotSettings(BaseSettings):
     # The low_payout gate is still enforced to keep demo economics comparable.
     shadow_record_mode: bool = Field(default=False, alias="SHADOW_RECORD_MODE")
 
+    # ── Option A: Payout-First, Signals-Driven Loop ──
+    # PREDICTION_SOURCE selects the trade loop driver:
+    #   signals    — payout-first: scan all pairs ≥ MIN_PAYOUT_PCT, direction from TA confluence
+    #   broker_bot — prediction-first: drive po_broker_bot Telegram UI (original behaviour)
+    # Invalid value fails closed to broker_bot with a warning.
+    prediction_source: PredictionSource = Field(
+        default=PredictionSource.SIGNALS, alias="PREDICTION_SOURCE"
+    )
+    # Max pairs to evaluate per cycle in signals mode (0 = all ≥ floor).
+    max_pairs_per_cycle: int = Field(default=0, alias="MAX_PAIRS_PER_CYCLE", ge=0)
+
     # ── Legacy gating thresholds (v1 CDP path, NOT in v2 live path) ──
     # v2 uses confluence engine gates (min_signal_agreement + min_confluence_score).
     # These are kept for backward compat but NOT exposed in dashboard, NOT used
@@ -139,6 +155,21 @@ class BotSettings(BaseSettings):
     dashboard_token: Optional[str] = Field(default=None, alias="DASHBOARD_TOKEN")
     live_state_path: str = Field(default="data/live_state.json", alias="LIVE_STATE_PATH")
     events_log_path: str = Field(default="data/events.jsonl", alias="EVENTS_LOG_PATH")
+
+    @field_validator("prediction_source", mode="before")
+    @classmethod
+    def _normalize_prediction_source(cls, v):
+        if v is None:
+            return PredictionSource.SIGNALS
+        normalized = str(v).strip().lower()
+        if normalized not in (PredictionSource.SIGNALS, PredictionSource.BROKER_BOT):
+            import warnings
+            warnings.warn(
+                f"Invalid PREDICTION_SOURCE: {v!r}. Falling back to 'broker_bot'.",
+                UserWarning, stacklevel=2,
+            )
+            return PredictionSource.BROKER_BOT
+        return PredictionSource(normalized)
 
     @field_validator("trade_mode", mode="before")
     @classmethod
