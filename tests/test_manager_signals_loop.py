@@ -208,7 +208,7 @@ async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
 
     mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
     monkeypatch.setattr(settings, "trade_mode", TradeMode.DEMO)
-    monkeypatch.setattr(settings, "shadow_expiry_seconds", [50, 80, 130, 210])
+    monkeypatch.setattr(settings, "shadow_expiry_seconds", [50, 80, 128, 216])
     monkeypatch.setattr(settings, "trade_stagger_seconds", 0)
 
     await mgr.run_once()
@@ -218,7 +218,7 @@ async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
     shadow = [r for r in rows if r.get("shadow") and r.get("shadow_kind") == "expiry"]
     # 1 real trade + 4 shadow expiry trades for the one pair
     assert len(real) == 1
-    assert sorted(r["expiry_seconds"] for r in shadow) == [50, 80, 130, 210]
+    assert sorted(r["expiry_seconds"] for r in shadow) == [50, 80, 128, 216]
     # All shadow rows carry the same pair + direction as the real trade
     assert all(r["pair_api"] == real[0]["pair_api"] for r in shadow)
     assert all(r["our_direction"] == real[0]["our_direction"] for r in shadow)

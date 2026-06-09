@@ -94,7 +94,7 @@ class BotSettings(BaseSettings):
     # ── v2 (Telebot evolution) ──
     stake_amount: float = Field(default=1.5, alias="STAKE_AMOUNT", gt=0)
     default_expiry_seconds: int = Field(default=30, alias="DEFAULT_EXPIRY_SECONDS", gt=0)
-    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 50, 60, 80, 120, 130, 210, 300)
+    allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 50, 60, 80, 120, 128, 216, 300)
     # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
     # set to 0.82 for real runs (the "82%" rule).
     pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
