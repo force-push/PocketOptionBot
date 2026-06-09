@@ -505,6 +505,14 @@ class StrategyManagerV2:
                 break
             self._open_trade_count += 1
 
+            # Capture balance at the moment this specific trade is placed.
+            # All concurrent trades in a burst share the same cycle-start `balance_before`
+            # above, which makes individual pnl = balance_after - balance_before meaningless
+            # (wins show negative pnl because prior concurrent losses already reduced the
+            # balance). Fetching fresh here gives an accurate per-trade baseline.
+            balance_at_placement = await self._api.balance()
+            row.balance_before = balance_at_placement
+
             api_call = self._api.buy if conf.direction == "CALL" else self._api.sell
             trade = await api_call(pair_api, settings.stake_amount, expiry)
             row.trade_id = getattr(trade, "trade_id", None)
@@ -538,7 +546,7 @@ class StrategyManagerV2:
                 self._open_trades[row.trade_id] = {
                     "log_path": log_path,
                     "row": row,
-                    "balance_before": balance_before,
+                    "balance_before": balance_at_placement,
                     "expires_at": expires_at,
                 }
                 asyncio.create_task(self._resolve_trade_background(row.trade_id))
