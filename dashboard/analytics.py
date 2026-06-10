@@ -329,9 +329,14 @@ def kpis(
     today_trades = [r for r in today_records if _is_trade(r)]
     today_skips = [r for r in today_records if not _is_trade(r)]
 
+    # KPIs are computed on REAL strategy trades only. Shadow trades (research:
+    # expiry ladder, majority_blocked, time_of_day) are counted + P&L'd separately.
+    real_trades = [r for r in today_trades if not r.get("shadow")]
+    shadow_trades = [r for r in today_trades if r.get("shadow")]
+
     wins = losses = draws = 0
     today_pnl = 0.0
-    for r in today_trades:
+    for r in real_trades:
         res = _normalize_result(r)
         if res == _WIN:
             wins += 1
@@ -340,6 +345,8 @@ def kpis(
         elif res == _DRAW:
             draws += 1
         today_pnl += _num(r.get("pnl")) or 0.0
+
+    shadow_pnl = sum(_num(r.get("pnl")) or 0.0 for r in shadow_trades)
 
     resolved = wins + losses + draws
     win_rate = (wins / resolved) if resolved else 0.0
@@ -352,15 +359,16 @@ def kpis(
         if opening > 0:
             today_pnl_pct = today_pnl / opening
 
-    # avg confluence over today's *trades* (the entries we actually took).
-    confs = [c for c in (_num(r.get("our_confluence_score")) for r in today_trades) if c is not None]
+    # avg confluence over real trades (the entries the strategy actually took).
+    confs = [c for c in (_num(r.get("our_confluence_score")) for r in real_trades) if c is not None]
     avg_confluence = (sum(confs) / len(confs)) if confs else 0.0
 
     at_risk = round(sum(_num(a.get("stake")) or 0.0 for a in active_list), 6)
 
-    # Weekly profit projection: calculate P&L rate per minute from ALL historical trades
+    # Weekly profit projection: P&L rate per minute from ALL historical REAL trades
+    # (shadows excluded — research trades would distort the projection)
     weekly_projection = 0.0
-    all_trades = [r for r in recs if _is_trade(r)]
+    all_trades = [r for r in recs if _is_trade(r) and not r.get("shadow")]
     if all_trades:
         # Sum all resolved trade P&L
         total_pnl = 0.0
@@ -381,16 +389,18 @@ def kpis(
 
     return {
         "range": rng,  # None = legacy "today"; else 1H/1D/1W/ALL
-        "today_pnl": round(today_pnl, 6),
+        "today_pnl": round(today_pnl, 6),          # REAL trades only
         "today_pnl_pct": (round(today_pnl_pct, 8) if today_pnl_pct is not None else None),
-        "win_rate": round(win_rate, 6),
+        "win_rate": round(win_rate, 6),            # REAL trades only
         "wins": wins,
         "losses": losses,
         "draws": draws,
         "active_count": len(active_list),
         "at_risk": at_risk,
         "trades_today": len(today_records),
-        "traded": len(today_trades),
+        "traded": len(real_trades),                # REAL trades only
+        "shadow_traded": len(shadow_trades),
+        "shadow_pnl": round(shadow_pnl, 6),
         "skipped": len(today_skips),
         "avg_confluence": round(avg_confluence, 6),
         "weekly_projection": round(weekly_projection, 2),

@@ -120,7 +120,7 @@ body {
 /* ============================================================
    KPI STRIP
    ============================================================ */
-.kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; padding: 12px 18px 2px; flex: 0 0 auto; }
+.kpis { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; padding: 12px 18px 2px; flex: 0 0 auto; }
 .kpi {
   background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
   border: 1px solid var(--stroke); border-radius: var(--radius);
