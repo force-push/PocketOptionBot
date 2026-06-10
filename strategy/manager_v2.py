@@ -537,6 +537,17 @@ class StrategyManagerV2:
                     cid, pair_api, d.skip_reason,
                     conf.direction or "None", conf.score, payout_pct,
                 )
+                # Majority-blocked: place shadow trade at the score-winner direction
+                # to collect outcome data. Over time this shows whether the majority
+                # check is correctly blocking losing trades or incorrectly blocking winners.
+                if d.skip_reason == "no_direction" and conf.majority_blocked_direction:
+                    asyncio.create_task(self._place_majority_blocked_shadow(
+                        pair_api=pair_api,
+                        direction=conf.majority_blocked_direction,
+                        base_row=row,
+                        log_path=log_path,
+                        payout_pct=payout_pct,
+                    ))
                 continue
 
             # EV gate
@@ -684,6 +695,60 @@ class StrategyManagerV2:
             except Exception as exc:
                 log.warning("[{}] shadow expiry {}s failed for {}: {}",
                             base_row.cycle_id, exp, pair_api, exc)
+
+    async def _place_majority_blocked_shadow(
+        self, *, pair_api, direction, base_row, log_path, payout_pct
+    ) -> None:
+        """Place a single shadow trade when the majority check blocked a score-winner.
+
+        Collects outcome data for "what would have happened" on majority-blocked
+        setups. Over 50-100 trades this shows whether the majority check is
+        correctly blocking losers or incorrectly filtering winners — the key
+        data needed for empirical signal weighting.
+        HARD GUARD: research only — skipped in LIVE mode.
+        """
+        if settings.trade_mode == TradeMode.LIVE:
+            return
+        try:
+            bal = await self._api.balance()
+            expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
+            api_call = self._api.buy if direction == "CALL" else self._api.sell
+            trade = await api_call(pair_api, settings.stake_amount, expiry)
+            tid = getattr(trade, "trade_id", None)
+            status = getattr(trade, "status", "PENDING")
+            srow = replace(
+                base_row,
+                expiry_seconds=expiry,
+                shadow=True,
+                shadow_kind="majority_blocked",
+                would_skip_reason="majority_blocked",
+                bot_direction=direction,
+                our_direction=direction,
+                decision="TRADE",
+                skip_reason=None,
+                trade_id=tid,
+                status=status,
+                balance_before=bal,
+                outcome=None, pnl=None, balance_after=None,
+                ts=datetime.now(timezone.utc).isoformat(),
+            )
+            write_decision(log_path, srow)
+            log.info(
+                "[{}] MAJORITY-BLOCKED-SHADOW {}  {}  exp={}s  id={}  "
+                "(score-winner overridden by signal count)",
+                base_row.cycle_id, direction, pair_api, expiry, tid,
+            )
+            if tid and status not in ("ERROR", "DRY_RUN"):
+                self._open_trades[tid] = {
+                    "log_path": log_path,
+                    "row": srow,
+                    "balance_before": bal,
+                    "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expiry),
+                }
+                asyncio.create_task(self._resolve_trade_background(tid))
+        except Exception as exc:
+            log.warning("[{}] majority_blocked shadow failed for {}: {}",
+                        base_row.cycle_id, pair_api, exc)
 
     async def _resolve_trade_background(self, trade_id: str) -> None:
         """Background task: wait for trade expiry, check outcome, update decisions.jsonl."""

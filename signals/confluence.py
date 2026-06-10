@@ -11,10 +11,14 @@ from config.settings import settings
 
 @dataclass(frozen=True)
 class ConfluenceResult:
-    direction: str | None  # CALL, PUT, or None
-    score: float  # 0.0 to 1.0
-    breakdown: dict  # Signal name -> (direction, confidence)
+    direction: str | None       # CALL, PUT, or None (None = gate blocked)
+    score: float                # 0.0 to 1.0
+    breakdown: dict             # Signal name -> (direction, confidence, reason)
     reason: str
+    # Set only when the majority check blocked a score-based winner.
+    # e.g. MACD+Supertrend (CALL, score 2.0) lost to 5 PUT signals by count.
+    # The manager uses this to place a majority_blocked shadow trade for data collection.
+    majority_blocked_direction: str | None = None
 
 
 class ConfluenceEngine:
@@ -127,6 +131,8 @@ class ConfluenceEngine:
         # than the opposing direction. Prevents 2 high-confidence signals (e.g.
         # MACD + Supertrend at 1.0) from overriding 5 lower-confidence signals
         # pointing the other way purely on weighted score.
+        # majority_blocked_direction is preserved so the manager can place a
+        # shadow trade to collect outcome data on these blocked setups.
         if opposing_count >= agreeing_count:
             return ConfluenceResult(
                 direction=None,
@@ -136,6 +142,7 @@ class ConfluenceEngine:
                     f"Signal minority: {agreeing_count} say {direction} but "
                     f"{opposing_count} say {opposing} — majority must agree"
                 ),
+                majority_blocked_direction=direction,
             )
 
         # Adaptive score threshold: fewer signals = lower bar.
