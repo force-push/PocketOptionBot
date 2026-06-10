@@ -88,6 +88,7 @@ def build_state_snapshot() -> dict:
         "currency": state.get("currency", "USD"),
         "kpis": kpis,
         "active": active,
+        "skip_countdown": state.get("skip_countdown"),
         "ts": state.get("ts") or _now_iso(),
     }
 
