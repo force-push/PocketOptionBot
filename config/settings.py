@@ -145,6 +145,22 @@ class BotSettings(BaseSettings):
         default=False, alias="SHADOW_TRADE_BLOCKED_HOURS"
     )
 
+    # Fade-rule shadow experiment (SHADOW_TRADE_ANALYSIS.md Finding 4a):
+    # when >= this many signals agree on one direction, place a shadow in the
+    # OPPOSITE direction (shadow_kind="fade"). Unanimity among our correlated
+    # trend signals marks exhaustion; fading it measured ~53% WR. 0 = disabled.
+    shadow_fade_min_agree: int = Field(
+        default=7, alias="SHADOW_FADE_MIN_AGREE", ge=0
+    )
+
+    # ADX-regime shadow experiment (Finding 4b): when ADX_DMI confidence is
+    # >= this value, place a shadow FOLLOWING the ADX direction
+    # (shadow_kind="adx_regime"). High ADX = strong trend; measured ~57% WR
+    # at conf >= 0.6 (n=110). 0 = disabled.
+    shadow_adx_regime_min_conf: float = Field(
+        default=0.6, alias="SHADOW_ADX_REGIME_MIN_CONF", ge=0.0, le=1.0
+    )
+
     # ── Option A: Payout-First, Signals-Driven Loop ──
     # PREDICTION_SOURCE selects the trade loop driver:
     #   signals    — payout-first: scan all pairs ≥ MIN_PAYOUT_PCT, direction from TA confluence

@@ -553,6 +553,39 @@ class StrategyManagerV2:
                     "bot_is_top_pick": False,
                 })
 
+            # ── Research shadow triggers (fire on every evaluated pair) ──────
+            # FADE (Finding 4a): >=N signals agree on one direction → the move
+            # is exhausted; shadow the OPPOSITE direction.
+            if settings.shadow_fade_min_agree > 0:
+                dir_counts = {"CALL": 0, "PUT": 0}
+                for v in (conf.breakdown or {}).values():
+                    sd = (list(v) + [None])[0]
+                    if sd in dir_counts:
+                        dir_counts[sd] += 1
+                top_dir = max(dir_counts, key=dir_counts.get)
+                if dir_counts[top_dir] >= settings.shadow_fade_min_agree:
+                    fade_dir = "PUT" if top_dir == "CALL" else "CALL"
+                    asyncio.create_task(self._place_single_shadow(
+                        pair_api=pair_api, direction=fade_dir,
+                        base_row=row, log_path=log_path,
+                        shadow_kind="fade",
+                        would_skip_reason=f"fade_{dir_counts[top_dir]}_agree_{top_dir}",
+                    ))
+
+            # ADX-REGIME (Finding 4b): strong trend (ADX conf >= threshold) →
+            # shadow FOLLOWING the ADX direction.
+            if settings.shadow_adx_regime_min_conf > 0:
+                adx = (conf.breakdown or {}).get("ADX_DMI")
+                if adx:
+                    adx_dir, adx_conf = (list(adx) + [None, 0])[:2]
+                    if adx_dir in ("CALL", "PUT") and (adx_conf or 0) >= settings.shadow_adx_regime_min_conf:
+                        asyncio.create_task(self._place_single_shadow(
+                            pair_api=pair_api, direction=adx_dir,
+                            base_row=row, log_path=log_path,
+                            shadow_kind="adx_regime",
+                            would_skip_reason=f"adx_conf_{adx_conf:.2f}",
+                        ))
+
             if not d.trade:
                 write_decision(log_path, row)
                 if self._bridge:
