@@ -205,6 +205,8 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 .kpi-shadow .label { color: var(--warn); }
 .kpi-shadow .val { color: var(--warn); }
 .kpi-shadow .sub { color: var(--warn); opacity: .85; }
+/* count and P&L side by side, both at full .val size */
+.kpi-shadow-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 
 .shadow-tag {
   display: inline-block; margin-left: 6px; padding: 0 5px;

@@ -47,8 +47,11 @@ export function initKpis(root) {
       </div>
       <div class="kpi kpi-shadow">
         <div class="label">Shadows 🧪</div>
-        <div class="val">${kpis.shadow_traded ?? 0}</div>
-        <div class="sub">P&amp;L ${fmt.pnl(kpis.shadow_pnl)}</div>
+        <div class="val kpi-shadow-row">
+          <span>${kpis.shadow_traded ?? 0}</span>
+          <span>${fmt.pnl(kpis.shadow_pnl)}</span>
+        </div>
+        <div class="sub">count · P&amp;L</div>
       </div>
       <div class="kpi">
         <div class="label">Skipped</div>
