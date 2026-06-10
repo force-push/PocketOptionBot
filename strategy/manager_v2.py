@@ -14,6 +14,7 @@ from config.settings import settings, TradeMode, PredictionSource
 from data.candles import candles_to_df
 from strategy.decision import decide, decide_signals
 from strategy.expiry import select_expiry
+from strategy.market_filters import TimeOfDayFilter, PairWhitelistFilter
 from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
 from telegram_feed.direction_parser import parse_direction_screen
@@ -354,16 +355,25 @@ class StrategyManagerV2:
         cid = self._next_cycle_id()
         log_path = settings.decisions_log_path
 
+        # Time-of-day filter: skip cycle if current hour is not profitable
+        utc_hour = TimeOfDayFilter.current_hour()
+        if not TimeOfDayFilter.is_allowed(utc_hour):
+            skip_reason = TimeOfDayFilter.skip_reason(utc_hour)
+            log.info("[{}] CYCLE SKIP — {}  (hour {utc_hour:02d}:00 UTC)",
+                     cid, skip_reason, utc_hour=utc_hour)
+            return
+
         all_pairs = await self._api.get_active_pairs()  # is_active filtered, sorted payout desc
         candidates = [
             p for p in all_pairs
             if p.get("symbol") not in settings.blocked_pairs
+            and PairWhitelistFilter.is_allowed(p.get("symbol"))  # Pair whitelist filter
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
         ]
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
 
-        log.info("[{}] signals scan: {}/{} pairs ≥{}% payout  blocked={} max_per_cycle={}",
+        log.info("[{}] signals scan: {}/{} pairs ≥{}% payout & whitelisted  blocked={} max_per_cycle={}",
                  cid, len(candidates), len(all_pairs), settings.min_payout_pct,
                  len(settings.blocked_pairs), settings.max_pairs_per_cycle or "all")
 
