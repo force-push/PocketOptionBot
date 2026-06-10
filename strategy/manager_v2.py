@@ -46,6 +46,9 @@ class StrategyManagerV2:
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
+        # Skip hour rate-limiting: only log every 10 minutes during skip hours
+        self._last_skip_log_time: datetime | None = None
+        self._skip_log_interval_seconds = 600  # 10 minutes
 
     @property
     def tracker(self):
@@ -56,6 +59,34 @@ class StrategyManagerV2:
         global _cycle_counter
         _cycle_counter += 1
         return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{_cycle_counter:04d}"
+
+    def _next_profitable_hour(self) -> tuple[int, int]:
+        """Calculate next profitable trading hour and minutes until it arrives.
+
+        Returns:
+            (next_hour_utc, minutes_until_next)
+        """
+        now = datetime.now(timezone.utc)
+        current_hour = now.hour
+        current_minute = now.minute
+
+        # Check all 24 hours starting from next hour
+        profitable_hours = set(TimeOfDayFilter.PROFITABLE_HOURS.keys())
+
+        for offset in range(1, 25):
+            check_hour = (current_hour + offset) % 24
+            if check_hour in profitable_hours:
+                # Calculate minutes until this hour
+                if offset == 1:
+                    # Next hour in sequence
+                    minutes = 60 - current_minute
+                else:
+                    # Multiple hours away: (hours × 60) - current_minute
+                    minutes = (offset * 60) - current_minute
+                return check_hour, minutes
+
+        # Fallback (shouldn't reach here if PROFITABLE_HOURS is non-empty)
+        return current_hour, 0
 
     async def run_once(self) -> None:
         """Dispatch to the configured loop driver (signals or broker_bot)."""
@@ -359,8 +390,34 @@ class StrategyManagerV2:
         utc_hour = TimeOfDayFilter.current_hour()
         if not TimeOfDayFilter.is_allowed(utc_hour):
             skip_reason = TimeOfDayFilter.skip_reason(utc_hour)
-            log.info("[{}] CYCLE SKIP — {}  (hour {utc_hour:02d}:00 UTC)",
-                     cid, skip_reason, utc_hour=utc_hour)
+
+            # Rate-limit skip logs to once per 10 minutes
+            now = datetime.now(timezone.utc)
+            should_log = (
+                self._last_skip_log_time is None or
+                (now - self._last_skip_log_time).total_seconds() >= self._skip_log_interval_seconds
+            )
+
+            if should_log:
+                next_hour, minutes_until = self._next_profitable_hour()
+                self._last_skip_log_time = now
+                log.info(
+                    "[{}] CYCLE SKIP — {}  (hour {utc_hour:02d}:00 UTC)  "
+                    "Next trading: {next_hour:02d}:00 UTC in ~{minutes} min",
+                    cid, skip_reason, utc_hour=utc_hour, next_hour=next_hour, minutes=minutes_until
+                )
+
+            # Update dashboard with countdown even if we don't log
+            if self._bridge:
+                next_hour, minutes_until = self._next_profitable_hour()
+                self._bridge.heartbeat(
+                    mode=settings.trade_mode.value, dry_run=settings.dry_run,
+                    connected=True, balance=0, currency="USD",
+                    active=[], last_cycle={"cycle_id": cid, "status": "skip", "skip_reason": skip_reason},
+                    risk_block_reason=None,
+                    skip_countdown={"next_hour_utc": next_hour, "minutes_until": minutes_until},
+                )
+
             return
 
         all_pairs = await self._api.get_active_pairs()  # is_active filtered, sorted payout desc

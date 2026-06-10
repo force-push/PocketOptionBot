@@ -10,6 +10,7 @@ const state = {
   settings: null,       // grouped settings payload
   ws: 'connecting',     // connecting | live | reconnecting | closed
   demo: false,          // running on bundled sample data (no backend)
+  skip_countdown: null, // { next_hour_utc, minutes_until } when trading is skipped
 };
 
 const subs = new Map(); // topic -> Set<fn>
@@ -107,6 +108,11 @@ export function setDemo(on) {
   emit('demo');
 }
 
+export function setSkipCountdown(countdown) {
+  state.skip_countdown = countdown;
+  emit('skip_countdown');
+}
+
 export const store = {
   subscribe, get,
   setMeta, setKpis,
@@ -114,6 +120,7 @@ export const store = {
   setHistory, prependHistory,
   setPerformance, setSettings,
   setWsStatus, setDemo,
+  setSkipCountdown,
 };
 
 export default store;

@@ -67,6 +67,7 @@ class StateBridge:
         active: Optional[list] = None,
         last_cycle: Optional[dict] = None,
         risk_block_reason: Optional[str] = None,
+        skip_countdown: Optional[dict] = None,
     ) -> None:
         """Atomically rewrite live_state.json with the current snapshot."""
         if not self.enabled:
@@ -81,6 +82,7 @@ class StateBridge:
                 "active": list(active or []),
                 "last_cycle": last_cycle,
                 "risk_block_reason": risk_block_reason,
+                "skip_countdown": skip_countdown,
                 "ts": _now_iso(),
             }
             self._atomic_write_json(self._state_path, snapshot)

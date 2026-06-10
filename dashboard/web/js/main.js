@@ -58,6 +58,7 @@ function initChips() {
   const balChip = document.getElementById('chip-balance');
   const modeChip = document.getElementById('chip-mode');
   const weeklyChip = document.getElementById('chip-weekly');
+  const countdownChip = document.getElementById('chip-countdown');
 
   store.subscribe('ws', (status) => {
     if (!wsChip) return;
@@ -89,6 +90,19 @@ function initChips() {
     const isPositive = proj > 0;
     weeklyChip.style.color = isPositive ? 'var(--up)' : proj < 0 ? 'var(--down)' : 'var(--accent)';
   });
+
+  store.subscribe('skip_countdown', (countdown) => {
+    if (!countdownChip) return;
+    if (countdown && countdown.minutes_until !== undefined) {
+      const mins = Math.max(0, countdown.minutes_until);
+      const hour = String(countdown.next_hour_utc).padStart(2, '0');
+      countdownChip.style.display = 'flex';
+      countdownChip.querySelector('b').textContent = `${mins}m (${hour}:00 UTC)`;
+      countdownChip.style.color = mins <= 5 ? 'var(--accent)' : 'inherit';
+    } else {
+      countdownChip.style.display = 'none';
+    }
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -102,6 +116,7 @@ function applyState(s) {
   });
   if (s.kpis) store.setKpis(s.kpis);
   if (Array.isArray(s.active)) store.setActive(s.active);
+  if (s.skip_countdown) store.setSkipCountdown(s.skip_countdown);
 }
 
 /* ------------------------------------------------------------------ */
