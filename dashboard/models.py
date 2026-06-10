@@ -98,6 +98,8 @@ class PerformanceResponse(BaseModel):
     equity: list[EquityPoint] = Field(default_factory=list)
     winloss: WinLoss = Field(default_factory=WinLoss)
     by_pair: list[PairStat] = Field(default_factory=list)
+    # KPI snapshot scoped to the same range (drives the KPI strip)
+    kpis: Optional[dict] = None
 
 
 class SettingsUpdateRequest(BaseModel):

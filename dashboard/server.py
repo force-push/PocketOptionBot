@@ -185,7 +185,8 @@ def create_app() -> FastAPI:
     @app.get("/api/performance", response_model=PerformanceResponse)
     def get_performance(range: str = Query("ALL")) -> Any:
         records = analytics.load_records(_decisions_path())
-        return analytics.performance(records, rng=range)
+        balance = _read_live_state().get("balance")
+        return analytics.performance(records, rng=range, balance=balance)
 
     @app.get("/api/settings")
     def get_settings() -> Any:

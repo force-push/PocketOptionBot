@@ -15,6 +15,11 @@ export function initKpis(root) {
     const meta = store.get('meta');
     if (!kpis) { el.innerHTML = skeleton(); return; }
 
+    // Window label follows the chart's 1H/1D/1W/ALL toggle; no range = legacy "today"
+    const RANGE_LABEL = { '1H': 'last hour', '1D': 'last 24h', '1W': 'last 7 days', 'ALL': 'all time' };
+    const rangeSub = RANGE_LABEL[kpis.range] || 'today';
+    const pnlLabel = kpis.range ? `P&amp;L (${kpis.range})` : 'Today P&amp;L';
+
     const pnlCls = fmt.pnlClass(kpis.today_pnl);
     const wr = fmt.pct(kpis.win_rate, 1);
     const confCls = kpis.avg_confluence >= 0.75 ? 'k-up' : '';
@@ -26,7 +31,7 @@ export function initKpis(root) {
         <div class="sub">${meta.mode === 'DEMO' ? 'demo account' : 'live account'}</div>
       </div>
       <div class="kpi ${pnlCls === 'up' ? 'k-up' : pnlCls === 'down' ? 'k-down' : ''}">
-        <div class="label">Today P&amp;L</div>
+        <div class="label">${pnlLabel}</div>
         <div class="val ${pnlCls}" data-kpi="pnl">${fmt.pnl(kpis.today_pnl)}</div>
         <div class="sub ${pnlCls}">${fmt.pctSigned(kpis.today_pnl_pct)}</div>
       </div>
@@ -38,17 +43,17 @@ export function initKpis(root) {
       <div class="kpi">
         <div class="label">Traded</div>
         <div class="val">${kpis.traded}</div>
-        <div class="sub">today</div>
+        <div class="sub">${rangeSub}</div>
       </div>
       <div class="kpi">
         <div class="label">Skipped</div>
         <div class="val">${kpis.skipped}</div>
-        <div class="sub">today</div>
+        <div class="sub">${rangeSub}</div>
       </div>
       <div class="kpi ${confCls}">
         <div class="label">Avg Confluence</div>
         <div class="val">${fmt.score(kpis.avg_confluence)}</div>
-        <div class="sub">floor 0.40</div>
+        <div class="sub">${rangeSub}</div>
       </div>`;
 
     // flash the P&L cell when it changed

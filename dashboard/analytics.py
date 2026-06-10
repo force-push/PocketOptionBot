@@ -270,8 +270,13 @@ def by_pair(records: Iterable[dict], *, rng: str = "ALL",
 
 
 def performance(records: Iterable[dict], *, rng: str = "ALL",
-                now: Optional[datetime] = None) -> dict:
-    """Full performance payload (§4.2 GET /api/performance)."""
+                now: Optional[datetime] = None,
+                balance: Optional[float] = None) -> dict:
+    """Full performance payload (§4.2 GET /api/performance).
+
+    Includes ``kpis`` scoped to the same range so the KPI strip follows the
+    chart's 1H/1D/1W/ALL toggle.
+    """
     recs = list(records)
     rng = (rng or "ALL").upper()
     return {
@@ -279,6 +284,7 @@ def performance(records: Iterable[dict], *, rng: str = "ALL",
         "equity": equity_curve(recs, rng=rng, now=now),
         "winloss": winloss(recs, rng=rng, now=now),
         "by_pair": by_pair(recs, rng=rng, now=now),
+        "kpis": kpis(recs, rng=rng, now=now, balance=balance),
     }
 
 
@@ -294,17 +300,32 @@ def kpis(
     balance: Optional[float] = None,
     active: Optional[Iterable[dict]] = None,
     now: Optional[datetime] = None,
+    rng: Optional[str] = None,
 ) -> dict:
     """KPI snapshot for the monitoring strip.
 
-    ``today`` is the current UTC calendar day. ``balance`` and ``active`` come
-    from live_state.json; when absent, derived fields degrade gracefully.
+    With ``rng`` (1H/1D/1W/ALL) the window matches the performance chart's
+    range toggle. Without it, legacy behaviour: the current UTC calendar day.
+    ``balance`` and ``active`` come from live_state.json; when absent, derived
+    fields degrade gracefully.
     """
     recs = list(records)
     now = now or datetime.now(timezone.utc)
     active_list = list(active or [])
 
-    today_records = [r for r in recs if _same_utc_day(_parse_ts(r), now)]
+    if rng is not None:
+        rng = rng.upper()
+        delta = _RANGE_DELTAS.get(rng)
+        if delta is None:  # ALL (or unknown) → everything
+            today_records = recs
+        else:
+            cutoff = now - delta
+            today_records = [
+                r for r in recs
+                if (ts := _parse_ts(r)) is not None and ts >= cutoff
+            ]
+    else:
+        today_records = [r for r in recs if _same_utc_day(_parse_ts(r), now)]
     today_trades = [r for r in today_records if _is_trade(r)]
     today_skips = [r for r in today_records if not _is_trade(r)]
 
@@ -359,6 +380,7 @@ def kpis(
             weekly_projection = pnl_per_minute * minutes_per_week
 
     return {
+        "range": rng,  # None = legacy "today"; else 1H/1D/1W/ALL
         "today_pnl": round(today_pnl, 6),
         "today_pnl_pct": (round(today_pnl_pct, 8) if today_pnl_pct is not None else None),
         "win_rate": round(win_rate, 6),

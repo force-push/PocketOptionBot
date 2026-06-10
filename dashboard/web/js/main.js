@@ -115,13 +115,17 @@ function initChips() {
 /* ------------------------------------------------------------------ */
 /* Apply a /api/state (or ws state) snapshot to the store            */
 /* ------------------------------------------------------------------ */
+// Once range-scoped KPIs (from /api/performance) take over the strip, state
+// heartbeats must not clobber them with the legacy "today" snapshot.
+let rangeKpisActive = false;
+
 function applyState(s) {
   if (!s) return;
   store.setMeta({
     mode: s.mode, dry_run: s.dry_run, connected: s.connected,
     balance: s.balance, currency: s.currency,
   });
-  if (s.kpis) store.setKpis(s.kpis);
+  if (s.kpis && !rangeKpisActive) store.setKpis(s.kpis);
   if (Array.isArray(s.active)) store.setActive(s.active);
   if (s.skip_countdown) store.setSkipCountdown(s.skip_countdown);
 }
@@ -180,6 +184,11 @@ async function refreshPerformance() {
     const p = store.get('demo') ? await loadSample('performance.json') : await api.performance(currentRange);
     p.range = currentRange;
     store.setPerformance(p);
+    // KPI strip follows the chart's range toggle
+    if (p.kpis) {
+      rangeKpisActive = true;
+      store.setKpis({ ...p.kpis, range: currentRange });
+    }
   } catch (e) { console.warn('[perf] failed', e); }
 }
 

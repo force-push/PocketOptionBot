@@ -147,7 +147,8 @@ def test_performance_payload_shape():
     recs = [_trade(_iso(10, 0), trade_id="a")]
     perf = analytics.performance(recs, rng="1D", now=NOW)
     assert perf["range"] == "1D"
-    assert set(perf.keys()) == {"range", "equity", "winloss", "by_pair"}
+    assert set(perf.keys()) == {"range", "equity", "winloss", "by_pair", "kpis"}
+    assert perf["kpis"]["range"] == "1D"  # KPI strip follows the chart range
 
 
 # ── history rows / pagination / SKIP inclusion ────────────────────────────────
