@@ -24,8 +24,6 @@ export function initKpis(root) {
     const wr = fmt.pct(kpis.win_rate, 1);
     const confCls = kpis.avg_confluence >= 0.75 ? 'k-up' : '';
 
-    const shadowPnlCls = fmt.pnlClass(kpis.shadow_pnl);
-
     el.innerHTML = `
       <div class="kpi">
         <div class="label">Balance</div>
@@ -47,10 +45,10 @@ export function initKpis(root) {
         <div class="val">${kpis.traded}</div>
         <div class="sub">${rangeSub}</div>
       </div>
-      <div class="kpi">
+      <div class="kpi kpi-shadow">
         <div class="label">Shadows 🧪</div>
         <div class="val">${kpis.shadow_traded ?? 0}</div>
-        <div class="sub ${shadowPnlCls}">P&amp;L ${fmt.pnl(kpis.shadow_pnl)}</div>
+        <div class="sub">P&amp;L ${fmt.pnl(kpis.shadow_pnl)}</div>
       </div>
       <div class="kpi">
         <div class="label">Skipped</div>

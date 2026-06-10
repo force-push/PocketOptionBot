@@ -199,6 +199,13 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 .hist-row.row-skip:hover td { opacity: .8; }
 
 /* Shadow (data-collection) trades — visually distinct from real strategy trades */
+/* Shadows KPI cell — same yellow as the TEST tag so shadow data reads as one family */
+.kpi-shadow { border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.kpi-shadow::before { background: var(--warn); }
+.kpi-shadow .label { color: var(--warn); }
+.kpi-shadow .val { color: var(--warn); }
+.kpi-shadow .sub { color: var(--warn); opacity: .85; }
+
 .shadow-tag {
   display: inline-block; margin-left: 6px; padding: 0 5px;
   font-size: 9px; font-weight: 800; letter-spacing: .5px; line-height: 15px;
