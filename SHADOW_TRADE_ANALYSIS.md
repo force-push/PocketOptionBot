@@ -187,3 +187,48 @@ the signals, not in how to weight them.**
 Week 1: implement fade + adx_regime shadows (demo, zero risk), switch expiry
 ladder to [216, 300], leave time filter as-is. Week 2: review — promote
 whichever clears its gate to real trades; redesign time filter to rolling.
+
+---
+
+## Addendum (2026-06-11): Correlation structure — what "7 agree" really means
+
+Pairwise direction-agreement across 3,911 decision rows shows the 11 signals
+collapse into **two anti-correlated factors**:
+
+**Factor 1 — trend bloc (7 signals, agree 57–94% with each other):**
+MACD, Parabolic_SAR, EMA_Cross, ADX_DMI, HeikinAshi, RoC, Supertrend.
+(MACD~PSAR 89.7%, ADX~EMA 87.8%, HA~RoC 96.8%)
+
+**Factor 2 — oscillator bloc (3 signals, near-duplicates of each other):**
+RSI ~ Stochastic **99.8%**, StochRSI ~ Stochastic 91.8%.
+RSI ~ Stochastic are literally the same signal measured twice.
+
+**The blocs are near-perfect inverses:** RSI agrees with MACD/PSAR/EMA only
+0–2% of the time (oscillators fire contrarian-to-trend by construction:
+"oversold → CALL" while trend says PUT). Mean pairwise correlation across all
+signals ≈ 0 only because the two blocs cancel.
+
+**Therefore "≥7 agree" is not 7 independent confirmations — it requires the
+oscillator bloc to flip and join the trend bloc**, which only happens when
+price is simultaneously trending hard AND at an oscillator extreme. That is
+the textbook definition of an overextended/exhausted move — and the data
+shows it mean-reverts (39.5% WR at 8-agree). The unanimity-fade finding is
+the correlation structure speaking, not an anomaly.
+
+**Practical implications:**
+- Effective signal count is ~2, not 11. The agreement gate can be satisfied
+  by RSI+Stochastic alone — one signal counted twice.
+- Adding more price-derived trend or oscillator indicators adds redundancy,
+  not information.
+- Orthogonality must come from different *information sources*: process
+  statistics (autocorrelation, variance ratio, run lengths), volatility
+  regime, cross-pair divergence, candle microstructure — not more indicator
+  variants on the same 5s series.
+
+### Recommended next diagnostic (before building any new signal)
+Run a one-off statistical profile of the raw 5s candle feed per pair:
+lag-1..5 return autocorrelation, Lo–MacKinlay variance ratio, and
+run-length distribution (P(reversal | N same-color candles)). If lag-1
+autocorrelation is negative (mean-reverting process), fade-style entries are
+structurally correct and momentum can never work at this horizon — settling
+the strategy direction once, from the generating process itself.
