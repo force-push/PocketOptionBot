@@ -134,6 +134,17 @@ class BotSettings(BaseSettings):
     # HARD GUARD: ignored in LIVE — research only, demo balance only.
     shadow_expiry_seconds: list[int] = Field(default=[], alias="SHADOW_EXPIRY_SECONDS")
 
+    # Shadow-trade blocked hours (signals loop only). When true, cycles during
+    # hours blocked by the time-of-day filter still run, but every trade that
+    # passes the signal gates is placed as a SHADOW trade (shadow=True,
+    # shadow_kind="time_of_day") instead of a real strategy trade. Collects
+    # signal-outcome data across all 24 hours without risking the strategy's
+    # win rate. Default false = blocked hours are fully skipped (no trades).
+    # HARD GUARD: shadows never placed in LIVE — research only, demo balance.
+    shadow_trade_blocked_hours: bool = Field(
+        default=False, alias="SHADOW_TRADE_BLOCKED_HOURS"
+    )
+
     # ── Option A: Payout-First, Signals-Driven Loop ──
     # PREDICTION_SOURCE selects the trade loop driver:
     #   signals    — payout-first: scan all pairs ≥ MIN_PAYOUT_PCT, direction from TA confluence

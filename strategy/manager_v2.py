@@ -392,10 +392,18 @@ class StrategyManagerV2:
         cid = self._next_cycle_id()
         log_path = settings.decisions_log_path
 
-        # Time-of-day filter: skip cycle if current hour is not profitable
+        # Time-of-day filter: skip cycle if current hour is not profitable.
+        # With SHADOW_TRADE_BLOCKED_HOURS=true (demo only), blocked hours still
+        # run the full scan but place shadow trades instead of real ones —
+        # collects 24h signal-outcome data without touching the real strategy.
         utc_hour = TimeOfDayFilter.current_hour()
+        blocked_hour_shadow = False
         if not TimeOfDayFilter.is_allowed(utc_hour):
             skip_reason = TimeOfDayFilter.skip_reason(utc_hour)
+            shadow_hours_enabled = (
+                settings.shadow_trade_blocked_hours
+                and settings.trade_mode != TradeMode.LIVE
+            )
 
             # Rate-limit skip logs to once per 10 minutes
             now = datetime.now(timezone.utc)
@@ -410,9 +418,10 @@ class StrategyManagerV2:
             if should_log:
                 self._last_skip_log_time = now
                 log.info(
-                    "[{}] CYCLE SKIP — {}  (hour {utc_hour:02d}:00 UTC)  "
+                    "[{}] CYCLE {} — {}  (hour {utc_hour:02d}:00 UTC)  "
                     "Next trading: {next_hour:02d}:00 UTC in {countdown}  (WR {wr:.1f}%)",
-                    cid, skip_reason, utc_hour=utc_hour, next_hour=next_hour,
+                    cid, "SHADOW-ONLY" if shadow_hours_enabled else "SKIP",
+                    skip_reason, utc_hour=utc_hour, next_hour=next_hour,
                     countdown=countdown, wr=next_wr,
                 )
 
@@ -428,10 +437,13 @@ class StrategyManagerV2:
                         "minutes_until": minutes_until,
                         "countdown": countdown,
                         "win_rate_pct": next_wr,
+                        "shadow_only": shadow_hours_enabled,
                     },
                 )
 
-            return
+            if not shadow_hours_enabled:
+                return
+            blocked_hour_shadow = True
 
         all_pairs = await self._api.get_active_pairs()  # is_active filtered, sorted payout desc
         candidates = [
@@ -554,13 +566,28 @@ class StrategyManagerV2:
                 # to collect outcome data. Over time this shows whether the majority
                 # check is correctly blocking losing trades or incorrectly blocking winners.
                 if d.skip_reason == "no_direction" and conf.majority_blocked_direction:
-                    asyncio.create_task(self._place_majority_blocked_shadow(
+                    asyncio.create_task(self._place_single_shadow(
                         pair_api=pair_api,
                         direction=conf.majority_blocked_direction,
                         base_row=row,
                         log_path=log_path,
-                        payout_pct=payout_pct,
+                        shadow_kind="majority_blocked",
+                        would_skip_reason="majority_blocked",
                     ))
+                continue
+
+            # Blocked-hour shadow mode: the signal gates passed, but this hour is
+            # blocked by the time-of-day filter. Place a shadow instead of a real
+            # trade and skip the production EV/risk/concurrency gates entirely.
+            if blocked_hour_shadow:
+                asyncio.create_task(self._place_single_shadow(
+                    pair_api=pair_api,
+                    direction=conf.direction,
+                    base_row=row,
+                    log_path=log_path,
+                    shadow_kind="time_of_day",
+                    would_skip_reason=TimeOfDayFilter.skip_reason(utc_hour),
+                ))
                 continue
 
             # EV gate
@@ -709,16 +736,17 @@ class StrategyManagerV2:
                 log.warning("[{}] shadow expiry {}s failed for {}: {}",
                             base_row.cycle_id, exp, pair_api, exc)
 
-    async def _place_majority_blocked_shadow(
-        self, *, pair_api, direction, base_row, log_path, payout_pct
+    async def _place_single_shadow(
+        self, *, pair_api, direction, base_row, log_path,
+        shadow_kind, would_skip_reason,
     ) -> None:
-        """Place a single shadow trade when the majority check blocked a score-winner.
+        """Place one shadow trade flagged with the given shadow_kind.
 
-        Collects outcome data for "what would have happened" on majority-blocked
-        setups. Over 50-100 trades this shows whether the majority check is
-        correctly blocking losers or incorrectly filtering winners — the key
-        data needed for empirical signal weighting.
-        HARD GUARD: research only — skipped in LIVE mode.
+        Used for research data collection on setups the real strategy doesn't
+        trade — e.g. majority-blocked signal minorities ("majority_blocked")
+        and blocked-hour scans ("time_of_day"). Shadows never feed the
+        production tracker/risk stats and never consume the real concurrency
+        budget. HARD GUARD: research only — skipped in LIVE mode.
         """
         if settings.trade_mode == TradeMode.LIVE:
             return
@@ -733,8 +761,8 @@ class StrategyManagerV2:
                 base_row,
                 expiry_seconds=expiry,
                 shadow=True,
-                shadow_kind="majority_blocked",
-                would_skip_reason="majority_blocked",
+                shadow_kind=shadow_kind,
+                would_skip_reason=would_skip_reason,
                 bot_direction=direction,
                 our_direction=direction,
                 decision="TRADE",
@@ -747,9 +775,8 @@ class StrategyManagerV2:
             )
             write_decision(log_path, srow)
             log.info(
-                "[{}] MAJORITY-BLOCKED-SHADOW {}  {}  exp={}s  id={}  "
-                "(score-winner overridden by signal count)",
-                base_row.cycle_id, direction, pair_api, expiry, tid,
+                "[{}] SHADOW[{}] {}  {}  exp={}s  id={}",
+                base_row.cycle_id, shadow_kind, direction, pair_api, expiry, tid,
             )
             if tid and status not in ("ERROR", "DRY_RUN"):
                 self._open_trades[tid] = {
@@ -760,8 +787,8 @@ class StrategyManagerV2:
                 }
                 asyncio.create_task(self._resolve_trade_background(tid))
         except Exception as exc:
-            log.warning("[{}] majority_blocked shadow failed for {}: {}",
-                        base_row.cycle_id, pair_api, exc)
+            log.warning("[{}] {} shadow failed for {}: {}",
+                        base_row.cycle_id, shadow_kind, pair_api, exc)
 
     async def _resolve_trade_background(self, trade_id: str) -> None:
         """Background task: wait for trade expiry, check outcome, update decisions.jsonl."""
