@@ -60,18 +60,18 @@ class StrategyManagerV2:
         _cycle_counter += 1
         return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{_cycle_counter:04d}"
 
-    def _next_profitable_hour(self) -> tuple[int, int]:
-        """Calculate next profitable trading hour and minutes until it arrives.
+    def _next_profitable_hour(self) -> tuple[int, int, float]:
+        """Calculate next profitable trading hour, minutes until it arrives, and its WR.
 
         Returns:
-            (next_hour_utc, minutes_until_next)
+            (next_hour_utc, minutes_until_next, win_rate_pct)
         """
         now = datetime.now(timezone.utc)
         current_hour = now.hour
         current_minute = now.minute
 
         # Check all 24 hours starting from next hour
-        profitable_hours = set(TimeOfDayFilter.PROFITABLE_HOURS.keys())
+        profitable_hours = TimeOfDayFilter.PROFITABLE_HOURS
 
         for offset in range(1, 25):
             check_hour = (current_hour + offset) % 24
@@ -83,10 +83,16 @@ class StrategyManagerV2:
                 else:
                     # Multiple hours away: (hours × 60) - current_minute
                     minutes = (offset * 60) - current_minute
-                return check_hour, minutes
+                return check_hour, minutes, profitable_hours[check_hour]
 
         # Fallback (shouldn't reach here if PROFITABLE_HOURS is non-empty)
-        return current_hour, 0
+        return current_hour, 0, 0.0
+
+    @staticmethod
+    def _format_countdown(minutes: int) -> str:
+        """Format minutes as a human-readable countdown, e.g. '1h 23m' or '38m'."""
+        h, m = divmod(max(0, minutes), 60)
+        return f"{h}h {m}m" if h else f"{m}m"
 
     async def run_once(self) -> None:
         """Dispatch to the configured loop driver (signals or broker_bot)."""
@@ -398,24 +404,31 @@ class StrategyManagerV2:
                 (now - self._last_skip_log_time).total_seconds() >= self._skip_log_interval_seconds
             )
 
+            next_hour, minutes_until, next_wr = self._next_profitable_hour()
+            countdown = self._format_countdown(minutes_until)
+
             if should_log:
-                next_hour, minutes_until = self._next_profitable_hour()
                 self._last_skip_log_time = now
                 log.info(
                     "[{}] CYCLE SKIP — {}  (hour {utc_hour:02d}:00 UTC)  "
-                    "Next trading: {next_hour:02d}:00 UTC in ~{minutes} min",
-                    cid, skip_reason, utc_hour=utc_hour, next_hour=next_hour, minutes=minutes_until
+                    "Next trading: {next_hour:02d}:00 UTC in {countdown}  (WR {wr:.1f}%)",
+                    cid, skip_reason, utc_hour=utc_hour, next_hour=next_hour,
+                    countdown=countdown, wr=next_wr,
                 )
 
             # Update dashboard with countdown even if we don't log
             if self._bridge:
-                next_hour, minutes_until = self._next_profitable_hour()
                 self._bridge.heartbeat(
                     mode=settings.trade_mode.value, dry_run=settings.dry_run,
                     connected=True, balance=0, currency="USD",
                     active=[], last_cycle={"cycle_id": cid, "status": "skip", "skip_reason": skip_reason},
                     risk_block_reason=None,
-                    skip_countdown={"next_hour_utc": next_hour, "minutes_until": minutes_until},
+                    skip_countdown={
+                        "next_hour_utc": next_hour,
+                        "minutes_until": minutes_until,
+                        "countdown": countdown,
+                        "win_rate_pct": next_wr,
+                    },
                 )
 
             return

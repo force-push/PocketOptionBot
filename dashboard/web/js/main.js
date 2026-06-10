@@ -95,9 +95,17 @@ function initChips() {
     if (!countdownChip) return;
     if (countdown && countdown.minutes_until !== undefined) {
       const mins = Math.max(0, countdown.minutes_until);
-      const hour = String(countdown.next_hour_utc).padStart(2, '0');
+      // Human-readable countdown: prefer server-formatted, fall back to local format
+      const h = Math.floor(mins / 60), m = mins % 60;
+      const human = countdown.countdown || (h ? `${h}h ${m}m` : `${m}m`);
+      // Next window opens in local time
+      const next = new Date();
+      next.setUTCHours(countdown.next_hour_utc, 0, 0, 0);
+      if (next <= new Date()) next.setUTCDate(next.getUTCDate() + 1);
+      const localTime = next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const wr = countdown.win_rate_pct != null ? ` · WR ${countdown.win_rate_pct.toFixed(1)}%` : '';
       countdownChip.style.display = 'flex';
-      countdownChip.querySelector('b').textContent = `${mins}m (${hour}:00 UTC)`;
+      countdownChip.querySelector('b').textContent = `${human} (${localTime}${wr})`;
       countdownChip.style.color = mins <= 5 ? 'var(--accent)' : 'inherit';
     } else {
       countdownChip.style.display = 'none';
