@@ -232,3 +232,51 @@ run-length distribution (P(reversal | N same-color candles)). If lag-1
 autocorrelation is negative (mean-reverting process), fade-style entries are
 structurally correct and momentum can never work at this horizon — settling
 the strategy direction once, from the generating process itself.
+
+---
+
+## Addendum 2 (2026-06-11): Feed process diagnostics — the verdict
+
+Ran `tools/feed_diagnostics.py` over 15 pairs × 3 timeframes (5s/30s/60s,
+~150 candles each, pooled):
+
+| Timeframe | lag-1 autocorr (pooled ± SE) | VR(2) | VR(6) |
+|---|---|---|---|
+| 5s | **−0.019 ± 0.022** | 0.98 | 1.00 |
+| 30s | +0.004 ± 0.024 | 1.00 | 1.07 |
+| 60s | +0.006 ± 0.021 | 1.01 | 0.97 |
+
+**Verdict: random walk at every tested scale.** No pooled linear structure.
+The bound this puts on ANY strategy that reads price history linearly:
+directional accuracy ≈ 50% + ρ/π — with |ρ| ≤ ~0.04 (our upper bound), the
+ceiling is ≈ **51.3%**, below the 52.1% break-even at 92% payout. This is
+the process-level explanation for every 50% result in this report.
+
+**Three secondary findings:**
+
+1. **Cross-pair spread is wide but consistent with noise at one window:**
+   OMRCNY −0.181, USDJPY −0.139 (fade-ish) vs EURJPY +0.101, AUDCAD +0.095
+   (momentum-ish). Single-window SE is ±0.082, so persistence must be tested
+   with repeated windows → now collected automatically (see below).
+2. **The candle history endpoint returns flat OHLC** (open==high==low==close
+   on every candle — snapshots, not true candles). Candle-anatomy signals
+   (wicks, bodies, raw candle color) are structurally degenerate on this
+   feed. HeikinAshi still works (recursive transform), but no signal should
+   rely on intra-candle shape.
+3. **The only non-null cell anywhere: lag-2 autocorr at 30s = +0.061 ± 0.025**
+   (2.4σ) — a faint momentum echo at the 60–90s horizon. Weak, but it points
+   the same direction as the 216s expiry result (54%). Longer horizons look
+   marginally less random than 30s.
+
+**Continuous per-pair profiling now live:** `_record_feed_stats()` in
+`strategy/manager_v2.py` piggybacks the live loop's candle fetches (every
+10th cycle, zero extra API load) and appends per-pair ac1/ac2/VR(2) windows
+to `data/feed_stats.jsonl`. Within a day this gives hundreds of windows per
+pair — enough to identify pairs with *persistent* negative autocorrelation
+(structural fade candidates) vs noise.
+
+**Strategic conclusion:** price history alone cannot clear break-even at the
+30s horizon on this feed. The surviving paths: (a) per-pair pockets of
+mean-reversion if feed_stats confirms persistence, (b) longer expiries
+(216s/300s ladder already biased), (c) the fade/adx_regime exhaustion
+patterns which are *nonlinear* conditions not bounded by the lag-1 result.

@@ -493,6 +493,13 @@ class StrategyManagerV2:
                 log.debug("[{}] {} — insufficient candle data ({}) — skip", cid, pair_api, len(df))
                 continue
 
+            # Feed-process probe: every 10th cycle, record this pair's return
+            # autocorrelation/VR to data/feed_stats.jsonl (zero extra API load —
+            # piggybacks the candles we already fetched). Builds the per-pair
+            # repeated-measure dataset the one-off diagnostic can't provide.
+            if _cycle_counter % 10 == 0:
+                self._record_feed_stats(pair_api, df)
+
             conf = await self._conf.score(df)
 
             agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
@@ -768,6 +775,45 @@ class StrategyManagerV2:
             except Exception as exc:
                 log.warning("[{}] shadow expiry {}s failed for {}: {}",
                             base_row.cycle_id, exp, pair_api, exc)
+
+    def _record_feed_stats(self, pair_api: str, df) -> None:
+        """Append this pair's return-process stats to data/feed_stats.jsonl.
+
+        Lag-1/2 autocorrelation + VR(2) of log-returns over the live candle
+        window. Repeated measurements per pair let us separate real per-pair
+        mean-reversion/momentum character from single-window sampling noise
+        (the one-off diagnostic showed cross-pair spread ≈ noise at n=1
+        window). Fail-silent: research instrumentation must never break the
+        trading loop.
+        """
+        try:
+            import numpy as np
+            c = df["c"].to_numpy(dtype=float)
+            r = np.diff(np.log(c))
+            r = r[np.isfinite(r)]
+            if len(r) < 80 or r.std() == 0:
+                return
+
+            def ac(k: int):
+                a, b = r[:-k], r[k:]
+                if a.std() == 0 or b.std() == 0:
+                    return None
+                return float(((a - a.mean()) * (b - b.mean())).mean() / (a.std() * b.std()))
+
+            v1 = r.var(ddof=1)
+            r2 = r[: len(r) // 2 * 2].reshape(-1, 2).sum(axis=1)
+            vr2 = float(r2.var(ddof=1) / (2 * v1)) if v1 > 0 else None
+            row = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "pair": pair_api,
+                "n": int(len(r)),
+                "ac1": ac(1), "ac2": ac(2), "vr2": vr2,
+                "zero_pct": float((r == 0).mean()),
+            }
+            with Path("data/feed_stats.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row) + "\n")
+        except Exception:
+            pass
 
     async def _place_single_shadow(
         self, *, pair_api, direction, base_row, log_path,
