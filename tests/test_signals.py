@@ -92,7 +92,8 @@ async def test_confluence_requires_3_agreeing_on_same_side():
         _stub_signal("D", 0.2, None),
         _stub_signal("E", 0.2, None),
     ]
-    engine = ConfluenceEngine(signals)
+    # Explicit min_agreement=3: 2 CALL signals should not be enough
+    engine = ConfluenceEngine(signals, min_agreement=3)
     result = await engine.score(_make_df())
 
     assert result.direction is None, (
@@ -116,6 +117,35 @@ async def test_confluence_fires_with_3_on_same_side():
 
     assert result.direction == "CALL"
     assert result.score > 0.0
+
+
+@pytest.mark.asyncio
+async def test_confluence_signal_majority_blocks_weighted_minority():
+    """2 high-confidence CALL signals must not override 5 lower-confidence PUT signals.
+
+    Regression: MACD + Supertrend at 1.0 conf each produced call_score > put_score
+    despite 5 signals saying PUT. The majority check blocks this.
+    """
+    signals = [
+        _stub_signal("MACD",         0.1, "CALL", confidence=1.0),
+        _stub_signal("Supertrend",   0.1, "CALL", confidence=1.0),
+        _stub_signal("EMA_Cross",    0.1, "PUT",  confidence=0.004),
+        _stub_signal("Stochastic",   0.1, "PUT",  confidence=0.116),
+        _stub_signal("Parabolic_SAR",0.1, "PUT",  confidence=0.110),
+        _stub_signal("StochRSI",     0.1, "PUT",  confidence=0.790),
+        _stub_signal("ADX_DMI",      0.1, "PUT",  confidence=0.318),
+        _stub_signal("RSI",          0.1, None,   confidence=0.0),
+        _stub_signal("HeikinAshi",   0.1, None,   confidence=0.0),
+        _stub_signal("RoC",          0.1, None,   confidence=0.0),
+        _stub_signal("ATR",          0.1, None,   confidence=0.0),
+    ]
+    engine = ConfluenceEngine(signals, min_agreement=2)
+    result = await engine.score(_make_df())
+
+    assert result.direction is None, (
+        "2 CALL signals must not override 5 PUT signals even at max confidence"
+    )
+    assert result.score == 0.0
 
 
 @pytest.mark.asyncio

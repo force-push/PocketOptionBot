@@ -105,9 +105,13 @@ class ConfluenceEngine:
         # Require ≥min_agreement signals to agree on the winning direction.
         # Previously this counted CALL + PUT together, which allowed trades to
         # fire when e.g. 2 signals said CALL and 1 said PUT — not "agreement".
+        opposing = "PUT" if direction == "CALL" else "CALL"
         agreeing_count = sum(1 for r in results.values()
                              if r.direction == direction and r.name in self.decision_signals)
+        opposing_count = sum(1 for r in results.values()
+                             if r.direction == opposing and r.name in self.decision_signals)
         breakdown = {r.name: (r.direction, r.confidence, r.reason) for r in results.values()}
+
         if agreeing_count < self.min_agreement:
             return ConfluenceResult(
                 direction=None,
@@ -116,6 +120,21 @@ class ConfluenceEngine:
                 reason=(
                     f"Only {agreeing_count} signal(s) agree on {direction} "
                     f"(need ≥{self.min_agreement} on the same side)"
+                ),
+            )
+
+        # Signal majority check: the winning direction must have more signals
+        # than the opposing direction. Prevents 2 high-confidence signals (e.g.
+        # MACD + Supertrend at 1.0) from overriding 5 lower-confidence signals
+        # pointing the other way purely on weighted score.
+        if opposing_count >= agreeing_count:
+            return ConfluenceResult(
+                direction=None,
+                score=0.0,
+                breakdown=breakdown,
+                reason=(
+                    f"Signal minority: {agreeing_count} say {direction} but "
+                    f"{opposing_count} say {opposing} — majority must agree"
                 ),
             )
 
