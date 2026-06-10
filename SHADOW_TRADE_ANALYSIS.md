@@ -280,3 +280,49 @@ pair — enough to identify pairs with *persistent* negative autocorrelation
 mean-reversion if feed_stats confirms persistence, (b) longer expiries
 (216s/300s ladder already biased), (c) the fade/adx_regime exhaustion
 patterns which are *nonlinear* conditions not bounded by the lag-1 result.
+
+---
+
+## Addendum 3 (2026-06-11): First live checkpoint — the sign flip
+
+~12 hours after implementing the fade/adx experiments:
+
+| Experiment | Result | Gate | Verdict so far |
+|---|---|---|---|
+| fade (≥7 agree → opposite) | **44.8%** (158/353), declining (46.6% → 42.9% by half) | ≥54% over 500 | **failing** |
+| fade on 8+-agree | 38.9% (21/54) | — | failing hard |
+| adx_regime (conf ≥0.6 → follow) | 47.1% (41/87) | ≥55% over 400 | below water |
+| FOLLOW ≥7-agree (concurrent, gate-passing pairs) | **56.7%** (115/203) | — | the mirror image |
+| time_of_day hours 12–16 | 46.6–53.2% per hour | — | hours ≈ coin flip, confirmed |
+| expiry 216s / 300s since rebias | 36.4% (22) / 31.6% (19); all-time 216s regressed 54% → 52% | — | longer-horizon hint weakening |
+
+**The key observation: unanimity flipped sign.** Retrospectively (06-09/06-10
+data), following ≥7-agreement won 46.7–47.1% — so fading it looked right.
+Live (06-10 evening onward), following the same condition wins **56.7%** and
+fading it loses at 44.8%. Two independently-placed trade populations (fade
+shadows vs follow trades) agree with each other — the *pattern itself
+reversed direction* within ~24 hours.
+
+This is the same failure mode as the time-of-day filter (Finding 5): an edge
+measured on one day's data inverts on the next. Combined with the
+random-walk process verdict (Addendum 2), the picture is now coherent:
+
+> **Every conditional edge measurable on this feed is non-stationary.** The
+> feed is a random walk whose local quirks drift faster than we can collect
+> the samples needed to confirm them. Chasing the current "follow unanimity
+> at 56.7%" would be curve-fitting the same trap, one day later.
+
+**The one avenue still genuinely open:** per-pair process persistence from
+the continuous profiler. Early (overlapping-window caveat — SEs understated):
+#AAPL ac1 −0.061±0.018, EURJPY +0.084±0.024, #TSLA +0.089±0.036. If specific
+pairs hold a stable autocorrelation sign over multiple days of
+non-overlapping windows, that is a *structural* property of how their feed
+is generated, not a drifting conditional — and it would survive where every
+indicator-level edge has died.
+
+**Recommendation:** let fade/adx run to their gates for completeness (they
+will fail absent a reversal), make no promotions, and reconvene on the
+feed_stats per-pair data after 24–48h. If no pair shows stable process
+character, the honest endpoint is: this feed at ≤300s horizons is
+engineered to be unpredictable, and the bot's value is as a research
+harness, not a profit engine.
