@@ -154,6 +154,14 @@ def find_by_cycle_id(records: Iterable[dict], cycle_id: str) -> Optional[dict]:
     return None
 
 
+def find_by_trade_id(records: Iterable[dict], trade_id: str) -> Optional[dict]:
+    """Return the record matching trade_id (unique per trade), or None."""
+    for rec in records:
+        if rec.get("trade_id") == trade_id:
+            return rec
+    return None
+
+
 def history(
     records: Iterable[dict],
     *,
@@ -372,6 +380,7 @@ __all__ = [
     "history_row",
     "full_detail_row",
     "find_by_cycle_id",
+    "find_by_trade_id",
     "history",
     "equity_curve",
     "winloss",

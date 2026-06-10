@@ -170,10 +170,14 @@ def create_app() -> FastAPI:
         next_before = rows[-1]["ts"] if rows and len(rows) >= limit and limit > 0 else None
         return {"rows": rows, "next_before": next_before}
 
-    @app.get("/api/trade/{cycle_id}")
-    def get_trade_detail(cycle_id: str) -> Any:
+    @app.get("/api/trade/{trade_id}")
+    def get_trade_detail(trade_id: str) -> Any:
         records = analytics.load_records(_decisions_path())
-        rec = analytics.find_by_cycle_id(records, cycle_id)
+        # Look up by trade_id first (unique per trade); fall back to cycle_id for
+        # legacy rows and SKIPs that have no trade_id.
+        rec = analytics.find_by_trade_id(records, trade_id)
+        if rec is None:
+            rec = analytics.find_by_cycle_id(records, trade_id)
         if rec is None:
             raise HTTPException(status_code=404, detail="trade not found")
         return analytics.full_detail_row(rec)

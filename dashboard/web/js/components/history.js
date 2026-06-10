@@ -9,7 +9,7 @@ const modalEl  = overlay?.querySelector('.modal-card');
 const contentEl = document.getElementById('modal-content');
 const closeBtn  = document.getElementById('modal-close');
 
-function openModal(cycleId, fallbackRow) {
+function openModal(lookupKey, fallbackRow) {
   if (!overlay || !contentEl) {
     console.warn('[modal] #trade-modal not found — did the page load before the new index.html? Hard-refresh the browser.');
     return;
@@ -18,7 +18,7 @@ function openModal(cycleId, fallbackRow) {
   overlay.hidden = false;
   document.body.style.overflow = 'hidden';
 
-  if (store.get('demo') || !cycleId) {
+  if (store.get('demo') || !lookupKey) {
     // Demo mode — load the sample detail so the modal shows a full breakdown
     const sampleUrl = new URL('../sample/trade_detail.json', import.meta.url);
     fetch(sampleUrl)
@@ -31,7 +31,7 @@ function openModal(cycleId, fallbackRow) {
     return;
   }
 
-  fetch(`/api/trade/${encodeURIComponent(cycleId)}`)
+  fetch(`/api/trade/${encodeURIComponent(lookupKey)}`)
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => { contentEl.innerHTML = detailHtml(d); })
     .catch(err => {
@@ -109,7 +109,8 @@ export function initHistory(rootSel, countSel) {
     const tr = e.target.closest('tr.hist-row');
     if (!tr) return;
     const h = rows[+tr.dataset.i];
-    if (h) openModal(h.cycle_id, h);
+    // Use trade_id (unique per trade) as lookup key; fall back to cycle_id for SKIPs
+    if (h) openModal(h.trade_id || h.cycle_id, h);
   });
 
   tbody.addEventListener('keydown', e => {
@@ -118,7 +119,7 @@ export function initHistory(rootSel, countSel) {
     if (!tr) return;
     e.preventDefault();
     const h = rows[+tr.dataset.i];
-    if (h) openModal(h.cycle_id, h);
+    if (h) openModal(h.trade_id || h.cycle_id, h);
   });
 
   store.subscribe('history', render);
@@ -228,9 +229,11 @@ function detailHtml(d) {
         ${d.combined_probability != null ? `<div class="mono" style="font-size:12px;color:var(--tx-1)">confidence&nbsp;<b>${(d.combined_probability*100).toFixed(1)}%</b>${d.calibrated_probability != null ? ` &nbsp;·&nbsp; <span style="color:var(--ac-1)">P(win)&nbsp;<b>${(d.calibrated_probability*100).toFixed(1)}%</b></span>` : ''}</div>` : ''}
       </div>
       <div class="md-agree-row">
-        ${d.agreement
+        ${d.agreement && dir && ourDir
           ? `<span class="agree-yes">✓ Agreement</span><span style="color:var(--tx-1);font-size:12px">Bot and TA both say <b>${dir}</b></span>`
-          : `<span class="agree-no">✗ Disagreement</span><span style="color:var(--tx-1);font-size:12px">Bot: <b>${dir}</b> &nbsp; TA: <b>${ourDir || 'None'}</b></span>`}
+          : dir && ourDir
+            ? `<span class="agree-no">✗ Disagreement</span><span style="color:var(--tx-1);font-size:12px">Bot: <b>${dir}</b> &nbsp; TA: <b>${ourDir}</b></span>`
+            : `<span class="muted" style="font-size:12px">No bot direction — signals mode</span>`}
       </div>
     </div>`;
 
