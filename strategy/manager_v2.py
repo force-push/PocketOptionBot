@@ -393,12 +393,14 @@ class StrategyManagerV2:
         log_path = settings.decisions_log_path
 
         # Time-of-day filter: skip cycle if current hour is not profitable.
+        # Disabled by default (TIME_OF_DAY_FILTER_ENABLED=false) — hour win
+        # rates did not replicate across days (SHADOW_TRADE_ANALYSIS.md).
         # With SHADOW_TRADE_BLOCKED_HOURS=true (demo only), blocked hours still
         # run the full scan but place shadow trades instead of real ones —
         # collects 24h signal-outcome data without touching the real strategy.
         utc_hour = TimeOfDayFilter.current_hour()
         blocked_hour_shadow = False
-        if not TimeOfDayFilter.is_allowed(utc_hour):
+        if settings.time_of_day_filter_enabled and not TimeOfDayFilter.is_allowed(utc_hour):
             skip_reason = TimeOfDayFilter.skip_reason(utc_hour)
             shadow_hours_enabled = (
                 settings.shadow_trade_blocked_hours

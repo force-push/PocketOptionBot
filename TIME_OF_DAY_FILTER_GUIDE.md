@@ -1,4 +1,12 @@
 # Time-of-Day Filter Guide
+
+> ⚠️ **DEPRECATED 2026-06-11.** The hour gating is now **disabled by default**
+> (`TIME_OF_DAY_FILTER_ENABLED=false`). Blocked-hour shadow data showed the
+> hour win rates below were curve-fit to one day's noise and did not
+> replicate (e.g. "90.9%" at 11:00 UTC was n=11; it measured 50.9% at n=228
+> the next day). See SHADOW_TRADE_ANALYSIS.md Finding 5 and Addendum 3.
+> Kept for historical reference only.
+
 **Local Timezone:** ACST (UTC+9:30) | **Updated:** 2026-06-10
 
 ---

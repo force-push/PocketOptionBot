@@ -134,6 +134,14 @@ class BotSettings(BaseSettings):
     # HARD GUARD: ignored in LIVE — research only, demo balance only.
     shadow_expiry_seconds: list[int] = Field(default=[], alias="SHADOW_EXPIRY_SECONDS")
 
+    # Time-of-day hour gating (signals loop only). DISABLED by default since
+    # 2026-06-11: the static hour table was curve-fit to one day's noise —
+    # hour win rates did not replicate across days (SHADOW_TRADE_ANALYSIS.md
+    # Finding 5 + Addendum 3). Set true to re-enable the TimeOfDayFilter.
+    time_of_day_filter_enabled: bool = Field(
+        default=False, alias="TIME_OF_DAY_FILTER_ENABLED"
+    )
+
     # Shadow-trade blocked hours (signals loop only). When true, cycles during
     # hours blocked by the time-of-day filter still run, but every trade that
     # passes the signal gates is placed as a SHADOW trade (shadow=True,
