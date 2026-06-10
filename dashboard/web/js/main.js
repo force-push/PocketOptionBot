@@ -6,7 +6,6 @@ import * as fmt from './format.js';
 
 import { initKpis } from './components/kpis.js';
 import { initHistory } from './components/history.js';
-import { initActive } from './components/active.js';
 import { initPerformance } from './components/performance.js';
 import { initSettings } from './components/settings.js';
 
@@ -311,7 +310,6 @@ async function boot() {
   initChips();
   initKpis('#kpi-strip');
   initHistory('#history-rows', '#history-count');
-  initActive('#active-list', '#active-count');
   initPerformance({
     chartSel: '#chart-wrap',
     segSel: '#perf-seg',

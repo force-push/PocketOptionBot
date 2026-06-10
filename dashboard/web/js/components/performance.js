@@ -1,12 +1,28 @@
 // components/performance.js — equity/P&L SVG curve + win/loss distribution.
 // Range toggle (1H/1D/1W/ALL), break-even line, crosshair + value tooltip,
-// smooth update when new points arrive.
+// smooth update when new points arrive. X axis is TIME, spanning the full
+// selected window (trades plot at their actual timestamps, not evenly spaced).
 import store from '../store.js';
 import * as fmt from '../format.js';
 
-const W = 560;
-const H = 240;
-const PAD = { l: 46, r: 14, t: 14, b: 24 };
+const W = 980;
+const H = 260;
+const PAD = { l: 52, r: 18, t: 14, b: 30 };
+
+// Selected-range duration in ms (ALL = derive from data)
+const RANGE_MS = { '1H': 3600e3, '1D': 86400e3, '1W': 7 * 86400e3 };
+
+function fmtTick(ms, range) {
+  const d = new Date(ms);
+  if (range === '1H' || range === '1D') {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (range === '1W') {
+    return d.toLocaleDateString([], { weekday: 'short' }) + ' ' +
+           d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 export function initPerformance({ chartSel, segSel, winlossSel, onRange } = {}) {
   const chartWrap = document.querySelector(chartSel);
@@ -52,19 +68,35 @@ export function initPerformance({ chartSel, segSel, winlossSel, onRange } = {}) 
     const min = Math.min(...vals, 0);
     const max = Math.max(...vals, 0);
     const span = (max - min) || 1;
-    const x = (i) => PAD.l + (i / (points.length - 1)) * (W - PAD.l - PAD.r);
+
+    // Time window: fixed ranges anchor to "now" and span backwards; ALL spans
+    // from the first to the last trade. Trades plot at their real timestamps.
+    const range = (current && current.range) || 'ALL';
+    const times = points.map((p) => new Date(p.t).getTime());
+    let t1, t0;
+    if (RANGE_MS[range]) {
+      t1 = Date.now();
+      t0 = t1 - RANGE_MS[range];
+    } else {
+      t0 = Math.min(...times);
+      t1 = Math.max(...times);
+    }
+    const tSpan = (t1 - t0) || 1;
+
+    const x = (ms) => PAD.l + ((ms - t0) / tSpan) * (W - PAD.l - PAD.r);
     const y = (v) => PAD.t + (1 - (v - min) / span) * (H - PAD.t - PAD.b);
-    scale = { x, y, min, max };
+    scale = { x, y, min, max, times };
 
     const css = getComputedStyle(document.documentElement);
     const ACC = (css.getPropertyValue('--accent') || '#2dd4bf').trim();
     const GRID = (css.getPropertyValue('--stroke') || '#1e2733').trim();
     const ZERO = (css.getPropertyValue('--tx-2') || '#5f7283').trim();
 
-    const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.cum_pnl).toFixed(1)}`).join(' ');
-    const area = `${line} L${x(points.length - 1).toFixed(1)},${y(min).toFixed(1)} L${x(0).toFixed(1)},${y(min).toFixed(1)} Z`;
+    const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(times[i]).toFixed(1)},${y(p.cum_pnl).toFixed(1)}`).join(' ');
+    const area = `${line} L${x(times[times.length - 1]).toFixed(1)},${y(min).toFixed(1)} L${x(times[0]).toFixed(1)},${y(min).toFixed(1)} Z`;
     const zeroY = y(0);
 
+    // Horizontal $ gridlines (Y axis)
     let grid = '';
     for (let g = 0; g <= 4; g++) {
       const v = min + span * g / 4;
@@ -73,8 +105,22 @@ export function initPerformance({ chartSel, segSel, winlossSel, onRange } = {}) 
         + `<text x="${PAD.l - 8}" y="${gy + 3}" fill="${ZERO}" font-size="9" text-anchor="end" font-family="monospace">$${v.toFixed(0)}</text>`;
     }
 
+    // Vertical time gridlines + labels (X axis) spanning the selected window
+    for (let g = 0; g <= 5; g++) {
+      const tms = t0 + tSpan * g / 5;
+      const gx = PAD.l + (g / 5) * (W - PAD.l - PAD.r);
+      const anchor = g === 0 ? 'start' : g === 5 ? 'end' : 'middle';
+      grid += `<line x1="${gx}" y1="${PAD.t}" x2="${gx}" y2="${H - PAD.b}" stroke="${GRID}" stroke-width="1" opacity="0.5"/>`
+        + `<text x="${gx}" y="${H - PAD.b + 14}" fill="${ZERO}" font-size="9" text-anchor="${anchor}" font-family="monospace">${fmtTick(tms, range)}</text>`;
+    }
+
     const lastI = points.length - 1;
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // Per-trade markers at actual trade times
+    const dots = points.map((p, i) =>
+      `<circle cx="${x(times[i]).toFixed(1)}" cy="${y(p.cum_pnl).toFixed(1)}" r="2" fill="${ACC}" opacity="0.55"/>`
+    ).join('');
 
     chartWrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" class="equity-svg">
       <defs>
@@ -87,8 +133,9 @@ export function initPerformance({ chartSel, segSel, winlossSel, onRange } = {}) 
       <line x1="${PAD.l}" y1="${zeroY}" x2="${W - PAD.r}" y2="${zeroY}" stroke="${ZERO}" stroke-width="1" stroke-dasharray="3 3"/>
       <path d="${area}" fill="url(#ag)"/>
       <path d="${line}" fill="none" stroke="${ACC}" stroke-width="2" stroke-linejoin="round" class="${reduce ? '' : 'equity-line'}"/>
-      <circle cx="${x(lastI)}" cy="${y(points[lastI].cum_pnl)}" r="7" fill="${ACC}" opacity="0.18"/>
-      <circle cx="${x(lastI)}" cy="${y(points[lastI].cum_pnl)}" r="3.5" fill="${ACC}"/>
+      ${dots}
+      <circle cx="${x(times[lastI])}" cy="${y(points[lastI].cum_pnl)}" r="7" fill="${ACC}" opacity="0.18"/>
+      <circle cx="${x(times[lastI])}" cy="${y(points[lastI].cum_pnl)}" r="3.5" fill="${ACC}"/>
       <line data-cross x1="0" y1="${PAD.t}" x2="0" y2="${H - PAD.b}" stroke="${ACC}" stroke-width="1" stroke-dasharray="2 3" opacity="0" />
       <circle data-dot r="4" fill="${ACC}" stroke="#0a0e14" stroke-width="1.5" opacity="0" />
       <rect data-hit x="${PAD.l}" y="${PAD.t}" width="${W - PAD.l - PAD.r}" height="${H - PAD.t - PAD.b}" fill="transparent" />
@@ -106,17 +153,19 @@ export function initPerformance({ chartSel, segSel, winlossSel, onRange } = {}) 
     function locate(evt) {
       const rect = svg.getBoundingClientRect();
       const sx = (evt.clientX - rect.left) / rect.width * W; // to viewBox space
-      // nearest index
-      const frac = (sx - PAD.l) / (W - PAD.l - PAD.r);
-      let i = Math.round(frac * (points.length - 1));
-      i = Math.max(0, Math.min(points.length - 1, i));
-      return i;
+      // nearest point by x position (timestamps are not evenly spaced)
+      let best = 0, bestDist = Infinity;
+      for (let i = 0; i < points.length; i++) {
+        const d = Math.abs(scale.x(scale.times[i]) - sx);
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      return best;
     }
 
     hit.addEventListener('mousemove', (evt) => {
       const i = locate(evt);
       const p = points[i];
-      const px = scale.x(i);
+      const px = scale.x(scale.times[i]);
       const py = scale.y(p.cum_pnl);
       cross.setAttribute('x1', px); cross.setAttribute('x2', px); cross.setAttribute('opacity', '1');
       dot.setAttribute('cx', px); dot.setAttribute('cy', py); dot.setAttribute('opacity', '1');

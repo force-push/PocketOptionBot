@@ -144,7 +144,7 @@ body {
    ============================================================ */
 .grid {
   display: grid; gap: 12px; padding: 12px 18px 18px;
-  grid-template-columns: 1fr 2fr 1fr;   /* Active ¼ · Performance ½ · History ¼ */
+  grid-template-columns: 3fr 1fr;   /* Performance ¾ · History ¼ */
   flex: 1 1 auto; min-height: 0;
 }
 .panel {
