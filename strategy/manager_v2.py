@@ -14,7 +14,7 @@ from config.settings import settings, TradeMode, PredictionSource
 from data.candles import candles_to_df
 from strategy.decision import decide, decide_signals
 from strategy.expiry import select_expiry
-from strategy.market_filters import TimeOfDayFilter, PairWhitelistFilter
+from strategy.market_filters import TimeOfDayFilter
 from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
 from telegram_feed.direction_parser import parse_direction_screen
@@ -367,13 +367,12 @@ class StrategyManagerV2:
         candidates = [
             p for p in all_pairs
             if p.get("symbol") not in settings.blocked_pairs
-            and PairWhitelistFilter.is_allowed(p.get("symbol"))  # Pair whitelist filter
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
         ]
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
 
-        log.info("[{}] signals scan: {}/{} pairs ≥{}% payout & whitelisted  blocked={} max_per_cycle={}",
+        log.info("[{}] signals scan: {}/{} pairs ≥{}% payout  blocked={} max_per_cycle={}",
                  cid, len(candidates), len(all_pairs), settings.min_payout_pct,
                  len(settings.blocked_pairs), settings.max_pairs_per_cycle or "all")
 
@@ -648,13 +647,31 @@ class StrategyManagerV2:
 
             # Poll closed_deals instead of check_win: polling does not hold a
             # WebSocket subscription, so concurrent buy() calls are not blocked.
-            outcome = await self._api.poll_trade_outcome(trade_id, max_polls=6, poll_interval=4.0)
+            # Wrap in timeout to prevent hang (issue: 2026-06-10 bot hung at 18:48)
+            try:
+                outcome = await asyncio.wait_for(
+                    self._api.poll_trade_outcome(trade_id, max_polls=6, poll_interval=4.0),
+                    timeout=30.0  # 30s timeout: 6 polls × 4s + buffer
+                )
+            except asyncio.TimeoutError:
+                log.warning("[{}] poll_trade_outcome timeout for {} — falling back to check_win", row.cycle_id, trade_id)
+                outcome = "unknown"
+            except Exception as poll_exc:
+                log.warning("[{}] poll_trade_outcome error for {}: {} — falling back to check_win", row.cycle_id, trade_id, poll_exc)
+                outcome = "unknown"
+
             if outcome == "unknown":
                 # Fallback to check_win only after polling exhausted — by this
                 # point there are no in-flight buy() calls this trade can block.
                 log.warning("[{}] poll exhausted for {} — falling back to check_win", row.cycle_id, trade_id)
                 try:
-                    outcome = await self._api.check_win(trade_id)
+                    outcome = await asyncio.wait_for(
+                        self._api.check_win(trade_id),
+                        timeout=10.0  # 10s timeout for check_win
+                    )
+                except asyncio.TimeoutError:
+                    log.error("check_win timeout for {}", trade_id)
+                    outcome = "unknown"
                 except Exception as cw_exc:
                     log.error("check_win fallback failed for {}: {}", trade_id, cw_exc)
                     outcome = "unknown"
