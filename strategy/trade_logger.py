@@ -66,7 +66,25 @@ def backfill_outcome(path: str | Path, trade_id: str, outcome: str, pnl: float,
                        pnl_currency=pnl_currency)
             found = True
     if found:
-        with p.open("w", encoding="utf-8") as fh:
-            for rec in rows:
-                fh.write(json.dumps(rec, default=str, ensure_ascii=False) + "\n")
+        # Atomic rewrite: temp file in the same dir, then os.replace. The old
+        # in-place open("w") truncated first and wrote line-by-line — a kill
+        # mid-write permanently destroyed every record after the cursor
+        # (~10k records lost 2026-06-11 during supervisor kill/restarts).
+        import os
+        import tempfile
+        fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".decisions.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                for rec in rows:
+                    fh.write(json.dumps(rec, default=str, ensure_ascii=False) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, p)
+        except Exception:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+            raise
     return found
