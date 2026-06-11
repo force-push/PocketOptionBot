@@ -228,9 +228,25 @@ async def main(cycles: int = 0) -> None:
 
     async with tg_client:
         count = 0
+        consecutive_timeouts = 0
         while True:
             try:
-                await manager.run_once()
+                # Hard cycle timeout: the WS layer can hang an await forever on a
+                # dropped connection (hangs observed 2026-06-11 at 09:15 + 15:45
+                # UTC+9:30 with the process alive but the loop dead). A scan of
+                # ~30 pairs takes 60-90s; 300s means genuinely stuck.
+                await asyncio.wait_for(manager.run_once(), timeout=300.0)
+                consecutive_timeouts = 0
+            except asyncio.TimeoutError:
+                consecutive_timeouts += 1
+                log.error("run_once exceeded 300s — cycle aborted (WS hang?) [{}/2]",
+                          consecutive_timeouts)
+                if consecutive_timeouts >= 2:
+                    # WS is persistently dead — exit so the supervisor restarts us
+                    # with a fresh connection. In-process reconnect is not reliable
+                    # with the Rust client's lazy internals.
+                    log.critical("2 consecutive cycle timeouts — exiting for supervisor restart")
+                    sys.exit(1)
             except KeyboardInterrupt:
                 raise
             except FloodWaitError as e:
