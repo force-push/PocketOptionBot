@@ -1,5 +1,11 @@
 # PocketOptionBot v2 — Quick Start
 
+> **⚠️ TELEGRAM INTEGRATION REMOVED (2026-06-12).** The Telethon/`po_broker_bot`
+> integration described below has been deleted from the codebase (`telegram_feed/`,
+> v1 `main.py`, navigator-driven loop, all `TELEGRAM_*` settings). Setup now only
+> requires `PO_SSID`. The payout-first signals loop is the only trade driver.
+> Telegram-related sections in this document are historical.
+
 ## Prerequisites
 
 Before your first run you need three things:

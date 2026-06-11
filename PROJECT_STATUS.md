@@ -1,3 +1,21 @@
+# Change Log
+
+## 2026-06-12 — Telegram integration removed
+- Deleted: `telegram_feed/` (navigator, parsers, client, pair_norm), v1 entry
+  `main.py`, `strategy/manager.py`, `strategy/signal_gate.py`,
+  `demo_signal_test.py`, tools (`v2_smoke.py`, `v2_capture.py`,
+  `gen_telegram_session.py`, `test_telegram_feed.py`) and their tests.
+- `main_v2.py` / `strategy/manager_v2.py`: signals loop is the only driver;
+  navigator param, broker_bot mode, `PredictionSource`, and FloodWait handling
+  removed. `strategy/decision.py` keeps only `decide_signals`.
+- Settings removed: `TELEGRAM_API_ID/HASH/PHONE/SESSION(_STRING)`,
+  `SIGNAL_BOT_USERNAME`, `PREDICTION_SOURCE`, `PAIR_SELECT_MIN_WIN_RATE`,
+  `CLICK_TRADE_ANYWAY`, `MIN_CHANNEL_WIN_RATE`. `telethon` dropped from
+  requirements. Dashboard settings panel: Telegram group removed.
+- Setup now requires only `PO_SSID` in `.env`.
+
+---
+
 # PocketOptionBot — Project Status
 
 **Date:** 2026-06-09

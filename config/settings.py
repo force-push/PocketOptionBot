@@ -15,11 +15,6 @@ class TradeMode(StrEnum):
     LIVE = "LIVE"
 
 
-class PredictionSource(StrEnum):
-    SIGNALS = "signals"
-    BROKER_BOT = "broker_bot"
-
-
 class BotSettings(BaseSettings):
     """All configuration loaded from .env or environment variables."""
 
@@ -76,16 +71,7 @@ class BotSettings(BaseSettings):
     trade_stagger_seconds: int = Field(default=5, alias="TRADE_STAGGER_SECONDS", ge=0)
     min_balance_multiplier: float = Field(default=5.0, alias="MIN_BALANCE_MULTIPLIER", ge=1.0)
 
-    # ── Telegram (Telethon user session) ──
-    # Optional: module imports cleanly without a .env present.
-    telegram_api_id: Optional[int] = Field(default=None, alias="TELEGRAM_API_ID")
-    telegram_api_hash: Optional[str] = Field(default=None, alias="TELEGRAM_API_HASH")
-    telegram_phone: Optional[str] = Field(default=None, alias="TELEGRAM_PHONE")
-    telegram_session: str = Field(default="po_session", alias="TELEGRAM_SESSION")
-    # StringSession string — preferred over file session in cloud/headless envs.
-    # Generate with: python3 tools/gen_telegram_session.py
-    telegram_session_string: Optional[str] = Field(default=None, alias="TELEGRAM_SESSION_STRING")
-    signal_bot_username: str = Field(default="po_broker_bot", alias="SIGNAL_BOT_USERNAME")
+    # (Telegram/Telethon settings removed 2026-06-12 — signals loop only)
 
     # ── PocketOption WS API ──
     # Full 42["auth",{...}] string copied from browser; demo/live encoded in it.
@@ -95,9 +81,6 @@ class BotSettings(BaseSettings):
     stake_amount: float = Field(default=1.5, alias="STAKE_AMOUNT", gt=0)
     default_expiry_seconds: int = Field(default=30, alias="DEFAULT_EXPIRY_SECONDS", gt=0)
     allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 50, 60, 80, 120, 128, 216, 300)
-    # Navigation pair-selection gate. 0.0 DISABLES it (capture/testing — no trades happen);
-    # set to 0.82 for real runs (the "82%" rule).
-    pair_select_min_win_rate: float = Field(default=0.0, alias="PAIR_SELECT_MIN_WIN_RATE", ge=0.0, le=1.0)
     # Minimum payout % from PocketOption for a trade to proceed. 0 disables the gate.
     # Set to 92 to only trade when PO is offering ≥92% profit on a win.
     min_payout_pct: int = Field(default=92, alias="MIN_PAYOUT_PCT", ge=0, le=100)
@@ -106,7 +89,6 @@ class BotSettings(BaseSettings):
     # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
     min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
-    click_trade_anyway: bool = Field(default=True, alias="CLICK_TRADE_ANYWAY")
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
     # List of pair_api values (e.g., "EURUSD_otc") to block at pair selection.
     # This prevents wasting time on analysis for known underperforming pairs.
@@ -169,24 +151,11 @@ class BotSettings(BaseSettings):
         default=0.6, alias="SHADOW_ADX_REGIME_MIN_CONF", ge=0.0, le=1.0
     )
 
-    # ── Option A: Payout-First, Signals-Driven Loop ──
-    # PREDICTION_SOURCE selects the trade loop driver:
-    #   signals    — payout-first: scan all pairs ≥ MIN_PAYOUT_PCT, direction from TA confluence
-    #   broker_bot — prediction-first: drive po_broker_bot Telegram UI (original behaviour)
-    # Invalid value fails closed to broker_bot with a warning.
-    prediction_source: PredictionSource = Field(
-        default=PredictionSource.SIGNALS, alias="PREDICTION_SOURCE"
-    )
+    # ── Payout-First, Signals-Driven Loop (the only driver) ──
     # Max pairs to evaluate per cycle in signals mode (0 = all ≥ floor).
     max_pairs_per_cycle: int = Field(default=0, alias="MAX_PAIRS_PER_CYCLE", ge=0)
 
-    # ── Legacy gating thresholds (v1 CDP path, NOT in v2 live path) ──
-    # v2 uses confluence engine gates (min_signal_agreement + min_confluence_score).
-    # These are kept for backward compat but NOT exposed in dashboard, NOT used
-    # in main_v2.py, and NOT visible in Settings panel.
-    min_channel_win_rate: float = Field(
-        default=0.80, alias="MIN_CHANNEL_WIN_RATE", ge=0.0, le=1.0
-    )
+    # ── Tracked win-rate gate thresholds ──
     min_tracked_win_rate: float = Field(
         default=0.55, alias="MIN_TRACKED_WIN_RATE", ge=0.0, le=1.0
     )
@@ -200,21 +169,6 @@ class BotSettings(BaseSettings):
     live_state_path: str = Field(default="data/live_state.json", alias="LIVE_STATE_PATH")
     events_log_path: str = Field(default="data/events.jsonl", alias="EVENTS_LOG_PATH")
 
-    @field_validator("prediction_source", mode="before")
-    @classmethod
-    def _normalize_prediction_source(cls, v):
-        if v is None:
-            return PredictionSource.SIGNALS
-        normalized = str(v).strip().lower()
-        if normalized not in (PredictionSource.SIGNALS, PredictionSource.BROKER_BOT):
-            import warnings
-            warnings.warn(
-                f"Invalid PREDICTION_SOURCE: {v!r}. Falling back to 'broker_bot'.",
-                UserWarning, stacklevel=2,
-            )
-            return PredictionSource.BROKER_BOT
-        return PredictionSource(normalized)
-
     @field_validator("trade_mode", mode="before")
     @classmethod
     def _force_demo_if_unset(cls, v):
@@ -224,16 +178,6 @@ class BotSettings(BaseSettings):
         if mode not in (TradeMode.DEMO, TradeMode.LIVE):
             raise SettingsError(f"Invalid TRADE_MODE: {v!r}. Must be DEMO or LIVE.")
         return TradeMode(mode)
-
-    @field_validator("telegram_session", mode="before")
-    @classmethod
-    def _expand_session_path(cls, v):
-        # Telethon does NOT expand ~ in session paths; expand it here so a path
-        # like ~/.telebot/telegram.session resolves instead of creating a literal
-        # "~" file (which would trigger a fresh, interactive auth).
-        if isinstance(v, str) and v.startswith("~"):
-            return str(Path(v).expanduser())
-        return v
 
     @field_validator("blocked_pairs", mode="before")
     @classmethod

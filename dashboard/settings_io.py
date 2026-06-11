@@ -66,8 +66,6 @@ GROUP_META: dict[str, dict] = {
                    "subtitle": "Candle resolution + per-indicator thresholds. Restart required.", "order": 2},
     "Risk": {"id": "risk", "title": "Risk Manager", "icon": "⚖️",
              "subtitle": "Hard limits & cooldowns", "order": 3},
-    "Telegram": {"id": "telegram", "title": "Telegram Session", "icon": "✈️",
-                 "subtitle": "Telethon user session (MTProto)", "order": 4},
     "PocketOption WS": {"id": "pocketoption", "title": "PocketOption WS", "icon": "📡",
                         "subtitle": "Trading-terminal auth frame", "order": 5},
 }
@@ -80,16 +78,10 @@ FIELDS: list[_F] = [
        hint="Log trades without calling the API"),
     _F("STAKE_AMOUNT", "stake_amount", "Safety & Trade Mode", "float", False, True, "Stake Amount (USD)", "number", step=0.5, min=0.5, max=50.0),
     _F("DEFAULT_EXPIRY_SECONDS", "default_expiry_seconds", "Safety & Trade Mode", "int", False, False, "Default Expiry (s)", "number", step=1),
-    # Telegram
-    _F("TELEGRAM_API_ID", "telegram_api_id", "Telegram", "int", False, True, "API ID", "text"),
-    _F("TELEGRAM_API_HASH", "telegram_api_hash", "Telegram", "str", True, True, "API Hash", "secret"),
-    _F("SIGNAL_BOT_USERNAME", "signal_bot_username", "Telegram", "str", False, True, "Signal Bot", "text"),
     # PocketOption WS
     _F("PO_SSID", "po_ssid", "PocketOption WS", "str", True, True, "SSID", "secret",
        hint='full 42["auth",{…}] frame'),
     # Signal Gate (v2 confluence gates — all configurable)
-    _F("PAIR_SELECT_MIN_WIN_RATE", "pair_select_min_win_rate", "Signal Gate", "float", False, True, "Pair Filter: Min Bot Win %", "ratio",
-       hint="Telegram bot pair selection gate (0.0=disabled for testing)"),
     _F("MIN_SIGNAL_AGREEMENT", "min_signal_agreement", "Signal Gate", "int", False, True, "Gate 1: Min Signals Agree", "number",
        hint="how many of 5 signals must agree (1–5)", step=1),
     _F("MIN_CONFLUENCE_SCORE", "min_confluence_score", "Signal Gate", "float", False, True, "Gate 2: Min Confluence Score", "ratio",
@@ -100,8 +92,6 @@ FIELDS: list[_F] = [
        hint="EV gate: 0=break-even, -0.05=warmup tolerance", step=0.01, min=-1.0, max=1.0),
     _F("MIN_EV_SAMPLES", "min_ev_samples", "Signal Gate", "int", False, False, "Min EV Samples", "number",
        hint="tracked trades per pair before EV gate activates", step=1, min=1, max=100),
-    _F("CLICK_TRADE_ANYWAY", "click_trade_anyway", "Signal Gate", "bool", False, True, "Click Trade Anyway", "toggle",
-       hint="auto-dismiss nag screens"),
     _F("BLOCKED_PAIRS", "blocked_pairs", "Signal Gate", "list", False, True, "Blocked Pairs", "text",
        hint="comma-separated pair symbols (e.g. EURUSD_otc,ETHUSD_otc)"),
     # TA Signals

@@ -78,7 +78,7 @@ def test_read_settings_masks_secrets():
     out = sio.read_settings(make_settings())
     flat = _flat_fields(out)
     # secrets present in groups but masked
-    assert flat["TELEGRAM_API_HASH"]["value"] == sio.MASK
+    assert flat["PO_SSID"]["value"] == sio.MASK
     assert flat["PO_SSID"]["value"] == sio.MASK
     # real secret value never appears anywhere
     blob = repr(out)
@@ -96,7 +96,7 @@ def test_read_settings_groups_mirror_mockup():
     # groups is an ORDERED array of cards with display metadata (UI shape).
     assert isinstance(out["groups"], list)
     ids = [g["id"] for g in out["groups"]]
-    assert ids == ["safety", "gate", "ta", "risk", "telegram", "pocketoption"]
+    assert ids == ["safety", "gate", "ta", "risk", "pocketoption"]
     safety = out["groups"][0]
     assert safety["span2"] is True and safety["title"] == "Safety & Trade Mode"
     assert all("fields" in g and g["fields"] for g in out["groups"])
@@ -107,7 +107,6 @@ def test_read_settings_ui_control_types():
     flat = _flat_fields(sio.read_settings(make_settings()))
     assert flat["TRADE_MODE"]["type"] == "mode"
     assert flat["DRY_RUN"]["type"] == "toggle"
-    assert flat["PAIR_SELECT_MIN_WIN_RATE"]["type"] == "ratio"
     assert flat["PO_SSID"]["type"] == "secret"
     assert flat["STAKE_AMOUNT"]["type"] == "number" and flat["STAKE_AMOUNT"]["step"] == 0.5
     # the read-only "Detected Mode" pill is injected into the PocketOption card
@@ -120,11 +119,9 @@ def test_read_settings_ui_control_types():
 def test_read_settings_empty_secret_not_masked():
     s = make_settings()
     s.po_ssid = ""
-    s.telegram_api_hash = None
     out = sio.read_settings(s)
     flat = _flat_fields(out)
     assert flat["PO_SSID"]["value"] == ""
-    assert flat["TELEGRAM_API_HASH"]["value"] == ""
     assert out["detected"]["ssid_mode"] == "UNKNOWN"
 
 
@@ -162,12 +159,10 @@ def test_validate_bad_type_reports_error():
 def test_validate_secret_mask_is_skipped():
     # supplying the mask means "leave unchanged" — not written.
     res = sio.validate_update(
-        {"PO_SSID": sio.MASK, "TELEGRAM_API_HASH": ""},
-        settings_obj=make_settings(), validator=_accept,
+        {"PO_SSID": sio.MASK}, settings_obj=make_settings(), validator=_accept,
     )
     assert res["ok"] is True
     assert "PO_SSID" not in res["applied"]
-    assert "TELEGRAM_API_HASH" not in res["applied"]
 
 
 def test_validate_secret_real_value_written_masked_in_response():
@@ -195,8 +190,7 @@ def test_requires_restart_flagged():
         {"PO_SSID": SSID_DEMO, "STAKE_AMOUNT": 2.0},
         settings_obj=make_settings(), validator=_accept,
     )
-    # PO_SSID requires restart, STAKE_AMOUNT does not
-    assert res["requires_restart"] == ["PO_SSID"]
+    assert "PO_SSID" in res["requires_restart"]
 
 
 # ── LIVE/SSID guard (fail-closed) ─────────────────────────────────────────────

@@ -1,5 +1,11 @@
 # PocketOptionBot v2
 
+> **⚠️ TELEGRAM INTEGRATION REMOVED (2026-06-12).** The Telethon/`po_broker_bot`
+> integration described below has been deleted from the codebase (`telegram_feed/`,
+> v1 `main.py`, navigator-driven loop, all `TELEGRAM_*` settings). Setup now only
+> requires `PO_SSID`. The payout-first signals loop is the only trade driver.
+> Telegram-related sections in this document are historical.
+
 **Telegram-driven binary options bot.** Reads trade signals from `po_broker_bot` via Telegram, confirms with internal technical analysis, then places independent CALL/PUT trades via the PocketOption WebSocket API.
 
 > ⚠️ **Risk Disclaimer:** Binary options carry extreme risk of capital loss. Both the unofficial PocketOption API and the Telethon user session violate the respective platforms' Terms of Service. This project is for **educational and research purposes only.** Always use DEMO mode. Never risk money you cannot afford to lose.

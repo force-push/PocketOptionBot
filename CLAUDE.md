@@ -4,24 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**PocketOptionBot v2** — Telegram-driven binary options trading bot.
+**PocketOptionBot v2** — signals-driven binary options research bot.
 
-It reads trade signals from the Telegram bot **`po_broker_bot`** by _driving its
-inline button menus_ with a Telethon user session (MTProto). For each signal it:
-1. Extracts the top pair + win rate (prediction screen)
-2. Navigates to the direction screen to get CALL/PUT
-3. Fetches live candles via the PocketOption WS API and runs 5 internal TA signals
-4. Decides: agree with the bot AND our TA → place trade via the API; otherwise SKIP
-5. Awaits the `check_win` outcome and logs everything to `data/decisions.jsonl`
+> **Telegram integration removed 2026-06-12.** All Telethon/`po_broker_bot`
+> navigation code (`telegram_feed/`, v1 `main.py` pipeline, navigator-driven
+> loop) was deleted; the payout-first signals loop is the only driver. Setup
+> no longer needs Telegram credentials. See PROJECT_STATUS.md for the log.
 
-> ⚠️ Both the unofficial PocketOption API and the Telethon **user** session
-> violate the respective platforms' ToS and can break or get accounts flagged.
-> This is for educational/research use. Keep DEMO the default.
+Each cycle it:
+1. Fetches all active pairs ≥ `MIN_PAYOUT_PCT` from the PocketOption WS API
+2. Fetches live candles per pair and runs the 11-signal confluence engine
+3. Decides via `decide_signals` + risk gates → places CALL/PUT via the API
+4. Resolves outcomes in background tasks and logs to `data/decisions.jsonl`
+5. Places research shadow trades (expiry ladder, fade, adx_regime — see
+   SHADOW_TRADE_ANALYSIS.md / TRADING_EDGE_MAP.md)
 
-> **Migration status:** v2 is the live path. The legacy CDP modules
-> (`broker/connector.py`, `broker/scraper.py`, `broker/executor.py`,
-> `data/feed.py`, `verify_selectors.py`) are kept but **unwired** — not in the
-> live path, candidates for removal.
+> ⚠️ The unofficial PocketOption API violates the platform's ToS and can break
+> or get accounts flagged. This is for educational/research use. Keep DEMO the
+> default.
 
 ## Commands
 
@@ -29,21 +29,15 @@ inline button menus_ with a Telethon user session (MTProto). For each signal it:
 # Install
 pip3 install -r requirements.txt
 
-# Run the v2 bot (requires .env with PO_SSID + TELEGRAM_* configured)
+# Run the v2 bot (requires .env with PO_SSID configured)
 python3 main_v2.py               # run indefinitely
 python3 main_v2.py --cycles 5   # run exactly 5 cycles then exit
+nohup tools/run_supervised.sh > /dev/null 2>&1 &   # preferred: watchdog supervisor (auto-restart + hang kill)
 
 # Dashboard (separate process; reads decisions.jsonl + live_state.json)
 python3 -m dashboard.server      # http://127.0.0.1:8787 (requires fastapi, uvicorn)
 
-# Smoke test — one dry-run cycle against real bot (DRY_RUN forced true)
-python3 tools/v2_smoke.py
-python3 tools/v2_smoke.py --pair GBPUSD_otc   # skip navigation, test TA only
-
-# Gate pipeline against synthetic signals — NO network/SSID/Telegram needed
-python3 demo_signal_test.py
-
-# Tests (all offline — no network, no SSID, no Telegram creds)
+# Tests (all offline — no network, no SSID)
 pytest                    # all 100 tests
 pytest tests/ -v          # verbose
 pytest tests/test_signals.py  # one module
@@ -51,7 +45,7 @@ pytest tests/test_signals.py  # one module
 
 There is no lint/format/typecheck config committed. Async tests use explicit
 `@pytest.mark.asyncio` markers. Everything must be testable offline — mock the
-Telethon client and the PocketOption API; never hit the network in tests.
+PocketOption API; never hit the network in tests.
 
 ## Configuration
 
@@ -63,17 +57,13 @@ and document it in `.env.example`.
 
 Key settings groups:
 
-- **Telegram (Telethon user session):** `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`,
-  `TELEGRAM_SESSION`, `SIGNAL_BOT_USERNAME` (default `po_broker_bot`).
 - **PocketOption WS API:** `PO_SSID` (the full `42["auth",{...}]` string copied
   from the **trading terminal's** WebSocket — DevTools → Network → Socket →
   Messages, the outgoing `auth` frame). It must contain `session` and `uid`
   fields; `isDemo` (0/1) inside the payload selects demo vs live. The homepage
   socket emits a different `sessionToken` frame — that one is **not** accepted by
   `binaryoptionstoolsv2`.
-- **v2 gate settings:** `PAIR_SELECT_MIN_WIN_RATE` (default `0.0` = disabled
-  during testing; set to `0.82` for real runs), `DEFAULT_EXPIRY_SECONDS` (30),
-  `CLICK_TRADE_ANYWAY` (true — auto-dismiss nag screens), `STAKE_AMOUNT` (default
+- **v2 gate settings:** `DEFAULT_EXPIRY_SECONDS` (30), `STAKE_AMOUNT` (default
   `3.00`, live-editable in dashboard without restart),
   `MIN_PAYOUT_PCT` (default `92` — skip trade if PocketOption's live payout for
   the pair is below this %; set to `0` to disable), `MIN_EXPECTED_VALUE` (default
@@ -89,75 +79,34 @@ Key settings groups:
   without calling the API; set to `false` for real execution), plus the RiskManager
   limits (`MAX_TRADES_PER_HOUR`, `MAX_DAILY_LOSS_USD`, etc.).
 
-Secrets (`PO_SSID`, Telegram credentials) and the Telethon `*.session` file live
-in `.env` / the working dir and are gitignored. Never commit them.
+Secrets (`PO_SSID`) live in `.env` and are gitignored. Never commit them.
 
 ## Architecture (v2 live path)
 
 ```
-po_broker_bot (Telegram)
+main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
         │
-        ▼  telegram_feed/navigator.py (drives buttons)
-  Start Autotrade → prediction screen → pair selection → direction screen
+        ▼  broker/po_api.py get_active_pairs()
+  all active pairs ≥ MIN_PAYOUT_PCT, sorted by payout desc
+        │  (BLOCKED_PAIRS excluded; MAX_PAIRS_PER_CYCLE cap)
         │
-        ▼  telegram_feed/prediction_parser.py + pair_norm.py
-  PredictionScreen → top PairPrediction (pair, win_rate, is_top)
-        │  gate: win_rate ≥ PAIR_SELECT_MIN_WIN_RATE
+        ▼  per pair: get_candles() → data/candles.py → signals/confluence.py
+  11-signal TA engine (RSI, MACD, EMA, Supertrend, Stochastic, PSAR,
+  HeikinAshi, RoC, StochRSI, ADX_DMI, ATR)
+        │  gates: ≥MIN_SIGNAL_AGREEMENT same direction + adaptive score floor
+        │         + signal-majority check (minority score-winners blocked)
         │
-        ▼  telegram_feed/direction_parser.py
-  DirectionScreen → direction (CALL/PUT), setup, indicators_raw
+        ▼  strategy/decision.py decide_signals()
         │
-        ▼  broker/po_api.py → data/candles.py → signals/confluence.py
-  5-signal TA engine (RSI, MACD, Bollinger, EMA Cross, Candle Patterns)
-        │  ≥MIN_SIGNAL_AGREEMENT signals same direction + score ≥ MIN_CONFLUENCE_SCORE
-        │
-        ▼  strategy/decision.py
-  Decision(trade, combined_probability, skip_reason)
-        │
-        ▼  strategy/trade_logger.py
-  Write DecisionRow → data/decisions.jsonl
-        │
-        ├─ SKIP → back_to_menu (background task)
-        └─ TRADE → broker/po_api.py get_payout(pair)
-                 │  gate: payout ≥ MIN_PAYOUT_PCT (default 92%)
-                 │
-                 ▼  EV gate (strategy/win_rate.py rate())
-                 │  EV = win_rate*(payout/100+1) - 1 ≥ MIN_EXPECTED_VALUE
-                 │  (only when n_tracked ≥ MIN_EV_SAMPLES; else pass-through)
-                 │
-                 ▼  strategy/risk.py → broker/po_api.py buy/sell()
-                 ↓ (immediately, non-blocking)
-                 asyncio.create_task(back_to_menu)
-                 ↓ (main loop continues immediately for next pair analysis)
-                 ┌──────────────────────────────────────┐
-                 │ Background async tasks run parallel: │
-                 │ 1. Menu navigation                   │
-                 │ 2. Trade outcome resolution:         │
-                 │    - Wait for expiry time            │
-                 │    - check_win(trade_id)             │
-                 │    - backfill_outcome()              │
-                 │    - record() win/loss for tracking  │
-                 └──────────────────────────────────────┘
+        ├─ SKIP → research shadows may fire (majority_blocked / fade / adx_regime)
+        └─ TRADE → EV gate → strategy/risk.py → broker/po_api.py buy/sell()
+                 ↓ (non-blocking)
+                 background: trade resolution (poll_trade_outcome with timeouts)
+                             → backfill_outcome() → tracker/risk record
+                 + shadow expiry ladder replication (SHADOW_EXPIRY_SECONDS)
 ```
 
 ### Components
-
-- **`telegram_feed/navigator.py`** — `Navigator` drives `po_broker_bot` button
-  menus via Telethon. **SAFETY:** must NEVER click an amount/stake button — that
-  places a martingale bot trade, not our API trade. Only clicks: pair names,
-  "Start Autotrade", "Main Menu", "Trade Anyway" nag buttons.
-
-- **`telegram_feed/prediction_parser.py`** — `parse_prediction(text) ->
-  PredictionScreen | None`. Parses the pair/win-rate prediction screen. Returns
-  `None` if the text doesn't look like a prediction screen.
-
-- **`telegram_feed/direction_parser.py`** — `parse_direction_screen(text) ->
-  DirectionScreen | None`. Parses the CALL/PUT direction screen (BUY→CALL,
-  SELL→PUT).
-
-- **`telegram_feed/pair_norm.py`** — `normalize_pair(label) -> str | None`.
-  Normalises pair labels like `GBP/USD OTC` → `GBPUSD_otc`. Uses a legacy
-  table first, then a generic fallback.
 
 - **`broker/po_api.py`** — `PocketOptionAPIClient` wraps
   `binaryoptionstoolsv2.PocketOptionAsync(ssid)`. Exposes `buy/sell(pair, amount,
@@ -251,13 +200,13 @@ live trade data from `data/decisions.jsonl` and `data/live_state.json`. Key feat
 - **Performance chart:** Equity curve and win/loss distribution over 1H/1D/1W/ALL.
 - **Trade History table:** Clickable rows open detail modals showing:
   - Full signal breakdown (each of 5 signals + confluence gate result)
-  - Bot direction + win rate from po_broker_bot
+  - Tracked win rate (the strategy's own outcome history)
   - Our TA direction + confidence scores
   - Outcome, P&L, balance after, PO trade ID
 - **Settings tab:** Live-editable configuration (Pydantic BotSettings singleton),
   persists to `.env` via python-dotenv. Key settings:
   - **Signal gates:** MIN_SIGNAL_AGREEMENT (2–5), MIN_CONFLUENCE_SCORE (0.0–1.0)
-  - **Trading:** STAKE_AMOUNT ($0.50–$50.00), DEFAULT_EXPIRY_SECONDS, PAIR_SELECT_MIN_WIN_RATE
+  - **Trading:** STAKE_AMOUNT ($0.50–$50.00), DEFAULT_EXPIRY_SECONDS
   - **TA parameters:** All signal thresholds (RSI, MACD, Bollinger, EMA, etc.)
   - **Risk limits:** MAX_TRADES_PER_HOUR, MAX_DAILY_LOSS_USD, COOLDOWN_AFTER_LOSS_SECONDS
   - Changes take effect on next trade (no restart needed for most settings).
@@ -274,7 +223,7 @@ live trade data from `data/decisions.jsonl` and `data/live_state.json`. Key feat
 - Direction is always the string `"CALL"`, `"PUT"`, or `None` — never
   booleans/enums.
 - Imports are absolute from the project root. Run all commands from the repo root.
-- Tests must run fully offline — mock Telethon and the PocketOption API.
+- Tests must run fully offline — mock the PocketOption API.
 
 ## Safety notes (do not weaken without explicit user request)
 
@@ -283,7 +232,5 @@ live trade data from `data/decisions.jsonl` and `data/live_state.json`. Key feat
    with SSID-string fallback. If mismatched, the trade is **aborted**.
 3. **DRY_RUN** — when `True`, `buy/sell` logs the trade and returns without calling
    the API.
-4. **Navigator safety** — never click amount/stake buttons (martingale trap).
-5. **Single session writer** — only one Telethon session writer at a time.
-6. **PAIR_SELECT_MIN_WIN_RATE=0.0** during testing (gate disabled); restore to
-   `0.82` for real runs.
+4. **Single PO WS session** — run the bot via `tools/run_supervised.sh`; don't
+   start a second instance against the same SSID.

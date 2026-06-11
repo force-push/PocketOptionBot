@@ -1,23 +1,22 @@
-"""PocketOptionBot v2 — Telegram-driven, API-executed entrypoint.
+"""PocketOptionBot v2 — signals-driven, API-executed entrypoint.
 
 Usage
 -----
     python3 main_v2.py               # run indefinitely (Ctrl-C to stop)
-    python3 main_v2.py --cycles 1    # one cycle then exit (dry-run / smoke test)
+    python3 main_v2.py --cycles 1    # one cycle then exit (smoke test)
 
-The bot:
-1. Connects to po_broker_bot via an existing Telethon user session (MTProto).
-2. Navigates the bot menus to read the top pair + direction.
-3. Confirms with internal TA signals (ConfluenceEngine, 5 decision + 2 observation indicators).
-4. Places a CALL/PUT trade via the PocketOption WebSocket API if all gates pass.
-5. Awaits the outcome and logs everything to data/decisions.jsonl.
+The bot (payout-first signals loop — Telegram integration removed 2026-06-11):
+1. Connects to the PocketOption WebSocket API (PO_SSID).
+2. Each cycle: fetch all active pairs ≥ MIN_PAYOUT_PCT, sorted by payout.
+3. For each pair: fetch candles → run the 11-signal confluence engine →
+   decide → risk gates → place a CALL/PUT trade via the API.
+4. Resolves outcomes in background tasks and logs everything to
+   data/decisions.jsonl (plus research shadow trades — see
+   SHADOW_TRADE_ANALYSIS.md).
 
 Safety:
 - TRADE_MODE=DEMO is the default; LIVE requires an explicit env var override.
-- The Navigator MUST NEVER click an amount/stake button (that places a
-  martingale bot trade, not our API trade).
-- Only one Telethon session writer may run at a time. Ensure the legacy
-  pocket_robot_trader.py is stopped before running this.
+- DRY_RUN=true logs trades without calling the API.
 """
 from __future__ import annotations
 
@@ -28,20 +27,13 @@ import sys
 from config.settings import settings, TradeMode
 from utils.logger import log, setup_logger
 
-try:
-    from telethon.errors import FloodWaitError
-except ImportError:
-    FloodWaitError = Exception  # type: ignore[misc,assignment]
-
 # ── setup_logger must be called once before any use of `log` ─────────────────
 import pathlib
 setup_logger(pathlib.Path(__file__).parent)
 
 
 def _build_components():
-    """Instantiate and wire all components. Returns (client, manager)."""
-    from telethon import TelegramClient
-
+    """Instantiate and wire all components. Returns (api_client, manager)."""
     from broker.po_api import PocketOptionAPIClient
     from signals.adx_dmi import ADXDMISignal
     from signals.atr import ATRSignal
@@ -58,23 +50,6 @@ def _build_components():
     from strategy.risk import RiskManager
     from strategy.win_rate import WinRateTracker
     from strategy.manager_v2 import StrategyManagerV2
-    from telegram_feed.navigator import Navigator
-
-    # ── Telethon client ───────────────────────────────────────────────────────
-    # Prefer StringSession (no file lock, safe alongside other bots using the
-    # same .session file). Fall back to the file session path if not set.
-    if settings.telegram_session_string:
-        from telethon.sessions import StringSession
-        _session = StringSession(settings.telegram_session_string)
-        log.info("Using Telegram StringSession (no file lock)")
-    else:
-        _session = settings.telegram_session
-        log.info("Using Telegram file session: {}", settings.telegram_session)
-    tg_client = TelegramClient(
-        _session,
-        settings.telegram_api_id,
-        settings.telegram_api_hash,
-    )
 
     # ── PocketOption API client ───────────────────────────────────────────────
     # demo mode is encoded in the SSID and enforced inside the client via the
@@ -156,16 +131,8 @@ def _build_components():
         log.info("Dashboard bridge enabled → {} / {}",
                  settings.live_state_path, settings.events_log_path)
 
-    # ── Navigator (Telegram button driver) ───────────────────────────────────
-    navigator = Navigator(
-        client=tg_client,
-        bot_username=settings.signal_bot_username,
-        click_trade_anyway=settings.click_trade_anyway,
-    )
-
     # ── Orchestrator ─────────────────────────────────────────────────────────
     manager = StrategyManagerV2(
-        navigator=navigator,
         api_client=api_client,
         confluence_engine=confluence,
         risk_manager=risk,
@@ -173,7 +140,7 @@ def _build_components():
         bridge=bridge,
     )
 
-    return tg_client, api_client, manager
+    return api_client, manager
 
 
 async def main(cycles: int = 0) -> None:
@@ -186,22 +153,20 @@ async def main(cycles: int = 0) -> None:
     """
     log.info("PocketOptionBot v2 starting — mode={} dry_run={} cycles={}",
              settings.trade_mode, settings.dry_run, cycles or "∞")
-    log.info("Loop driver: {}  (payout_floor={}%  max_pairs_per_cycle={})",
-             settings.prediction_source.value, settings.min_payout_pct,
-             settings.max_pairs_per_cycle or "all")
+    log.info("Loop driver: signals  (payout_floor={}%  max_pairs_per_cycle={})",
+             settings.min_payout_pct, settings.max_pairs_per_cycle or "all")
     log.info("Signal gates: min_agreement={}/5  min_confluence_score={}",
              settings.min_signal_agreement, settings.min_confluence_score)
     log.info("TA config: candle_interval={}s  history_length={}  expiry={}s",
              settings.candle_interval_seconds, settings.history_length,
              settings.default_expiry_seconds)
-    log.info("Trade config: stake=${:.2f}  pair_min_wr={:.0f}%  min_payout={}%  max_trades_hr={}",
-             settings.stake_amount, settings.pair_select_min_win_rate * 100,
-             settings.min_payout_pct, settings.max_trades_per_hour)
+    log.info("Trade config: stake=${:.2f}  min_payout={}%  max_trades_hr={}",
+             settings.stake_amount, settings.min_payout_pct, settings.max_trades_per_hour)
 
     if settings.trade_mode == TradeMode.LIVE and not settings.dry_run:
         log.warning("⚠  LIVE mode active — real money at stake!")
 
-    tg_client, api_client, manager = _build_components()
+    api_client, manager = _build_components()
 
     if settings.po_ssid:
         log.info("Connecting PocketOption API…")
@@ -226,44 +191,38 @@ async def main(cycles: int = 0) -> None:
     else:
         log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
 
-    async with tg_client:
-        count = 0
-        consecutive_timeouts = 0
-        while True:
-            try:
-                # Hard cycle timeout: the WS layer can hang an await forever on a
-                # dropped connection (hangs observed 2026-06-11 at 09:15 + 15:45
-                # UTC+9:30 with the process alive but the loop dead). A scan of
-                # ~30 pairs takes 60-90s; 300s means genuinely stuck.
-                await asyncio.wait_for(manager.run_once(), timeout=300.0)
-                consecutive_timeouts = 0
-            except asyncio.TimeoutError:
-                consecutive_timeouts += 1
-                log.error("run_once exceeded 300s — cycle aborted (WS hang?) [{}/2]",
-                          consecutive_timeouts)
-                if consecutive_timeouts >= 2:
-                    # WS is persistently dead — exit so the supervisor restarts us
-                    # with a fresh connection. In-process reconnect is not reliable
-                    # with the Rust client's lazy internals.
-                    log.critical("2 consecutive cycle timeouts — exiting for supervisor restart")
-                    sys.exit(1)
-            except KeyboardInterrupt:
-                raise
-            except FloodWaitError as e:
-                wait = getattr(e, "seconds", 60) or 60
-                log.warning("Telegram FloodWait — sleeping {}s before next cycle", wait)
-                await asyncio.sleep(wait)
-                continue
-            except Exception as exc:
-                log.opt(exception=True).error("run_once error (will retry): {}", exc)
+    count = 0
+    consecutive_timeouts = 0
+    while True:
+        try:
+            # Hard cycle timeout: the WS layer can hang an await forever on a
+            # dropped connection (hangs observed 2026-06-11 at 09:15 + 15:45
+            # UTC+9:30 with the process alive but the loop dead). A scan of
+            # ~30 pairs takes 60-90s; 300s means genuinely stuck.
+            await asyncio.wait_for(manager.run_once(), timeout=300.0)
+            consecutive_timeouts = 0
+        except asyncio.TimeoutError:
+            consecutive_timeouts += 1
+            log.error("run_once exceeded 300s — cycle aborted (WS hang?) [{}/2]",
+                      consecutive_timeouts)
+            if consecutive_timeouts >= 2:
+                # WS is persistently dead — exit so the supervisor restarts us
+                # with a fresh connection. In-process reconnect is not reliable
+                # with the Rust client's lazy internals.
+                log.critical("2 consecutive cycle timeouts — exiting for supervisor restart")
+                sys.exit(1)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            log.opt(exception=True).error("run_once error (will retry): {}", exc)
 
-            count += 1
-            if cycles and count >= cycles:
-                log.info("Completed {} cycle(s) — exiting.", count)
-                break
+        count += 1
+        if cycles and count >= cycles:
+            log.info("Completed {} cycle(s) — exiting.", count)
+            break
 
-            # Brief pause between cycles to avoid hammering the bot
-            await asyncio.sleep(2)
+        # Brief pause between cycles to avoid hammering the bot
+        await asyncio.sleep(2)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,6 @@ loguru>=0.7.0
 rich>=13.0.0
 
 # Telegram (MTProto user session — reads bot DMs)
-telethon>=1.34.0
 
 # PocketOption WebSocket API (Rust-backed wheel, supports Python 3.8–3.13)
 binaryoptionstoolsv2>=0.2.8
