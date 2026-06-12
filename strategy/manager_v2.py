@@ -205,21 +205,26 @@ class StrategyManagerV2:
         candle_period = settings.candle_interval_seconds
         trades_placed = 0
 
-        # ── Phase 1: parallel candle fetch ───────────────────────────────────
-        # Fetch all pairs concurrently so the per-pair history() timeout (8 s)
-        # applies once in parallel rather than N×8 s sequentially.  With 22
-        # pairs this cuts worst-case candle-fetch latency from ~308 s to ~14 s.
+        # ── Phase 1: concurrent candle fetch (capped concurrency) ────────────
+        # Fetch pairs concurrently but limit WS request concurrency to 3 so
+        # the server isn't flooded with simultaneous history() calls (which can
+        # leave requests unanswered, causing every wait_for to hang at timeout).
+        # With ≤22 pairs and 3 concurrent: ceil(22/3)×14 s = ~84 s worst case
+        # vs sequential 22×14 s = 308 s or fully-parallel hang.
+        _fetch_sem = asyncio.Semaphore(3)
+
         async def _fetch_candles(sym: str) -> list:
-            await self._sentiment.subscribe_pair(self._api, sym, period=candle_period)
-            if settings.use_real_ohlc:
-                return await self._api.get_real_candles(sym, period=candle_period)
-            return await self._api.get_candles(sym, period=candle_period, count=settings.history_length)
+            async with _fetch_sem:
+                await self._sentiment.subscribe_pair(self._api, sym, period=candle_period)
+                if settings.use_real_ohlc:
+                    return await self._api.get_real_candles(sym, period=candle_period)
+                return await self._api.get_candles(sym, period=candle_period, count=settings.history_length)
 
         candle_batches = await asyncio.gather(
             *[_fetch_candles(p["symbol"]) for p in candidates],
             return_exceptions=True,
         )
-        log.debug("[{}] parallel candle fetch complete ({} pairs)", cid, len(candidates))
+        log.debug("[{}] candle fetch complete ({} pairs, concurrency=3)", cid, len(candidates))
 
         # ── Phase 2: sequential decision processing ──────────────────────────
         for pair_info, candle_list in zip(candidates, candle_batches):
