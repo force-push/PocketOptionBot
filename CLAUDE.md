@@ -13,10 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Each cycle it:
 1. Fetches all active pairs ≥ `MIN_PAYOUT_PCT` from the PocketOption WS API
-2. Fetches live candles per pair and runs the 11-signal confluence engine
-3. Decides via `decide_signals` + risk gates → places CALL/PUT via the API
-4. Resolves outcomes in background tasks and logs to `data/decisions.jsonl`
-5. Places research shadow trades (expiry ladder, fade, adx_regime — see
+2. Subscribes each pair to receive live crowd-sentiment (0–100), then fetches candles
+3. Runs the 11-signal confluence engine and decides via `decide_signals` + risk gates
+4. Places CALL/PUT via the API; stamps each `DecisionRow` with the pair's sentiment
+5. Resolves outcomes in background tasks and logs to `data/decisions.jsonl`
+6. Places research shadow trades (expiry ladder, fade, adx_regime — see
    SHADOW_TRADE_ANALYSIS.md / TRADING_EDGE_MAP.md)
 
 > ⚠️ The unofficial PocketOption API violates the platform's ToS and can break

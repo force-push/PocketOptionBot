@@ -76,3 +76,11 @@ diagnostics (the variance-ratio/autocorrelation tests at their natural scale).
 None of this changes the 52.1% break-even math. Sentiment is worth testing
 precisely because it's orthogonal to price — but it gets the same treatment:
 shadow-grade evidence, pooled across days, promotion gate before real stakes.
+
+## Implementation Status
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 1 | Sentiment collection integrated into scan cycle; every DecisionRow stamped | ✅ Done 2026-06-12 |
+| 2 | Switch signals to real OHLC via `history()` | 🔄 In Progress |
+| 3 | One-off deep-history pull for feed diagnostics | ⏳ Pending |

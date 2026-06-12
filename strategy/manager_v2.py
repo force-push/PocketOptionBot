@@ -13,6 +13,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from broker.sentiment_collector import SentimentCollector
 from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide_signals
@@ -45,6 +46,9 @@ class StrategyManagerV2:
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
+        # Sentiment collector — live crowd-positioning (0-100) per pair.
+        # Attached to the WS connection after connect(); stamps every DecisionRow.
+        self._sentiment = SentimentCollector()
         # Skip hour rate-limiting: only log every 10 minutes during skip hours
         self._last_skip_log_time: datetime | None = None
         self._skip_log_interval_seconds = 600  # 10 minutes
@@ -95,6 +99,12 @@ class StrategyManagerV2:
 
     async def run_once(self) -> None:
         """Run one signals-loop cycle (the only driver since Telegram removal)."""
+        # Attach sentiment collector on first run (API must be connected by now)
+        if self._sentiment._handler is None:
+            try:
+                await self._sentiment.attach(self._api)
+            except Exception as exc:
+                log.warning("SentimentCollector attach failed (continuing without sentiment): {}", exc)
         await self._run_once_signals()
 
     async def _run_once_signals(self) -> None:
@@ -205,6 +215,9 @@ class StrategyManagerV2:
                          cid, self._open_trade_count, self._max_concurrent_trades)
                 break
 
+            # Subscribe so the server pushes sentiment for this pair before candles arrive
+            await self._sentiment.subscribe_pair(self._api, pair_api, period=candle_period)
+
             candle_list = await self._api.get_candles(
                 pair_api, period=candle_period, count=settings.history_length
             )
@@ -269,6 +282,7 @@ class StrategyManagerV2:
                 decision="TRADE" if d.trade else "SKIP", skip_reason=d.skip_reason,
                 stake=settings.stake_amount, balance_before=balance_before,
                 payout_pct=payout_pct,
+                sentiment=self._sentiment.get(pair_api),
             )
             if d.trade:
                 row.calibrated_probability = self._calibrator.predict({

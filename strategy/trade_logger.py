@@ -32,6 +32,7 @@ class DecisionRow:
     shadow: bool = False                # True if traded only to collect data (would_skip_reason set)
     would_skip_reason: str | None = None  # gate that WOULD have skipped this in normal mode
     shadow_kind: str | None = None        # "expiry" = shadow expiry experiment; None = gate-override shadow
+    sentiment: int | None = None          # 0-100 crowd buy% at decision time (None = not yet collected)
     payout_pct: int | None = None
     trade_id: str | None = None
     status: str = "PENDING"

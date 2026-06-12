@@ -501,3 +501,22 @@ class PocketOptionAPIClient:
         except Exception as exc:
             log.error("get_candles({}) failed: {}", pair, exc)
             return []
+
+    # ── raw WS access (for sentiment collector and diagnostics) ──────────────
+
+    def create_raw_handler(self) -> Any:
+        """Return a raw WS message handler from the underlying client.
+
+        The handler exposes ``wait_next()`` (awaitable, returns one raw message)
+        suitable for driving an async listener loop.
+        """
+        if self._client is None:
+            raise RuntimeError("API client not connected.")
+        from BinaryOptionsToolsV2.validator import Validator  # type: ignore[import]
+        return self._client.create_raw_handler(Validator.custom(lambda _: True))
+
+    async def send_raw_message(self, msg: str) -> None:
+        """Send a raw WebSocket message string through the underlying client."""
+        if self._client is None:
+            raise RuntimeError("API client not connected.")
+        await self._client.send_raw_message(msg)
