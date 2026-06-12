@@ -213,6 +213,9 @@ async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "trade_stagger_seconds", 0)
 
     await mgr.run_once()
+    # Shadow expiry placements run as background tasks — drain the event loop
+    # so all create_task() coroutines complete before we read the log file.
+    await asyncio.gather(*[t for t in asyncio.all_tasks() if t is not asyncio.current_task()])
 
     rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
     real = [r for r in rows if r["decision"] == "TRADE" and not r.get("shadow")]

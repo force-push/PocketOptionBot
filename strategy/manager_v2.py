@@ -452,11 +452,13 @@ class StrategyManagerV2:
                 asyncio.create_task(self._resolve_trade_background(row.trade_id))
 
                 # Shadow expiry experiment: replicate this entry at other durations
-                # (demo only, research). Does not consume the real concurrency budget.
-                await self._place_shadow_expiry_trades(
+                # (demo only, research). Fired as a background task so the 4 shadow
+                # placements (60/120/216/300s) don't block the scan — each API call
+                # carries its own 20s buy() timeout so they still resolve cleanly.
+                asyncio.create_task(self._place_shadow_expiry_trades(
                     pair_api=pair_api, direction=conf.direction, base_row=row,
                     log_path=log_path,
-                )
+                ))
 
         log.info("[{}] signals cycle complete — {} trade(s) placed of {} evaluated",
                  cid, trades_placed, len(candidates))
