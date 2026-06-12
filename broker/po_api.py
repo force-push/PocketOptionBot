@@ -291,9 +291,8 @@ class PocketOptionAPIClient:
         try:
             import asyncio as _asyncio
             api_method = self._client.buy if direction == "CALL" else self._client.sell
-            trade_id, _deal = await _asyncio.wait_for(
-                api_method(pair, amount, expiry), timeout=20.0
-            )
+            task = _asyncio.ensure_future(api_method(pair, amount, expiry))
+            trade_id, _deal = await _asyncio.wait_for(_asyncio.shield(task), timeout=20.0)
             result = TradeResult(
                 id=f"trade_{ctr}",
                 direction=direction,
@@ -416,12 +415,14 @@ class PocketOptionAPIClient:
         if self._client is None:
             return None
         import asyncio as _asyncio
+        task = _asyncio.ensure_future(self._client.balance())
         try:
-            return float(await _asyncio.wait_for(self._client.balance(), timeout=8.0))
+            return float(await _asyncio.wait_for(_asyncio.shield(task), timeout=8.0))
         except _asyncio.TimeoutError:
             log.warning("balance() timed out after 8s")
             return None
         except Exception as exc:
+            task.cancel()
             log.error("balance() failed: {}", exc)
             return None
 
@@ -434,8 +435,9 @@ class PocketOptionAPIClient:
         if self._client is None:
             return []
         import asyncio as _asyncio
+        task = _asyncio.ensure_future(self._client.active_assets())
         try:
-            assets = await _asyncio.wait_for(self._client.active_assets(), timeout=15.0)
+            assets = await _asyncio.wait_for(_asyncio.shield(task), timeout=15.0)
             active = [a for a in assets if a.get("is_active")]
             active.sort(key=lambda a: a.get("payout") or 0, reverse=True)
             return active
@@ -443,6 +445,7 @@ class PocketOptionAPIClient:
             log.warning("get_active_pairs() timed out after 15s — returning []")
             return []
         except Exception as exc:
+            task.cancel()
             log.error("get_active_pairs() failed: {}", exc)
             return []
 
@@ -504,11 +507,17 @@ class PocketOptionAPIClient:
             raise RuntimeError("API client not connected.")
         # The library's get_candles(asset, period, offset) takes 'offset' as
         # the historical window in seconds, not a candle count.
+        import asyncio as _asyncio
         offset_seconds = count * period
+        task = _asyncio.ensure_future(self._client.get_candles(pair, period, offset_seconds))
         try:
-            candles = await self._client.get_candles(pair, period, offset_seconds)
+            candles = await _asyncio.wait_for(_asyncio.shield(task), timeout=12.0)
             return list(candles)
+        except _asyncio.TimeoutError:
+            log.warning("get_candles({}) timed out — skipping pair", pair)
+            return []
         except Exception as exc:
+            task.cancel()
             log.error("get_candles({}) failed: {}", pair, exc)
             return []
 
