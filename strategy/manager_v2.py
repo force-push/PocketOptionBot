@@ -205,29 +205,7 @@ class StrategyManagerV2:
         candle_period = settings.candle_interval_seconds
         trades_placed = 0
 
-        # ── Phase 1: concurrent candle fetch (capped concurrency) ────────────
-        # Fetch pairs concurrently but limit WS request concurrency to 3 so
-        # the server isn't flooded with simultaneous history() calls (which can
-        # leave requests unanswered, causing every wait_for to hang at timeout).
-        # With ≤22 pairs and 3 concurrent: ceil(22/3)×14 s = ~84 s worst case
-        # vs sequential 22×14 s = 308 s or fully-parallel hang.
-        _fetch_sem = asyncio.Semaphore(3)
-
-        async def _fetch_candles(sym: str) -> list:
-            async with _fetch_sem:
-                await self._sentiment.subscribe_pair(self._api, sym, period=candle_period)
-                if settings.use_real_ohlc:
-                    return await self._api.get_real_candles(sym, period=candle_period)
-                return await self._api.get_candles(sym, period=candle_period, count=settings.history_length)
-
-        candle_batches = await asyncio.gather(
-            *[_fetch_candles(p["symbol"]) for p in candidates],
-            return_exceptions=True,
-        )
-        log.debug("[{}] candle fetch complete ({} pairs, concurrency=3)", cid, len(candidates))
-
-        # ── Phase 2: sequential decision processing ──────────────────────────
-        for pair_info, candle_list in zip(candidates, candle_batches):
+        for pair_info in candidates:
             pair_api = pair_info["symbol"]
             payout_pct = pair_info.get("payout") or 0
 
@@ -237,10 +215,15 @@ class StrategyManagerV2:
                          cid, self._open_trade_count, self._max_concurrent_trades)
                 break
 
-            if isinstance(candle_list, Exception):
-                log.warning("[{}] {} candle fetch error — skipping: {}", cid, pair_api, candle_list)
-                continue
+            # Subscribe so the server pushes sentiment for this pair before candles arrive
+            await self._sentiment.subscribe_pair(self._api, pair_api, period=candle_period)
 
+            if settings.use_real_ohlc:
+                candle_list = await self._api.get_real_candles(pair_api, period=candle_period)
+            else:
+                candle_list = await self._api.get_candles(
+                    pair_api, period=candle_period, count=settings.history_length
+                )
             df = candles_to_df(candle_list)
             if df.empty or len(df) < 30:
                 log.debug("[{}] {} — insufficient candle data ({}) — skip", cid, pair_api, len(df))

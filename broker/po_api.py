@@ -537,21 +537,33 @@ class PocketOptionAPIClient:
         if self._client is None:
             raise RuntimeError("API client not connected.")
         import asyncio as _asyncio
+        # Wrap the Rust coroutine in a Task before shielding so we can discard
+        # it on timeout.  asyncio.shield() lets wait_for raise TimeoutError
+        # without cancelling the underlying Rust future — cancelling a
+        # Rust-backed future can block the event loop indefinitely.
+        task = _asyncio.ensure_future(self._client.history(pair, period))
         try:
             candles = await _asyncio.wait_for(
-                self._client.history(pair, period), timeout=self._HISTORY_TIMEOUT_S
+                _asyncio.shield(task), timeout=self._HISTORY_TIMEOUT_S
             )
             return list(candles)
+        except _asyncio.TimeoutError:
+            log.warning("get_real_candles({}) timeout — falling back to get_candles", pair)
         except Exception as exc:
-            kind = "timeout" if isinstance(exc, _asyncio.TimeoutError) else "error"
-            log.warning("get_real_candles({}) {} — falling back to get_candles: {}", pair, kind, exc)
+            task.cancel()
+            log.warning("get_real_candles({}) error — falling back: {}", pair, exc)
+        # Fallback — also shielded for the same reason.
+        fb_task = _asyncio.ensure_future(self.get_candles(pair, period))
         try:
             return await _asyncio.wait_for(
-                self.get_candles(pair, period), timeout=self._FALLBACK_TIMEOUT_S
+                _asyncio.shield(fb_task), timeout=self._FALLBACK_TIMEOUT_S
             )
+        except _asyncio.TimeoutError:
+            log.warning("get_real_candles({}) fallback timeout — skipping pair this cycle", pair)
         except Exception as exc:
-            log.warning("get_real_candles({}) fallback also failed — skipping pair this cycle: {}", pair, exc)
-            return []
+            fb_task.cancel()
+            log.warning("get_real_candles({}) fallback error — skipping pair this cycle: {}", pair, exc)
+        return []
 
     # ── raw WS access (for sentiment collector and diagnostics) ──────────────
 
