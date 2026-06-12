@@ -47,7 +47,7 @@ class SentimentCollector:
         Safe to call multiple times — stops the previous task first.
         """
         await self.stop()
-        self._handler = api_client.create_raw_handler()
+        self._handler = await api_client.create_raw_handler()
         self._running = True
         self._task = asyncio.create_task(self._listen_loop(), name="sentiment-listener")
         log.info("SentimentCollector attached — listener task started")

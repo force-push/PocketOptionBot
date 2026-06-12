@@ -1,5 +1,34 @@
 # Change Log
 
+## 2026-06-12 — PocketOption data-surface build-out (PO_DATA_SURFACE.md steps 1–3)
+Three new data feeds wired into the bot (discovery in PO_DATA_SURFACE.md):
+
+- **Step 1 — Trader sentiment (orthogonal crowd data).** `broker/sentiment_collector.py`
+  attaches a raw WS handler to the shared connection, parses the `[["SYM",int]]`
+  traders'-choice stream (0–100 buy%), caches per-pair with a 120s TTL, logs to
+  `data/sentiment.jsonl`, and stamps `DecisionRow.sentiment` on every row. First
+  price-orthogonal source in the project. **Fixed:** the library's
+  `create_raw_handler` is a coroutine — the wrapper now `await`s it (was returning
+  an un-awaited coroutine, so the listener crashed on every message and collected
+  nothing). **Known limitation:** in-loop capture is sparse — the scan switches
+  symbols faster than the server's ~5s sentiment-push cadence, so many rows still
+  stamp `None`. A persistent top-N subscription is the follow-up.
+- **Step 2 — Real OHLC.** `broker/po_api.py::get_real_candles()` uses `history()`
+  (true wicks) instead of the flat `get_candles()` snapshot (o==h==l==c). The scan
+  loop (`strategy/manager_v2.py`) now consumes it, so HeikinAshi/ATR/candle-anatomy
+  signals finally see non-degenerate candles. Both the `history()` call and the
+  flat fallback are timeout-bounded (8s / 6s) so a slow pair can't stack toward the
+  300s cycle-abort; a pair that stalls both is skipped for the cycle and retried.
+- **Step 3 — Deep-history fetcher.** `tools/deep_history_fetch.py` pages backwards
+  with `get_candles_advanced` to pull thousands of contiguous candles per pair,
+  reruns the feed diagnostics (ac1/VR2/zero-return + a flat-OHLC check) with real
+  statistical power, and writes `data/deep_history_stats.jsonl`.
+
+Net: the bot now sees price (real OHLC) **and** crowd sentiment — two data sources
+instead of one. None of this changes the 52.1% break-even math by itself; sentiment
+is the one orthogonal edge candidate and earns real stakes only after clearing the
+same promotion gate as the fade/ADX shadows.
+
 ## 2026-06-12 — Telegram integration removed
 - Deleted: `telegram_feed/` (navigator, parsers, client, pair_norm), v1 entry
   `main.py`, `strategy/manager.py`, `strategy/signal_gate.py`,

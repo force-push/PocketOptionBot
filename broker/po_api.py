@@ -289,8 +289,11 @@ class PocketOptionAPIClient:
             )
 
         try:
+            import asyncio as _asyncio
             api_method = self._client.buy if direction == "CALL" else self._client.sell
-            trade_id, _deal = await api_method(pair, amount, expiry)
+            trade_id, _deal = await _asyncio.wait_for(
+                api_method(pair, amount, expiry), timeout=20.0
+            )
             result = TradeResult(
                 id=f"trade_{ctr}",
                 direction=direction,
@@ -409,11 +412,15 @@ class PocketOptionAPIClient:
         return "unknown"
 
     async def balance(self) -> Optional[float]:
-        """Return the current account balance, or None on error."""
+        """Return the current account balance, or None on error/timeout."""
         if self._client is None:
             return None
+        import asyncio as _asyncio
         try:
-            return float(await self._client.balance())
+            return float(await _asyncio.wait_for(self._client.balance(), timeout=8.0))
+        except _asyncio.TimeoutError:
+            log.warning("balance() timed out after 8s")
+            return None
         except Exception as exc:
             log.error("balance() failed: {}", exc)
             return None
@@ -422,16 +429,19 @@ class PocketOptionAPIClient:
         """Return active tradeable assets, sorted descending by payout.
 
         Calls the library's ``active_assets()``, filters to ``is_active=True``,
-        and sorts by payout (highest first). Returns ``[]`` on error or if the
-        client is not connected.
+        and sorts by payout (highest first). Returns ``[]`` on error or timeout.
         """
         if self._client is None:
             return []
+        import asyncio as _asyncio
         try:
-            assets = await self._client.active_assets()
+            assets = await _asyncio.wait_for(self._client.active_assets(), timeout=15.0)
             active = [a for a in assets if a.get("is_active")]
             active.sort(key=lambda a: a.get("payout") or 0, reverse=True)
             return active
+        except _asyncio.TimeoutError:
+            log.warning("get_active_pairs() timed out after 15s — returning []")
+            return []
         except Exception as exc:
             log.error("get_active_pairs() failed: {}", exc)
             return []
@@ -502,18 +512,61 @@ class PocketOptionAPIClient:
             log.error("get_candles({}) failed: {}", pair, exc)
             return []
 
+    # Both candle paths are bounded well below the library's internal 30s
+    # timeout. Certain pairs/moments stall the WS; at 30s each they stack past
+    # the 300s cycle-abort threshold (the WS-hang failure mode the supervisor
+    # guards). history() and the flat fallback are each capped so a single
+    # slow pair costs at most ~14s, not 60s — real OHLC never costs cycle
+    # reliability. A pair that stalls both paths is simply skipped this cycle
+    # (empty df → the scan loop's len(df) < 30 guard) and retried next cycle.
+    _HISTORY_TIMEOUT_S = 8.0
+    _FALLBACK_TIMEOUT_S = 6.0
+
+    async def get_real_candles(self, pair: str, period: int = 5) -> list[dict]:
+        """Fetch genuine OHLC candles via history() — non-flat, true wicks.
+
+        Unlike get_candles() which returns snapshot data (open==high==low==close),
+        history() returns real OHLC with proper high/low wicks. All TA signals
+        (HeikinAshi, ATR, Bollinger, candle-anatomy) should use this.
+
+        Returns ~102 candles at the requested period. On timeout or error,
+        falls back to the (also-bounded) flat get_candles() snapshot; if both
+        stall, returns [] so the slow pair is skipped this cycle rather than
+        blowing the scan's 300s budget.
+        """
+        if self._client is None:
+            raise RuntimeError("API client not connected.")
+        import asyncio as _asyncio
+        try:
+            candles = await _asyncio.wait_for(
+                self._client.history(pair, period), timeout=self._HISTORY_TIMEOUT_S
+            )
+            return list(candles)
+        except Exception as exc:
+            kind = "timeout" if isinstance(exc, _asyncio.TimeoutError) else "error"
+            log.warning("get_real_candles({}) {} — falling back to get_candles: {}", pair, kind, exc)
+        try:
+            return await _asyncio.wait_for(
+                self.get_candles(pair, period), timeout=self._FALLBACK_TIMEOUT_S
+            )
+        except Exception as exc:
+            log.warning("get_real_candles({}) fallback also failed — skipping pair this cycle: {}", pair, exc)
+            return []
+
     # ── raw WS access (for sentiment collector and diagnostics) ──────────────
 
-    def create_raw_handler(self) -> Any:
+    async def create_raw_handler(self) -> Any:
         """Return a raw WS message handler from the underlying client.
 
-        The handler exposes ``wait_next()`` (awaitable, returns one raw message)
+        The library's ``create_raw_handler`` is a coroutine — it must be awaited
+        or the caller receives a coroutine object (whose ``wait_next()`` fails).
+        The returned handler exposes ``wait_next()`` (awaitable, one raw message)
         suitable for driving an async listener loop.
         """
         if self._client is None:
             raise RuntimeError("API client not connected.")
         from BinaryOptionsToolsV2.validator import Validator  # type: ignore[import]
-        return self._client.create_raw_handler(Validator.custom(lambda _: True))
+        return await self._client.create_raw_handler(Validator.custom(lambda _: True))
 
     async def send_raw_message(self, msg: str) -> None:
         """Send a raw WebSocket message string through the underlying client."""

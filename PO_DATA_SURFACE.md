@@ -82,5 +82,5 @@ shadow-grade evidence, pooled across days, promotion gate before real stakes.
 | Step | Description | Status |
 |------|-------------|--------|
 | 1 | Sentiment collection integrated into scan cycle; every DecisionRow stamped | ✅ Done 2026-06-12 |
-| 2 | Switch signals to real OHLC via `history()` | 🔄 In Progress |
-| 3 | One-off deep-history pull for feed diagnostics | ⏳ Pending |
+| 2 | Switch signals to real OHLC via `history()` | ✅ Done 2026-06-12 |
+| 3 | One-off deep-history pull via `get_candles_advanced` paging | ✅ Done 2026-06-12 |

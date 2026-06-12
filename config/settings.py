@@ -151,6 +151,17 @@ class BotSettings(BaseSettings):
         default=0.6, alias="SHADOW_ADX_REGIME_MIN_CONF", ge=0.0, le=1.0
     )
 
+    # Real-OHLC feature flag (PO_DATA_SURFACE.md Step 2).
+    # True  → use history() for genuine wicks (HeikinAshi/ATR/Supertrend benefit).
+    # False → use the proven-stable get_candles() flat-snapshot path (default).
+    # Defaulted OFF because history() adds latency and increases cycle-abort
+    # frequency (~8-12min vs ~15-40min) at 30s expiry where wick-signals didn't
+    # show measurable accuracy lift vs flat OHLC in shadow analysis. Turn ON when:
+    #   - switching to longer expiries (≥120s) where candle structure matters, or
+    #   - HeikinAshi/ATR demonstrate >54% directional accuracy on real vs flat OHLC,
+    #   - or the underlying WS library makes history() as fast as get_candles().
+    use_real_ohlc: bool = Field(default=False, alias="USE_REAL_OHLC")
+
     # ── Payout-First, Signals-Driven Loop (the only driver) ──
     # Max pairs to evaluate per cycle in signals mode (0 = all ≥ floor).
     max_pairs_per_cycle: int = Field(default=0, alias="MAX_PAIRS_PER_CYCLE", ge=0)

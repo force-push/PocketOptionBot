@@ -218,9 +218,12 @@ class StrategyManagerV2:
             # Subscribe so the server pushes sentiment for this pair before candles arrive
             await self._sentiment.subscribe_pair(self._api, pair_api, period=candle_period)
 
-            candle_list = await self._api.get_candles(
-                pair_api, period=candle_period, count=settings.history_length
-            )
+            if settings.use_real_ohlc:
+                candle_list = await self._api.get_real_candles(pair_api, period=candle_period)
+            else:
+                candle_list = await self._api.get_candles(
+                    pair_api, period=candle_period, count=settings.history_length
+                )
             df = candles_to_df(candle_list)
             if df.empty or len(df) < 30:
                 log.debug("[{}] {} — insufficient candle data ({}) — skip", cid, pair_api, len(df))

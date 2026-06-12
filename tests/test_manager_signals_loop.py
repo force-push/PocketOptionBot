@@ -70,6 +70,7 @@ async def test_signals_loop_places_trade(tmp_path, monkeypatch):
     api = MagicMock()
     api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94), ("GBPUSD", 93)))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     api.get_payout = AsyncMock(return_value=94)
     trade = MagicMock(); trade.status = "PENDING"; trade.trade_id = "tid-sig-1"
@@ -97,6 +98,7 @@ async def test_signals_loop_filters_below_payout_floor(tmp_path, monkeypatch):
     # All pairs below 92% floor
     api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 88), ("GBPUSD", 90)))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     api.buy = AsyncMock()
     api.sell = AsyncMock()
@@ -116,6 +118,7 @@ async def test_signals_loop_skips_blocked_pairs(tmp_path, monkeypatch):
     # Only blocked pairs above floor
     api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD_otc", 95), ("ETHUSD_otc", 94)))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     api.buy = AsyncMock()
     api.sell = AsyncMock()
@@ -135,6 +138,7 @@ async def test_signals_loop_respects_max_pairs_per_cycle(tmp_path, monkeypatch):
         ("EURUSD", 95), ("GBPUSD", 94), ("AUDUSD", 93), ("USDJPY", 92)
     ))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     trade = MagicMock(); trade.status = "PENDING"; trade.trade_id = "tid-x"
     api.buy = AsyncMock(return_value=trade)
@@ -147,7 +151,7 @@ async def test_signals_loop_respects_max_pairs_per_cycle(tmp_path, monkeypatch):
     await mgr.run_once()
 
     # Only 2 pairs should have been evaluated (get_candles called twice)
-    assert api.get_candles.await_count <= 2
+    assert api.get_real_candles.await_count <= 2
 
 
 @pytest.mark.asyncio
@@ -156,6 +160,7 @@ async def test_signals_loop_no_direction_records_skip(tmp_path, monkeypatch):
     api = MagicMock()
     api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     api.buy = AsyncMock()
 
@@ -188,6 +193,7 @@ async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
     api = MagicMock()
     api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     api.get_payout = AsyncMock(return_value=94)
 
@@ -226,6 +232,7 @@ async def test_shadow_expiry_disabled_when_empty(tmp_path, monkeypatch):
     api = MagicMock()
     api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
     api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
     api.balance = AsyncMock(return_value=1000.0)
     trade = MagicMock(); trade.status = "PENDING"; trade.trade_id = "tid-only"
     api.buy = AsyncMock(return_value=trade)

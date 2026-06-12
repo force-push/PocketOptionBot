@@ -91,7 +91,7 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   all active pairs ≥ MIN_PAYOUT_PCT, sorted by payout desc
         │  (BLOCKED_PAIRS excluded; MAX_PAIRS_PER_CYCLE cap)
         │
-        ▼  per pair: get_candles() → data/candles.py → signals/confluence.py
+        ▼  per pair: get_real_candles() [history(), real OHLC] → data/candles.py → signals/confluence.py
   11-signal TA engine (RSI, MACD, EMA, Supertrend, Stochastic, PSAR,
   HeikinAshi, RoC, StochRSI, ADX_DMI, ATR)
         │  gates: ≥MIN_SIGNAL_AGREEMENT same direction + adaptive score floor
@@ -118,9 +118,17 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   `closed_deals()`/`get_closed_deal()`, used to seed the win-rate tracker at
   startup). `connect()` **must** await `wait_for_assets()`
   after constructing the client — the Rust backend initialises the WebSocket lazily,
-  so skipping this makes the first `get_candles()` hang indefinitely.
+  so skipping this makes the first candle fetch hang indefinitely.
+  `get_real_candles(pair, period)` is the signal loop's candle source — it calls
+  the library's `history()` for **real OHLC** (true wicks); the older
+  `get_candles(pair, period, count)` returns **flat** snapshots (o==h==l==c) and is
+  only the bounded fallback. Both `get_real_candles`' `history()` call and its
+  `get_candles` fallback are timeout-capped (8s / 6s) so a stalled pair can't push
+  the cycle past the 300s abort; a pair that stalls both is skipped that cycle.
   `get_candles(pair, period, count)` takes a candle **count** for our callers but
   converts it to the library's `offset` arg (historical seconds = `count * period`).
+  Raw WS access for the sentiment collector: `create_raw_handler()` (**async** —
+  must be awaited; the library method is a coroutine) and `send_raw_message(msg)`.
   `get_payout(pair)` calls the library's synchronous `payout(asset)` method and
   returns the current payout percentage (e.g. `92`) from the live WebSocket asset
   data. **Critical safety function:** enforces the demo guard using the API-native
@@ -130,6 +138,23 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
 
 - **`data/candles.py`** — adapter converting API candle dicts into the
   `o/h/l/c/v` time-indexed pandas DataFrame the signals consume.
+
+- **`broker/sentiment_collector.py`** — `SentimentCollector` taps PocketOption's
+  traders'-choice stream (the first price-orthogonal data source). `attach(api)`
+  (once, after connect) creates a raw WS handler and runs a background listener
+  that parses `[["SYM",int]]` pushes (0–100 crowd buy%), caches them per-pair with
+  a 120s TTL, and logs each change to `data/sentiment.jsonl`. `subscribe_pair(api,
+  pair)` sends `changeSymbol` so the server starts pushing for a pair; `get(pair)`
+  returns the latest non-stale value (or `None`), which the loop stamps onto
+  `DecisionRow.sentiment`. Fail-soft: listener errors never touch the trade loop.
+  Capture is currently sparse (scan switches symbols faster than the ~5s push
+  cadence) — a persistent top-N subscription is the planned follow-up.
+
+- **`tools/deep_history_fetch.py`** — one-off deep-history fetcher. Pages
+  `get_candles_advanced` backwards to pull thousands of contiguous candles per
+  pair, reruns the feed diagnostics (ac1/VR2/zero-return + flat-OHLC check) with
+  real statistical power, writes `data/deep_history_stats.jsonl`. Run with the bot
+  stopped (one WS session per SSID).
 
 - **`signals/`** — each signal subclasses `BaseSignal` (`signals/base.py`), sets
   class-level `name`/`weight`, implements `async def evaluate(df) ->
