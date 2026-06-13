@@ -46,6 +46,9 @@ class FlipDecision:
     direction: str | None      # "CALL" | "PUT" | None
     entry_kind: str | None     # "flip" | "trend" | None
     reason: str
+    metrics: dict | None = None  # {entry_kind, adx, adx_rising, plus_di, minus_di,
+                                 #  dist, macd_gap, st_dir} — stamped on the row so
+                                 #  losses can be analysed by feature later.
 
 
 def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDecision:
@@ -78,24 +81,33 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     a = atr.iloc[-1]
     dist = abs(price - st_val) / a if (np.isfinite(a) and a > 0) else 0.0
 
-    diag = (f"ST={direction} adx={adx_now:.1f}{'↑' if adx_now > adx_prev else '↓'} "
+    adx_rising = bool(adx_now > adx_prev)
+    diag = (f"ST={direction} adx={adx_now:.1f}{'↑' if adx_rising else '↓'} "
             f"+DI={pdi:.1f} -DI={ndi:.1f} macd_gap={ml - sl:.6f} dist={dist:.2f}ATR")
+    metrics = {
+        "st_dir": direction, "flipped": bool(flipped), "adx": round(float(adx_now), 2),
+        "adx_rising": adx_rising, "plus_di": round(float(pdi), 2),
+        "minus_di": round(float(ndi), 2), "dist_atr": round(float(dist), 3),
+        "macd_gap": float(ml - sl),
+    }
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)
     di_ok = (pdi > ndi) if direction == "CALL" else (ndi > pdi)
     if not macd_ok:
-        return FlipDecision(None, None, f"MACD disagrees ({diag})")
+        return FlipDecision(None, None, f"MACD disagrees ({diag})", metrics)
     if not di_ok:
-        return FlipDecision(None, None, f"DI disagrees ({diag})")
+        return FlipDecision(None, None, f"DI disagrees ({diag})", metrics)
 
     if flipped:
         if adx_now >= params.adx_flip_min:
-            return FlipDecision(direction, "flip", f"FLIP {direction} confirmed ({diag})")
-        return FlipDecision(None, None, f"flip but ADX<{params.adx_flip_min} ({diag})")
+            return FlipDecision(direction, "flip", f"FLIP {direction} confirmed ({diag})",
+                                {**metrics, "entry_kind": "flip"})
+        return FlipDecision(None, None, f"flip but ADX<{params.adx_flip_min} ({diag})", metrics)
 
     # Established trend → continuation requires the stronger gate.
-    rising_ok = (adx_now > adx_prev) or not params.require_adx_rising
+    rising_ok = adx_rising or not params.require_adx_rising
     strong = adx_now >= params.adx_trend_min and rising_ok and dist >= params.atr_distance_min
     if strong:
-        return FlipDecision(direction, "trend", f"TREND {direction} continuation ({diag})")
-    return FlipDecision(None, None, f"trend not strong enough ({diag})")
+        return FlipDecision(direction, "trend", f"TREND {direction} continuation ({diag})",
+                            {**metrics, "entry_kind": "trend"})
+    return FlipDecision(None, None, f"trend not strong enough ({diag})", metrics)

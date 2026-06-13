@@ -34,6 +34,8 @@ class DecisionRow:
     shadow_kind: str | None = None        # "expiry" = shadow expiry experiment; None = gate-override shadow
     sentiment: int | None = None          # 0-100 crowd buy% at decision time (None = not yet collected)
     payout_pct: int | None = None
+    flip_metrics: dict | None = None      # flip-strategy diagnostics (entry_kind, adx,
+                                          # plus/minus_di, dist_atr, macd_gap) for loss analysis
     trade_id: str | None = None
     status: str = "PENDING"
     outcome: str | None = None  # "win" | "loss" | "draw"

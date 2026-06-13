@@ -37,6 +37,10 @@ def test_flip_enters_call_on_clear_uptrend():
     fd = evaluate_flip(_df(prices), _PERMISSIVE)
     assert fd.direction == "CALL"
     assert fd.entry_kind in ("flip", "trend")
+    # diagnostics captured for loss analysis
+    assert fd.metrics is not None
+    assert fd.metrics["entry_kind"] == fd.entry_kind
+    assert fd.metrics["plus_di"] > fd.metrics["minus_di"]  # CALL → +DI dominant
 
 
 def test_flip_enters_put_on_clear_downtrend():

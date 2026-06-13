@@ -278,6 +278,7 @@ class StrategyManagerV2:
                     breakdown={},
                     reason=fd.reason,
                 )
+                flip_metrics = fd.metrics
                 agreeing = 3 if fd.direction else 0
                 total_signals = 3
                 tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
@@ -294,6 +295,7 @@ class StrategyManagerV2:
                               cid, pair_api, fd.reason, payout_pct)
             else:
                 conf = await self._conf.score(df)
+                flip_metrics = None
 
                 agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
                 total_signals = len(conf.breakdown or {})
@@ -343,6 +345,7 @@ class StrategyManagerV2:
                 stake=settings.stake_amount, balance_before=balance_before,
                 payout_pct=payout_pct,
                 sentiment=self._sentiment.get(pair_api),
+                flip_metrics=flip_metrics,
             )
             if d.trade:
                 row.calibrated_probability = self._calibrator.predict({
