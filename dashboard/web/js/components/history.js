@@ -188,6 +188,24 @@ function detailHtml(d) {
     </tr>`;
   }).join('');
 
+  // Flip-strategy diagnostics (SuperTrend/MACD/ADX) — present on flip-mode trades,
+  // where our_signal_breakdown is empty.
+  const fm = d.flip_metrics;
+  const flipRows = fm ? `
+    <table class="sig-table">
+      <thead><tr><th>Signal</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td style="font-weight:500">SuperTrend</td><td>
+          <span class="pill ${(fm.st_dir||'').toLowerCase()}" style="font-size:10px;padding:1px 6px">${fm.st_dir||'—'}</span>
+          ${fm.entry_kind ? `&nbsp;<span class="muted" style="font-size:11px">${escHtml(fm.entry_kind)}${fm.flipped ? ' · fresh flip' : ''}</span>` : ''}
+        </td></tr>
+        <tr><td style="font-weight:500">ADX (14)</td><td>${fm.adx ?? '—'} <span class="${fm.adx_rising ? 'up' : 'down'}">${fm.adx_rising ? '↑ rising' : '↓ falling'}</span></td></tr>
+        <tr><td style="font-weight:500">+DI / −DI</td><td><span class="up">${fm.plus_di ?? '—'}</span> / <span class="down">${fm.minus_di ?? '—'}</span></td></tr>
+        <tr><td style="font-weight:500">Dist from band</td><td>${fm.dist_atr ?? '—'} ATR</td></tr>
+        <tr><td style="font-weight:500">MACD gap (12/26/9)</td><td>${fm.macd_gap != null ? Number(fm.macd_gap).toFixed(6) : '—'}</td></tr>
+      </tbody>
+    </table>` : '';
+
   const sigTable = `
     <div class="md-section">
       <div class="md-section-title">Internal TA Analysis</div>
@@ -195,7 +213,8 @@ function detailHtml(d) {
         <table class="sig-table">
           <thead><tr><th>Signal</th><th>Direction</th><th>Confidence</th><th>Reason</th></tr></thead>
           <tbody>${sigRows}</tbody>
-        </table>` : '<div class="muted" style="font-size:12px">No signal data</div>'}
+        </table>`
+        : (flipRows || '<div class="muted" style="font-size:12px">No signal data</div>')}
     </div>`;
 
   // ── Confluence ────────────────────────────────────────────────────────────
