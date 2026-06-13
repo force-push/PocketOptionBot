@@ -38,6 +38,8 @@ class FlipParams:
     adx_trend_min: float = 25.0     # higher bar for trend continuation
     require_adx_rising: bool = True  # continuation needs ADX rising
     atr_distance_min: float = 0.5   # continuation: price ≥ this×ATR from ST band
+    flip_window_bars: int = 3       # treat as fresh flip if trend started ≤ this many bars ago
+    bb_period: int = 20             # Bollinger period for band-width volatility metric
     min_candles: int = 40
 
 
@@ -65,9 +67,18 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     atr = _atr(df, params.st_period)
 
     t = int(trend.iloc[-1])
-    t_prev = int(trend.iloc[-2]) if len(trend) > 1 else t
     direction = "CALL" if t == 1 else "PUT"
-    flipped = t != t_prev
+    # Bars since the current trend began (1 = flipped on the last bar). A flip is
+    # a 1-bar event; the scan samples each pair every few seconds, so accept it as
+    # "fresh" if it started within the last flip_window_bars bars.
+    tv = trend.to_numpy()
+    bars_in_trend = 1
+    for i in range(len(tv) - 2, -1, -1):
+        if int(tv[i]) == t:
+            bars_in_trend += 1
+        else:
+            break
+    flipped = bars_in_trend <= params.flip_window_bars
 
     ml, sl = macd_line.iloc[-1], signal_line.iloc[-1]
     adx_now = adx.iloc[-1]
@@ -82,13 +93,23 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     dist = abs(price - st_val) / a if (np.isfinite(a) and a > 0) else 0.0
 
     adx_rising = bool(adx_now > adx_prev)
+    # Volatility metrics for loss-vs-win analysis: ATR as bps of price, and
+    # Bollinger Band Width (upper-lower)/mid as bps (regime: narrow=chop).
+    atr_bps = round(float(a) / price * 1e4, 3) if (np.isfinite(a) and price) else None
+    close = df["c"]
+    mid = close.rolling(params.bb_period).mean().iloc[-1]
+    sd = close.rolling(params.bb_period).std().iloc[-1]
+    bb_width_bps = (round(float(4 * sd / mid) * 1e4, 3)
+                    if (np.isfinite(mid) and mid and np.isfinite(sd)) else None)
     diag = (f"ST={direction} adx={adx_now:.1f}{'↑' if adx_rising else '↓'} "
-            f"+DI={pdi:.1f} -DI={ndi:.1f} macd_gap={ml - sl:.6f} dist={dist:.2f}ATR")
+            f"+DI={pdi:.1f} -DI={ndi:.1f} macd_gap={ml - sl:.6f} dist={dist:.2f}ATR "
+            f"atr={atr_bps}bps bbw={bb_width_bps}bps")
     metrics = {
-        "st_dir": direction, "flipped": bool(flipped), "adx": round(float(adx_now), 2),
-        "adx_rising": adx_rising, "plus_di": round(float(pdi), 2),
-        "minus_di": round(float(ndi), 2), "dist_atr": round(float(dist), 3),
-        "macd_gap": float(ml - sl),
+        "st_dir": direction, "flipped": bool(flipped), "bars_in_trend": bars_in_trend,
+        "adx": round(float(adx_now), 2), "adx_rising": adx_rising,
+        "plus_di": round(float(pdi), 2), "minus_di": round(float(ndi), 2),
+        "dist_atr": round(float(dist), 3), "macd_gap": float(ml - sl),
+        "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
     }
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)

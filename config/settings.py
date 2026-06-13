@@ -131,6 +131,14 @@ class BotSettings(BaseSettings):
     trend_adx_min: float = Field(default=25.0, alias="TREND_ADX_MIN", ge=0)
     trend_require_adx_rising: bool = Field(default=True, alias="TREND_REQUIRE_ADX_RISING")
     trend_atr_distance_min: float = Field(default=0.5, alias="TREND_ATR_DISTANCE_MIN", ge=0)
+    # Treat a flip as "fresh" if the SuperTrend trend started within this many of
+    # the most recent 1s bars. >1 catches flips the ~cycle-cadence scan would
+    # otherwise miss (the flip is a 1-bar event sampled every few seconds).
+    flip_window_bars: int = Field(default=3, alias="FLIP_WINDOW_BARS", ge=1)
+    # Max concurrent history(1) candle fetches per cycle. Parallel prefetch lets
+    # the scan evaluate each pair more often (catch flips sooner). Capped to avoid
+    # the WS-hang seen with unbounded concurrency (see git history 2026-06-13).
+    candle_fetch_concurrency: int = Field(default=3, alias="CANDLE_FETCH_CONCURRENCY", ge=1)
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
     # the bot-direction trade anyway and records the outcome, tagging the row with

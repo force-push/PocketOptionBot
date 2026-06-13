@@ -63,6 +63,27 @@ def test_flat_market_no_trade():
     assert fd.direction is None  # MACD line == signal → no agreement
 
 
+def test_metrics_include_volatility_and_bars():
+    fd = evaluate_flip(_df(list(np.linspace(90, 110, 120))), _PERMISSIVE)
+    assert fd.metrics is not None
+    assert fd.metrics.get("atr_bps") is not None
+    assert fd.metrics.get("bb_width_bps") is not None
+    assert fd.metrics.get("bars_in_trend", 0) >= 1
+
+
+def test_flip_window_classification():
+    # Downtrend then a sharp 8-bar reversal up — the flip is recent at the end.
+    prices = list(np.linspace(110, 95, 50)) + list(np.linspace(95, 110, 8))
+    base = dict(adx_flip_min=0, adx_trend_min=0, require_adx_rising=False, atr_distance_min=0)
+    narrow = evaluate_flip(_df(prices), FlipParams(**base, flip_window_bars=1))
+    bit = narrow.metrics["bars_in_trend"]
+    # A window >= bars_in_trend classifies the recent flip as 'flip'.
+    wide = evaluate_flip(_df(prices), FlipParams(**base, flip_window_bars=bit))
+    assert wide.entry_kind == "flip"
+    if bit > 1:
+        assert narrow.entry_kind == "trend"   # narrow window → established
+
+
 def test_insufficient_candles():
     fd = evaluate_flip(_df(list(np.linspace(90, 100, 20))), FlipParams())
     assert fd.direction is None

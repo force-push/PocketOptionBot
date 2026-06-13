@@ -220,6 +220,12 @@ class StrategyManagerV2:
         candle_period = settings.candle_interval_seconds
         trades_placed = 0
 
+        # Parallel candle prefetch (capped concurrency) — fetch all candidates'
+        # history(1) up front so the per-pair decision loop runs fast and each pair
+        # is evaluated more often (catches 1s flips the slow sequential fetch
+        # missed). The cap avoids the WS-hang seen with unbounded concurrency.
+        prefetched = await self._prefetch_candles(cid, candidates, candle_period)
+
         for pair_info in candidates:
             pair_api = pair_info["symbol"]
             payout_pct = pair_info.get("payout") or 0
@@ -238,23 +244,10 @@ class StrategyManagerV2:
                     log.debug("[{}] {} — trade in flight, skip until resolved", cid, pair_api)
                     continue
 
-            # Harvest sentiment during this pair's own fetch: subscribe (changeSymbol)
-            # right before the candle fetch. The fetch + signal processing holds this
-            # symbol for ~4-5s — about the traders'-choice push latency — so the push
-            # lands in cache during that window and gets stamped onto the DecisionRow
-            # (this cycle if it lands in time, else next cycle's scan of the pair,
-            # within the 120s cache TTL). See memory: debug_sentiment_out_of_band.
-            await self._sentiment.subscribe_pair(self._api, pair_api, period=1)
-
-            if settings.use_real_ohlc:
-                candle_list = await self._api.get_real_candles(pair_api, period=candle_period)
-            else:
-                candle_list = await self._api.get_candles(
-                    pair_api, period=candle_period, count=settings.history_length
-                )
-            df = candles_to_df(candle_list)
-            if df.empty or len(df) < 30:
-                log.debug("[{}] {} — insufficient candle data ({}) — skip", cid, pair_api, len(df))
+            df = prefetched.get(pair_api)
+            if df is None or df.empty or len(df) < 30:
+                log.debug("[{}] {} — insufficient candle data ({}) — skip",
+                          cid, pair_api, 0 if df is None else len(df))
                 continue
 
             # Feed-process probe: every 10th cycle, record this pair's return
@@ -271,6 +264,7 @@ class StrategyManagerV2:
                     adx_flip_min=settings.flip_adx_min, adx_trend_min=settings.trend_adx_min,
                     require_adx_rising=settings.trend_require_adx_rising,
                     atr_distance_min=settings.trend_atr_distance_min,
+                    flip_window_bars=settings.flip_window_bars,
                 ))
                 conf = ConfluenceResult(
                     direction=fd.direction,
@@ -574,6 +568,32 @@ class StrategyManagerV2:
             except Exception as exc:
                 log.warning("[{}] shadow expiry {}s failed for {}: {}",
                             base_row.cycle_id, exp, pair_api, exc)
+
+    async def _prefetch_candles(self, cid, candidates, candle_period) -> dict:
+        """Fetch all candidates' candles concurrently (capped) → {symbol: df|None}.
+
+        Bounded by CANDLE_FETCH_CONCURRENCY so we don't trip the WS hang seen with
+        unbounded parallel history() calls (git history 2026-06-13). Per-call
+        timeouts live in get_real_candles/get_candles; a failed fetch → None df.
+        """
+        sem = asyncio.Semaphore(settings.candle_fetch_concurrency)
+
+        async def _one(sym):
+            async with sem:
+                try:
+                    if settings.use_real_ohlc:
+                        cl = await self._api.get_real_candles(sym, period=candle_period)
+                    else:
+                        cl = await self._api.get_candles(
+                            sym, period=candle_period, count=settings.history_length
+                        )
+                    return sym, candles_to_df(cl)
+                except Exception as exc:
+                    log.debug("[{}] prefetch {} failed: {}", cid, sym, exc)
+                    return sym, None
+
+        results = await asyncio.gather(*[_one(p["symbol"]) for p in candidates])
+        return dict(results)
 
     def _record_feed_stats(self, pair_api: str, df) -> None:
         """Append this pair's return-process stats to data/feed_stats.jsonl.
