@@ -36,6 +36,8 @@ class DecisionRow:
     payout_pct: int | None = None
     flip_metrics: dict | None = None      # flip-strategy diagnostics (entry_kind, adx,
                                           # plus/minus_di, dist_atr, macd_gap) for loss analysis
+    flip_levers: dict | None = None       # active lever thresholds at decision time
+                                          # (live-tunable; recorded per trade for review)
     trade_id: str | None = None
     status: str = "PENDING"
     outcome: str | None = None  # "win" | "loss" | "draw"

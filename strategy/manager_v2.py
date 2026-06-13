@@ -18,6 +18,7 @@ from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide_signals, Decision
 from strategy.flip_strategy import evaluate_flip, FlipParams
+from strategy.flip_levers import load_levers
 from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter
@@ -259,12 +260,16 @@ class StrategyManagerV2:
 
             if settings.strategy_mode == "flip":
                 # SuperTrend flip / strong-trend continuation, confirmed by MACD + ADX.
+                # Live-tunable levers (re-read each cycle from data/flip_levers.json
+                # without restart; recorded per trade below for historical review).
+                levers = load_levers()
                 fd = evaluate_flip(df, FlipParams(
-                    st_period=settings.st_period, st_multiplier=settings.st_multiplier,
-                    adx_flip_min=settings.flip_adx_min, adx_trend_min=settings.trend_adx_min,
-                    require_adx_rising=settings.trend_require_adx_rising,
-                    atr_distance_min=settings.trend_atr_distance_min,
-                    flip_window_bars=settings.flip_window_bars,
+                    st_period=levers["st_period"], st_multiplier=levers["st_multiplier"],
+                    adx_flip_min=levers["adx_flip_min"], adx_trend_min=levers["adx_trend_min"],
+                    adx_max=levers["adx_max"],
+                    require_adx_rising=levers["require_adx_rising"],
+                    atr_distance_min=levers["atr_distance_min"],
+                    flip_window_bars=levers["flip_window_bars"],
                 ))
                 conf = ConfluenceResult(
                     direction=fd.direction,
@@ -273,6 +278,7 @@ class StrategyManagerV2:
                     reason=fd.reason,
                 )
                 flip_metrics = fd.metrics
+                flip_levers = levers
                 agreeing = 3 if fd.direction else 0
                 total_signals = 3
                 tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
@@ -290,6 +296,7 @@ class StrategyManagerV2:
             else:
                 conf = await self._conf.score(df)
                 flip_metrics = None
+                flip_levers = None
 
                 agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
                 total_signals = len(conf.breakdown or {})
@@ -340,6 +347,7 @@ class StrategyManagerV2:
                 payout_pct=payout_pct,
                 sentiment=self._sentiment.get(pair_api),
                 flip_metrics=flip_metrics,
+                flip_levers=flip_levers,
             )
             if d.trade:
                 row.calibrated_probability = self._calibrator.predict({

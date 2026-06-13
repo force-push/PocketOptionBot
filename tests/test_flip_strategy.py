@@ -84,6 +84,20 @@ def test_flip_window_classification():
         assert narrow.entry_kind == "trend"   # narrow window → established
 
 
+def test_adx_max_cap_blocks_overextended():
+    # Clear uptrend that would otherwise trade CALL; a low adx_max blocks it.
+    prices = list(np.linspace(90, 110, 120))
+    capped = FlipParams(adx_flip_min=0, adx_trend_min=0, require_adx_rising=False,
+                        atr_distance_min=0, adx_max=1.0)
+    fd = evaluate_flip(_df(prices), capped)
+    assert fd.direction is None
+    assert "ADX" in fd.reason and "max" in fd.reason
+    # With the cap effectively off, the same setup trades.
+    open_cap = FlipParams(adx_flip_min=0, adx_trend_min=0, require_adx_rising=False,
+                          atr_distance_min=0, adx_max=999.0)
+    assert evaluate_flip(_df(prices), open_cap).direction == "CALL"
+
+
 def test_insufficient_candles():
     fd = evaluate_flip(_df(list(np.linspace(90, 100, 20))), FlipParams())
     assert fd.direction is None

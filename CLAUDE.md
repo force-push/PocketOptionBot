@@ -91,10 +91,17 @@ Key settings groups:
 - **Flip-strategy settings (`STRATEGY_MODE=flip`):** `ALLOWED_PAIRS` (curated
   high-payout OTC allowlist, FX + crypto — authoritative over `BLOCKED_PAIRS`),
   `ONE_OPEN_TRADE_PER_PAIR` (default `true` — one trade per pair until it
-  resolves; paces continuation entries), `ST_PERIOD`/`ST_MULTIPLIER` (SuperTrend
-  10/3.0), `FLIP_ADX_MIN` (22 — flip confirm), `TREND_ADX_MIN` (25 — stronger bar
-  for trend continuation), `TREND_REQUIRE_ADX_RISING` (true), `TREND_ATR_DISTANCE_MIN`
-  (0.5 — price ≥ this×ATR from the ST band for continuation). All live-tunable.
+  resolves; paces continuation entries), `FLIP_WINDOW_BARS` (3 — flip is "fresh"
+  if the trend started ≤N bars ago), `CANDLE_FETCH_CONCURRENCY` (3 — parallel
+  history(1) prefetch cap). These are the static/.env defaults.
+- **Dynamic flip levers (live, no restart):** the entry thresholds —
+  `st_period`/`st_multiplier`, `flip_window_bars`, `adx_flip_min` (22),
+  `adx_trend_min` (25), **`adx_max` (40 — skip over-extended/exhausted moves;
+  ADX 45+ ~17% WR)**, `require_adx_rising`, `atr_distance_min` — are read every
+  cycle from `data/flip_levers.json` (mtime-cached), overlaid on the settings
+  defaults. Edit that file to retune **without restarting the bot**. The active
+  lever set is stamped onto every `DecisionRow.flip_levers` for historical review.
+  See `strategy/flip_levers.py`.
 - **Safety:** `TRADE_MODE` (defaults to `DEMO`, hard-reset to DEMO if
   unset/empty; `LIVE` must be explicit), `DRY_RUN` (defaults `true` — log trades
   without calling the API; set to `false` for real execution), plus the RiskManager
@@ -210,8 +217,15 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   Pure rule: SuperTrend direction, entered on a fresh **flip** (ADX ≥ flip_min)
   **or** strong-trend **continuation** (ADX ≥ trend_min & rising, price ≥
   atr_distance_min×ATR from the band), always confirmed by MACD agreement + ADX
-  +DI/−DI direction. Uses shared helpers `compute_supertrend`, `compute_macd`,
-  `compute_adx` (in `signals/`) so the dashboard breakdown and the entry rule agree.
+  +DI/−DI direction, and **rejected when ADX > adx_max** (exhausted). Uses shared
+  helpers `compute_supertrend`, `compute_macd`, `compute_adx` (in `signals/`) so
+  the dashboard breakdown and the entry rule agree. `FlipDecision.metrics` carries
+  per-trade diagnostics (adx, +DI/−DI, dist_atr, atr_bps, bb_width_bps, bars_in_trend).
+
+- **`strategy/flip_levers.py`** — `load_levers()` returns the active entry
+  thresholds: settings defaults overlaid with `data/flip_levers.json` (mtime-cached,
+  re-read each cycle → retune live with no restart). The manager builds `FlipParams`
+  from it and records the resolved set on `DecisionRow.flip_levers` per trade.
 
 - **`strategy/trade_logger.py`** — `write_decision(path, row)` / `backfill_outcome(
   path, trade_id, ...)`. Routes by suffix: a `.db` path → the SQLite store

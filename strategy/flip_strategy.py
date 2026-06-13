@@ -36,6 +36,7 @@ class FlipParams:
     adx_period: int = 14
     adx_flip_min: float = 22.0      # min ADX to confirm a fresh flip
     adx_trend_min: float = 25.0     # higher bar for trend continuation
+    adx_max: float = 999.0          # skip entries above this ADX (over-extended/exhausted)
     require_adx_rising: bool = True  # continuation needs ADX rising
     atr_distance_min: float = 0.5   # continuation: price ≥ this×ATR from ST band
     flip_window_bars: int = 3       # treat as fresh flip if trend started ≤ this many bars ago
@@ -111,6 +112,11 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         "dist_atr": round(float(dist), 3), "macd_gap": float(ml - sl),
         "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
     }
+
+    # Over-extension cap: very high ADX = exhausted/climaxing move that tends to
+    # revert inside a 5s expiry (data: ADX 45+ ~17% WR vs 25-35 ~61%).
+    if adx_now > params.adx_max:
+        return FlipDecision(None, None, f"ADX {adx_now:.1f} > max {params.adx_max} exhausted ({diag})", metrics)
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)
     di_ok = (pdi > ndi) if direction == "CALL" else (ndi > pdi)

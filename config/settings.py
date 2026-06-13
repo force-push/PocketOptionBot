@@ -129,6 +129,10 @@ class BotSettings(BaseSettings):
     st_multiplier: float = Field(default=3.0, alias="ST_MULTIPLIER", gt=0)
     flip_adx_min: float = Field(default=22.0, alias="FLIP_ADX_MIN", ge=0)
     trend_adx_min: float = Field(default=25.0, alias="TREND_ADX_MIN", ge=0)
+    # Upper ADX cap — skip entries above this (over-extended/exhausted moves
+    # revert inside 5s; data 2026-06-14: ADX 45+ ~17% WR vs 25-35 ~61%). This is
+    # the committed baseline; data/flip_levers.json overrides it live (no restart).
+    flip_adx_max: float = Field(default=40.0, alias="FLIP_ADX_MAX", ge=0)
     trend_require_adx_rising: bool = Field(default=True, alias="TREND_REQUIRE_ADX_RISING")
     trend_atr_distance_min: float = Field(default=0.5, alias="TREND_ATR_DISTANCE_MIN", ge=0)
     # Treat a flip as "fresh" if the SuperTrend trend started within this many of

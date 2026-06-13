@@ -21,6 +21,7 @@ data/sentiment_probe.jsonl
 data/po_probe_report.json
 data/deep_history_stats.jsonl
 data/models/
+data/flip_levers.json
 *.session
 *.session-journal
 htmlcov/

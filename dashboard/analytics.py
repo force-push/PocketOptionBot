@@ -187,6 +187,7 @@ def full_detail_row(rec: dict) -> dict:
         "payout_pct": rec.get("payout_pct"),
         "shadow_kind": rec.get("shadow_kind"),
         "flip_metrics": rec.get("flip_metrics"),    # flip-strategy diagnostics
+        "flip_levers": rec.get("flip_levers"),      # active lever thresholds at decision
     })
     return base
 
