@@ -266,6 +266,11 @@ function detailHtml(d) {
             <div class="md-stat-label">Result</div>
             <div class="md-stat-val ${resCls}">${resLabel}</div>
           </div>
+          <div class="md-stat">
+            <div class="md-stat-label">Sentiment</div>
+            <div class="md-stat-val ${d.sentiment != null ? (d.sentiment >= 50 ? 'up' : 'down') : 'muted'}"
+                 title="Crowd buy% at decision (0-100). ≥50 = crowd leaning CALL.">${d.sentiment != null ? d.sentiment + '% buy' : '—'}</div>
+          </div>
         </div>
         ${d.balance_before != null ? `
           <div class="md-agree-row" style="margin-top:8px;font-family:var(--mono);font-size:12px">

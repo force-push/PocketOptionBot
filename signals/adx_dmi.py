@@ -11,6 +11,36 @@ import numpy as np
 from signals.base import BaseSignal, SignalResult
 
 
+def compute_adx(df: pd.DataFrame, period: int = 14) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Return (+DI, −DI, ADX) Series. Shared by ADXDMISignal and flip_strategy.
+
+    ADX rises with trend strength; +DI/−DI give direction. (Rolling-mean
+    smoothing — simplified vs Wilder, but monotonic with trend strength, which
+    is all the threshold/rising gates need.)
+    """
+    high, low, close = df["h"], df["l"], df["c"]
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [(high - low), (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+
+    high_diff = high.diff()
+    low_diff = -low.diff()
+    pos_dm = high_diff.where((high_diff > 0) & (high_diff > low_diff), 0)
+    pos_dm = pos_dm.where(pos_dm > 0, 0)
+    neg_dm = low_diff.where((low_diff > 0) & (low_diff > high_diff), 0)
+    neg_dm = neg_dm.where(neg_dm > 0, 0)
+
+    pos_dm_smooth = pos_dm.rolling(window=period).mean()
+    neg_dm_smooth = neg_dm.rolling(window=period).mean()
+    pos_di = (100 * pos_dm_smooth / atr).fillna(0)
+    neg_di = (100 * neg_dm_smooth / atr).fillna(0)
+    adx = (pos_di - neg_di).abs().rolling(window=period).mean()
+    return pos_di, neg_di, adx
+
+
 class ADXDMISignal(BaseSignal):
     """ADX/DMI trend strength and direction indicator.
 
@@ -61,23 +91,8 @@ class ADXDMISignal(BaseSignal):
     def _calculate_dmi(
         self, df: pd.DataFrame, period: int
     ) -> tuple[pd.Series, pd.Series, pd.Series]:
-        """Calculate +DI, -DI, and ADX."""
-        tr = self._true_range(df)
-        atr = tr.rolling(window=period).mean()
-
-        pos_dm, neg_dm = self._directional_movement(df)
-        pos_dm_smooth = pos_dm.rolling(window=period).mean()
-        neg_dm_smooth = neg_dm.rolling(window=period).mean()
-
-        # Avoid division by zero
-        pos_di = (100 * pos_dm_smooth / atr).fillna(0)
-        neg_di = (100 * neg_dm_smooth / atr).fillna(0)
-
-        # ADX = smoothed average of DI difference
-        di_diff = (pos_di - neg_di).abs()
-        adx = di_diff.rolling(window=period).mean()
-
-        return pos_di, neg_di, adx
+        """Calculate +DI, -DI, and ADX (delegates to the shared helper)."""
+        return compute_adx(df, period)
 
     async def evaluate(self, df: pd.DataFrame) -> SignalResult:
         try:

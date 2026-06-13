@@ -8,6 +8,7 @@ import { initKpis } from './components/kpis.js';
 import { initHistory } from './components/history.js';
 import { initPerformance } from './components/performance.js';
 import { initSettings } from './components/settings.js';
+import { initAnalysis } from './components/analysis.js';
 
 let currentRange = '1D';
 let ws = null;
@@ -326,6 +327,7 @@ async function boot() {
     onRange: (r) => { currentRange = r; refreshPerformance(); },
   });
   initSettings({ rootSel: '#settings-wrap' });
+  initAnalysis('#analysis-wrap');
 
   store.setWsStatus('connecting');
 

@@ -36,7 +36,7 @@ function headers(extra = {}) {
   return h;
 }
 
-async function req(path, opts = {}, { timeout = 6000 } = {}) {
+async function req(path, opts = {}, { timeout = 15000 } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   try {
@@ -69,6 +69,9 @@ export const api = {
 
   /** GET /api/performance?range=1H|1D|1W|ALL */
   performance: (range = '1D') => req(`/api/performance?range=${encodeURIComponent(range)}`),
+
+  /** GET /api/analysis?window=SINCE5AM|ALL — breakdown tables. */
+  analysis: (window = 'SINCE5AM') => req(`/api/analysis?window=${encodeURIComponent(window)}`),
 
   /** GET /api/settings — grouped, masked. */
   settings: () => req('/api/settings'),

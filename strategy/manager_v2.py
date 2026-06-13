@@ -16,7 +16,9 @@ from pathlib import Path
 from broker.sentiment_collector import SentimentCollector
 from config.settings import settings, TradeMode
 from data.candles import candles_to_df
-from strategy.decision import decide_signals
+from strategy.decision import decide_signals, Decision
+from strategy.flip_strategy import evaluate_flip, FlipParams
+from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter
 from strategy.probability_calibrator import ProbabilityCalibrator
@@ -52,6 +54,12 @@ class StrategyManagerV2:
         # Skip hour rate-limiting: only log every 10 minutes during skip hours
         self._last_skip_log_time: datetime | None = None
         self._skip_log_interval_seconds = 600  # 10 minutes
+        # Ensure the SQLite decision store exists before the first write.
+        try:
+            from data.decisions_store import init_db
+            init_db(settings.decisions_db_path)
+        except Exception as exc:  # never block startup on store init
+            log.error("decision store init failed: {}", exc)
 
     @property
     def tracker(self):
@@ -118,7 +126,7 @@ class StrategyManagerV2:
         Telegram navigator is NOT called in this path.
         """
         cid = self._next_cycle_id()
-        log_path = settings.decisions_log_path
+        log_path = settings.decisions_db_path
 
         # Time-of-day filter: skip cycle if current hour is not profitable.
         # Disabled by default (TIME_OF_DAY_FILTER_ENABLED=false) — hour win
@@ -176,17 +184,24 @@ class StrategyManagerV2:
             blocked_hour_shadow = True
 
         all_pairs = await self._api.get_active_pairs()  # is_active filtered, sorted payout desc
+        # When an allowlist is configured it is authoritative — trade only those
+        # symbols and ignore the blocklist for them (curated focus set). Each
+        # still honours the payout floor, so a sub-floor pair simply sits idle.
+        allow = set(settings.allowed_pairs)
         candidates = [
             p for p in all_pairs
-            if p.get("symbol") not in settings.blocked_pairs
+            if ((p.get("symbol") in allow) if allow else (p.get("symbol") not in settings.blocked_pairs))
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
         ]
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
 
-        log.info("[{}] signals scan: {}/{} pairs ≥{}% payout  blocked={} max_per_cycle={}",
-                 cid, len(candidates), len(all_pairs), settings.min_payout_pct,
-                 len(settings.blocked_pairs), settings.max_pairs_per_cycle or "all")
+        log.info("[{}] {} scan: {}/{} pairs ≥{}% payout  {}={} max_per_cycle={}",
+                 cid, settings.strategy_mode, len(candidates), len(all_pairs),
+                 settings.min_payout_pct,
+                 "allow" if allow else "blocked",
+                 len(allow) if allow else len(settings.blocked_pairs),
+                 settings.max_pairs_per_cycle or "all")
 
         if not candidates:
             log.info("[{}] no pairs above payout floor — skipping cycle", cid)
@@ -215,8 +230,21 @@ class StrategyManagerV2:
                          cid, self._open_trade_count, self._max_concurrent_trades)
                 break
 
-            # Subscribe so the server pushes sentiment for this pair before candles arrive
-            await self._sentiment.subscribe_pair(self._api, pair_api, period=candle_period)
+            # Per-pair pacing: don't open a new trade on a pair that still has an
+            # unresolved trade — wait for it to expire (~5s) before re-deciding.
+            if settings.one_open_trade_per_pair:
+                inflight = {info["row"].pair_api for info in self._open_trades.values()}
+                if pair_api in inflight:
+                    log.debug("[{}] {} — trade in flight, skip until resolved", cid, pair_api)
+                    continue
+
+            # Harvest sentiment during this pair's own fetch: subscribe (changeSymbol)
+            # right before the candle fetch. The fetch + signal processing holds this
+            # symbol for ~4-5s — about the traders'-choice push latency — so the push
+            # lands in cache during that window and gets stamped onto the DecisionRow
+            # (this cycle if it lands in time, else next cycle's scan of the pair,
+            # within the 120s cache TTL). See memory: debug_sentiment_out_of_band.
+            await self._sentiment.subscribe_pair(self._api, pair_api, period=1)
 
             if settings.use_real_ohlc:
                 candle_list = await self._api.get_real_candles(pair_api, period=candle_period)
@@ -236,38 +264,67 @@ class StrategyManagerV2:
             if _cycle_counter % 10 == 0:
                 self._record_feed_stats(pair_api, df)
 
-            conf = await self._conf.score(df)
-
-            agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
-            total_signals = len(conf.breakdown or {})
-            gate = "✓ PASS" if conf.direction is not None else "✗ FAIL"
-
-            # Only log the full per-signal table when the confluence gate passes (trade candidate).
-            # On FAIL, emit a single compact summary line to keep logs readable across 64 pairs.
-            if conf.direction is not None:
-                for name, vals in (conf.breakdown or {}).items():
-                    sig_dir, sig_conf, sig_reason = (list(vals) + [None, None, None])[:3]
-                    log.info("[{}]   TA  {:14s} {}  conf={:.3f}  {}",
-                             cid, name, f"{sig_dir or '----':<4}", sig_conf or 0.0, sig_reason or "")
-                log.info(
-                    "[{}]   CONF {}  score={:.3f}  agreed={}/{}  {}  ({})  payout={}%",
-                    cid, conf.direction, conf.score, agreeing, total_signals,
-                    gate, conf.reason, payout_pct,
+            if settings.strategy_mode == "flip":
+                # SuperTrend flip / strong-trend continuation, confirmed by MACD + ADX.
+                fd = evaluate_flip(df, FlipParams(
+                    st_period=settings.st_period, st_multiplier=settings.st_multiplier,
+                    adx_flip_min=settings.flip_adx_min, adx_trend_min=settings.trend_adx_min,
+                    require_adx_rising=settings.trend_require_adx_rising,
+                    atr_distance_min=settings.trend_atr_distance_min,
+                ))
+                conf = ConfluenceResult(
+                    direction=fd.direction,
+                    score=1.0 if fd.direction else 0.0,
+                    breakdown={},
+                    reason=fd.reason,
                 )
+                agreeing = 3 if fd.direction else 0
+                total_signals = 3
+                tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
+                d = Decision(
+                    trade=fd.direction is not None,
+                    combined_probability=tracked_rate,
+                    skip_reason=None if fd.direction else fd.reason,
+                )
+                if fd.direction is not None:
+                    log.info("[{}]   FLIP {} [{}]  ({})  payout={}%",
+                             cid, fd.direction, fd.entry_kind, fd.reason, payout_pct)
+                else:
+                    log.debug("[{}]   {} flip ✗  ({})  payout={}%",
+                              cid, pair_api, fd.reason, payout_pct)
             else:
-                log.debug(
-                    "[{}]   {} CONF ✗  agreed={}/{}  ({})  payout={}%",
-                    cid, pair_api, agreeing, total_signals, conf.reason, payout_pct,
+                conf = await self._conf.score(df)
+
+                agreeing = sum(1 for v in (conf.breakdown or {}).values() if v[0] == conf.direction)
+                total_signals = len(conf.breakdown or {})
+                gate = "✓ PASS" if conf.direction is not None else "✗ FAIL"
+
+                # Only log the full per-signal table when the confluence gate passes (trade candidate).
+                # On FAIL, emit a single compact summary line to keep logs readable across 64 pairs.
+                if conf.direction is not None:
+                    for name, vals in (conf.breakdown or {}).items():
+                        sig_dir, sig_conf, sig_reason = (list(vals) + [None, None, None])[:3]
+                        log.info("[{}]   TA  {:14s} {}  conf={:.3f}  {}",
+                                 cid, name, f"{sig_dir or '----':<4}", sig_conf or 0.0, sig_reason or "")
+                    log.info(
+                        "[{}]   CONF {}  score={:.3f}  agreed={}/{}  {}  ({})  payout={}%",
+                        cid, conf.direction, conf.score, agreeing, total_signals,
+                        gate, conf.reason, payout_pct,
+                    )
+                else:
+                    log.debug(
+                        "[{}]   {} CONF ✗  agreed={}/{}  ({})  payout={}%",
+                        cid, pair_api, agreeing, total_signals, conf.reason, payout_pct,
+                    )
+
+                # Get tracked win rate for P(win) and EV gate
+                tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
+
+                d = decide_signals(
+                    our_direction=conf.direction,
+                    our_confluence=conf.score,
+                    tracked_win_rate=tracked_rate,
                 )
-
-            # Get tracked win rate for P(win) and EV gate
-            tracked_rate, n_tracked = self._tracker.rate(pair_api, conf.direction or "", expiry)
-
-            d = decide_signals(
-                our_direction=conf.direction,
-                our_confluence=conf.score,
-                tracked_win_rate=tracked_rate,
-            )
 
             # In signals mode, bot_direction = conf.direction (the direction we trade).
             # _resolve_trade_background records tracker + risk entries using bot_direction,
@@ -705,12 +762,10 @@ class StrategyManagerV2:
             self._open_trade_count = max(0, self._open_trade_count - 1)
 
     def _log_ev_summary(self) -> None:
-        """Log a compact broker-calibration + EV table from decisions.jsonl."""
+        """Log a compact broker-calibration + EV table from the decision store."""
         try:
-            path = Path(settings.decisions_log_path)
-            if not path.exists():
-                return
-            rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+            from data.decisions_store import all_records
+            rows = all_records(settings.decisions_db_path)
             trades = [r for r in rows if r.get("decision") == "TRADE" and r.get("outcome") in ("win", "loss")]
             if len(trades) < 5:
                 return

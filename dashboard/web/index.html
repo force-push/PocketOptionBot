@@ -21,6 +21,9 @@
       <button class="tab active" data-view="monitoring" role="tab" aria-selected="true" aria-controls="view-monitoring">
         <span class="dot"></span>Monitoring
       </button>
+      <button class="tab" data-view="analysis" role="tab" aria-selected="false" aria-controls="view-analysis" tabindex="-1">
+        📊 Analysis
+      </button>
       <button class="tab" data-view="settings" role="tab" aria-selected="false" aria-controls="view-settings" tabindex="-1">
         ⚙ Settings
       </button>
@@ -74,6 +77,11 @@
       </div>
 
     </div>
+  </section>
+
+  <!-- ============ ANALYSIS VIEW ============ -->
+  <section class="view" id="view-analysis" role="tabpanel" aria-labelledby="Analysis">
+    <div class="analysis-wrap" id="analysis-wrap"></div>
   </section>
 
   <!-- ============ SETTINGS VIEW ============ -->

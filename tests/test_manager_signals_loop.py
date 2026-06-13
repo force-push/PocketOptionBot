@@ -6,6 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from strategy.manager_v2 import StrategyManagerV2
 from config.settings import settings, TradeMode
+from data import decisions_store as store
+
+
+def _read_decisions(tmp_path):
+    """Read decision rows the manager wrote to the temp SQLite store."""
+    db = tmp_path / "decisions.db"
+    store.reset_cache(db)
+    return store.all_records(db)
 
 
 def _make_candles(n=60):
@@ -23,6 +31,10 @@ def _make_manager(tmp_path, api, conf_result_by_pair=None, risk_allowed=True, mo
         settings = _settings
     if monkeypatch:
         monkeypatch.setattr(settings, "decisions_log_path", str(tmp_path / "decisions.jsonl"))
+        monkeypatch.setattr(settings, "decisions_db_path", str(tmp_path / "decisions.db"))
+        # These tests exercise the legacy confluence path with no allowlist.
+        monkeypatch.setattr(settings, "strategy_mode", "confluence")
+        monkeypatch.setattr(settings, "allowed_pairs", [])
         monkeypatch.setattr(settings, "min_payout_pct", 92)
         monkeypatch.setattr(settings, "min_confluence_score", 0.0)
         monkeypatch.setattr(settings, "min_signal_agreement", 1)
@@ -84,8 +96,8 @@ async def test_signals_loop_places_trade(tmp_path, monkeypatch):
     # Should have placed at least one buy (CALL direction)
     api.buy.assert_awaited()
 
-    # decisions.jsonl should have a TRADE row
-    rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
+    # the store should have a TRADE row
+    rows = _read_decisions(tmp_path)
     trade_rows = [r for r in rows if r["decision"] == "TRADE"]
     assert len(trade_rows) >= 1
     assert trade_rows[0]["pair_api"] in ("EURUSD", "GBPUSD")
@@ -174,6 +186,9 @@ async def test_signals_loop_no_direction_records_skip(tmp_path, monkeypatch):
     tracker = MagicMock(); tracker.rate = MagicMock(return_value=(0.5, 0))
 
     monkeypatch.setattr(settings, "decisions_log_path", str(tmp_path / "decisions.jsonl"))
+    monkeypatch.setattr(settings, "decisions_db_path", str(tmp_path / "decisions.db"))
+    monkeypatch.setattr(settings, "strategy_mode", "confluence")
+    monkeypatch.setattr(settings, "allowed_pairs", [])
     monkeypatch.setattr(settings, "min_payout_pct", 92)
     monkeypatch.setattr(settings, "min_ev_samples", 100)
 
@@ -182,7 +197,7 @@ async def test_signals_loop_no_direction_records_skip(tmp_path, monkeypatch):
     await mgr.run_once()
 
     api.buy.assert_not_awaited()
-    rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
+    rows = _read_decisions(tmp_path)
     assert rows[0]["decision"] == "SKIP"
     assert rows[0]["skip_reason"] == "no_direction"
 
@@ -217,7 +232,7 @@ async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
     # so all create_task() coroutines complete before we read the log file.
     await asyncio.gather(*[t for t in asyncio.all_tasks() if t is not asyncio.current_task()])
 
-    rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
+    rows = _read_decisions(tmp_path)
     real = [r for r in rows if r["decision"] == "TRADE" and not r.get("shadow")]
     shadow = [r for r in rows if r.get("shadow") and r.get("shadow_kind") == "expiry"]
     # 1 real trade + 4 shadow expiry trades for the one pair
@@ -248,6 +263,6 @@ async def test_shadow_expiry_disabled_when_empty(tmp_path, monkeypatch):
 
     await mgr.run_once()
 
-    rows = [json.loads(l) for l in (tmp_path / "decisions.jsonl").read_text().splitlines()]
+    rows = _read_decisions(tmp_path)
     shadow = [r for r in rows if r.get("shadow_kind") == "expiry"]
     assert len(shadow) == 0

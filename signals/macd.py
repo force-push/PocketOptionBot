@@ -38,6 +38,16 @@ import pandas as pd
 
 from signals.base import BaseSignal, SignalResult
 
+
+def compute_macd(
+    df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Return (macd_line, signal_line, histogram). Shared by MACDSignal and flip_strategy."""
+    prices = df["c"]
+    macd_line = prices.ewm(span=fast, adjust=False).mean() - prices.ewm(span=slow, adjust=False).mean()
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line, signal_line, macd_line - signal_line
+
 # Cap on confidence when reporting an established trend (not a fresh crossover).
 # Keeps "we are trending" clearly weaker than "we just crossed" in the
 # confluence score, which uses weighted confidences.
@@ -75,10 +85,9 @@ class MACDSignal(BaseSignal):
                     reason=f"Insufficient data: {len(df)} < {min_len}",
                 )
 
-            prices     = df["c"]
-            macd_line  = self._ema(prices, self.fast) - self._ema(prices, self.slow)
-            signal_line = self._ema(macd_line, self.signal)
-            histogram  = macd_line - signal_line
+            macd_line, signal_line, histogram = compute_macd(
+                df, self.fast, self.slow, self.signal
+            )
 
             mv = macd_line.iloc[-1]
             sv = signal_line.iloc[-1]

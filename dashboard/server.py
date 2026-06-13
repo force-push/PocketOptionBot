@@ -27,6 +27,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
+from data import decisions_store as store
+from dashboard import analysis as analysis_mod
 from dashboard import analytics, settings_io
 from dashboard.models import (
     PerformanceResponse,
@@ -62,6 +64,11 @@ def _decisions_path() -> Path:
     return p if p.is_absolute() else _PROJECT_ROOT / p
 
 
+def _decisions_db_path() -> Path:
+    p = Path(settings.decisions_db_path)
+    return p if p.is_absolute() else _PROJECT_ROOT / p
+
+
 def _events_path() -> Path:
     p = Path(settings.events_log_path)
     return p if p.is_absolute() else _PROJECT_ROOT / p
@@ -76,7 +83,7 @@ def _live_state_path() -> Path:
 
 def build_state_snapshot() -> dict:
     state = _read_live_state()
-    records = analytics.load_records(_decisions_path())
+    records = store.all_records(_decisions_db_path())
     balance = state.get("balance")
     active = state.get("active", [])
     kpis = analytics.kpis(records, balance=balance, active=active)
@@ -125,6 +132,11 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Ensure the decision store schema exists (no-op if already created).
+        try:
+            store.init_db(_decisions_db_path())
+        except Exception:
+            pass
         # Startup: start the file watcher
         app.state._watch_task = asyncio.create_task(_watch_loop(app, broadcaster))
         yield
@@ -165,28 +177,39 @@ def create_app() -> FastAPI:
     @app.get("/api/history")
     def get_history(limit: int = Query(100, ge=0, le=2000),
                     before: Optional[str] = Query(None)) -> Any:
-        records = analytics.load_records(_decisions_path())
+        # Targeted query: fetch only the page we need, not the whole table.
+        records = store.recent_decisions(_decisions_db_path(), limit=limit, before=before)
         rows = analytics.history(records, limit=limit, before=before)
         next_before = rows[-1]["ts"] if rows and len(rows) >= limit and limit > 0 else None
         return {"rows": rows, "next_before": next_before}
 
     @app.get("/api/trade/{trade_id}")
     def get_trade_detail(trade_id: str) -> Any:
-        records = analytics.load_records(_decisions_path())
-        # Look up by trade_id first (unique per trade); fall back to cycle_id for
-        # legacy rows and SKIPs that have no trade_id.
-        rec = analytics.find_by_trade_id(records, trade_id)
+        # Indexed point lookups: by trade_id (unique per trade), then cycle_id
+        # for legacy rows / SKIPs that have no trade_id.
+        db = _decisions_db_path()
+        rec = store.find_by_trade_id(db, trade_id)
         if rec is None:
-            rec = analytics.find_by_cycle_id(records, trade_id)
+            rec = store.find_by_cycle_id(db, trade_id)
         if rec is None:
             raise HTTPException(status_code=404, detail="trade not found")
         return analytics.full_detail_row(rec)
 
     @app.get("/api/performance", response_model=PerformanceResponse)
     def get_performance(range: str = Query("ALL")) -> Any:
-        records = analytics.load_records(_decisions_path())
+        records = store.all_records(_decisions_db_path())
         balance = _read_live_state().get("balance")
         return analytics.performance(records, rng=range, balance=balance)
+
+    @app.get("/api/analysis")
+    def get_analysis(window: str = Query("SINCE5AM")) -> Any:
+        """Breakdown tables for the Analysis tab.
+
+        window=SINCE5AM (the stable-bot boundary) or ALL (whole history).
+        """
+        since = None if window.upper() == "ALL" else analysis_mod.CUTOFF_5AM_ISO
+        records = store.records_since(_decisions_db_path(), since)
+        return analysis_mod.analysis(records, since_iso=since)
 
     @app.get("/api/settings")
     def get_settings() -> Any:
@@ -280,18 +303,22 @@ async def _watch_loop(app: FastAPI, broadcaster: Broadcaster) -> None:
         return  # watchfiles unavailable — server still serves static REST
 
     live = _live_state_path()
-    decisions = _decisions_path()
+    decisions_db = _decisions_db_path()
     events = _events_path()
-    for p in (live, decisions, events):
+    for p in (live, decisions_db, events):
         p.parent.mkdir(parents=True, exist_ok=True)
 
     events_offset = events.stat().st_size if events.exists() else 0
 
-    watch_dirs = {str(p.parent) for p in (live, decisions, events)}
+    # SQLite in WAL mode writes through decisions.db-wal; watch both so KPI/state
+    # refreshes fire as the bot records decisions and stamps outcomes.
+    db_paths = {decisions_db, Path(str(decisions_db) + "-wal")}
+
+    watch_dirs = {str(p.parent) for p in (live, decisions_db, events)}
     try:
         async for changes in awatch(*watch_dirs):
             changed = {Path(path) for _ct, path in changes}
-            if live in changed or decisions in changed:
+            if live in changed or (changed & db_paths):
                 try:
                     await broadcaster.broadcast({"type": "state", "data": build_state_snapshot()})
                 except Exception:

@@ -12,13 +12,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > no longer needs Telegram credentials. See PROJECT_STATUS.md for the log.
 
 Each cycle it:
-1. Fetches all active pairs ≥ `MIN_PAYOUT_PCT` from the PocketOption WS API
-2. Subscribes each pair to receive live crowd-sentiment (0–100), then fetches candles
-3. Runs the 11-signal confluence engine and decides via `decide_signals` + risk gates
-4. Places CALL/PUT via the API; stamps each `DecisionRow` with the pair's sentiment
-5. Resolves outcomes in background tasks and logs to `data/decisions.jsonl`
-6. Places research shadow trades (expiry ladder, fade, adx_regime — see
-   SHADOW_TRADE_ANALYSIS.md / TRADING_EDGE_MAP.md)
+1. Fetches active pairs ≥ `MIN_PAYOUT_PCT` from the PocketOption WS API
+   (restricted to `ALLOWED_PAIRS` when that allowlist is set)
+2. Fetches candles and evaluates the selected **strategy mode** (see below)
+3. Places CALL/PUT via the API + risk gates
+4. Resolves outcomes in background tasks and records to the **SQLite decision
+   store** (`data/decisions.db`)
+
+> **Two strategy modes (`STRATEGY_MODE`):**
+> - **`flip`** (current default, 2026-06-14) — SuperTrend flip / strong-trend
+>   continuation, confirmed by MACD + ADX movement, on a curated high-payout
+>   allowlist at 5s expiry / 1s candles. See `strategy/flip_strategy.py`.
+> - **`confluence`** — the legacy 11-signal weighted vote (`decide_signals` +
+>   `ConfluenceEngine`), plus research shadow trades (expiry ladder, fade,
+>   adx_regime — see SHADOW_TRADE_ANALYSIS.md / TRADING_EDGE_MAP.md).
+>
+> **Decision store (2026-06-13):** decisions live in SQLite (`data/decisions.db`),
+> not the old append-and-rewrite `decisions.jsonl` (which became O(N²) — every
+> outcome backfill re-wrote the whole file). `decisions.jsonl` is retained only
+> as the migration source/archive. See `data/decisions_store.py`.
 
 > ⚠️ The unofficial PocketOption API violates the platform's ToS and can break
 > or get accounts flagged. This is for educational/research use. Keep DEMO the
@@ -35,7 +47,7 @@ python3 main_v2.py               # run indefinitely
 python3 main_v2.py --cycles 5   # run exactly 5 cycles then exit
 nohup tools/run_supervised.sh > /dev/null 2>&1 &   # preferred: watchdog supervisor (auto-restart + hang kill)
 
-# Dashboard (separate process; reads decisions.jsonl + live_state.json)
+# Dashboard (separate process; reads decisions.db + live_state.json)
 python3 -m dashboard.server      # http://127.0.0.1:8787 (requires fastapi, uvicorn)
 
 # Tests (all offline — no network, no SSID)
@@ -74,7 +86,15 @@ Key settings groups:
   activates; cold-start pass-through below this).
 - **TA thresholds:** `MIN_SIGNAL_AGREEMENT` (default `2` — how many of 5 signals must
   agree), `MIN_CONFLUENCE_SCORE` (default `0.40`, adaptive based on agreement count),
-  `CANDLE_INTERVAL_SECONDS` (default `5` seconds — decoupled from expiry).
+  `CANDLE_INTERVAL_SECONDS` (`1` in flip mode for tick-line precision; `5` for
+  confluence — decoupled from expiry).
+- **Flip-strategy settings (`STRATEGY_MODE=flip`):** `ALLOWED_PAIRS` (curated
+  high-payout OTC allowlist, FX + crypto — authoritative over `BLOCKED_PAIRS`),
+  `ONE_OPEN_TRADE_PER_PAIR` (default `true` — one trade per pair until it
+  resolves; paces continuation entries), `ST_PERIOD`/`ST_MULTIPLIER` (SuperTrend
+  10/3.0), `FLIP_ADX_MIN` (22 — flip confirm), `TREND_ADX_MIN` (25 — stronger bar
+  for trend continuation), `TREND_REQUIRE_ADX_RISING` (true), `TREND_ATR_DISTANCE_MIN`
+  (0.5 — price ≥ this×ATR from the ST band for continuation). All live-tunable.
 - **Safety:** `TRADE_MODE` (defaults to `DEMO`, hard-reset to DEMO if
   unset/empty; `LIVE` must be explicit), `DRY_RUN` (defaults `true` — log trades
   without calling the API; set to `false` for real execution), plus the RiskManager
@@ -179,8 +199,24 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
 - **`strategy/expiry.py`** — `select_expiry(default, allowed, requested) -> int`.
   Snaps requested expiry to the nearest allowed value.
 
-- **`strategy/trade_logger.py`** — `write_decision(path, row)` (append JSONL),
-  `backfill_outcome(path, trade_id, ...)` (rewrite file to update resolved trade).
+- **`data/decisions_store.py`** — SQLite decision store (the live data path).
+  `insert_decision` (one INSERT), `update_outcome` (one indexed UPDATE — no file
+  rewrite), `recent_decisions`/`find_by_*`/`records_since` (targeted reads),
+  `all_records` (incrementally cached full load — only re-fetches rows whose
+  `id`/`updated_at` changed), `migrate_jsonl`. WAL mode → bot writer + dashboard
+  reader run concurrently. Full row kept in a `data` JSON column (nothing lost).
+
+- **`strategy/flip_strategy.py`** — `evaluate_flip(df, FlipParams) -> FlipDecision`.
+  Pure rule: SuperTrend direction, entered on a fresh **flip** (ADX ≥ flip_min)
+  **or** strong-trend **continuation** (ADX ≥ trend_min & rising, price ≥
+  atr_distance_min×ATR from the band), always confirmed by MACD agreement + ADX
+  +DI/−DI direction. Uses shared helpers `compute_supertrend`, `compute_macd`,
+  `compute_adx` (in `signals/`) so the dashboard breakdown and the entry rule agree.
+
+- **`strategy/trade_logger.py`** — `write_decision(path, row)` / `backfill_outcome(
+  path, trade_id, ...)`. Routes by suffix: a `.db` path → the SQLite store
+  (INSERT / indexed UPDATE); a `.jsonl` path → legacy append / atomic-rewrite
+  (kept for tests + archive).
 
 - **`strategy/win_rate.py`** — `WinRateTracker` keeps per-(pair, direction,
   expiry-bucket) win/loss counts, persisted to `data/win_rates.json`. Methods:
@@ -215,7 +251,7 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
 ## Dashboard
 
 The optional web UI (`python3 -m dashboard.server`, http://127.0.0.1:8787) reads
-live trade data from `data/decisions.jsonl` and `data/live_state.json`. Key features:
+live trade data from the `data/decisions.db` store and `data/live_state.json`. Key features:
 
 - **Top chips:** Balance, Est. Weekly projection (from all historical trades),
   connection status, trading mode.

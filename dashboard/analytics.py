@@ -10,6 +10,7 @@ No fastapi / pandas / pydantic — importable and testable fully offline.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -70,11 +71,20 @@ def _num(val: Any) -> Optional[float]:
 
 # ── loading ──────────────────────────────────────────────────────────────────
 
-def load_records(path: str | Path) -> list[dict]:
-    """Read a JSONL file into a list of dicts. Missing file → []. Bad lines skipped."""
-    p = Path(path)
-    if not p.exists():
-        return []
+# ── parsed-records cache ──────────────────────────────────────────────────────
+# decisions.jsonl grows into the tens of MB (40k+ rows). Re-reading and
+# re-parsing the whole file on every API request costs ~4s and, with several
+# requests firing on page load, blows past the frontend's fetch timeout so the
+# UI renders empty. Cache the parsed list keyed on (mtime, size): serve it
+# unchanged while the file is untouched, reparse only after the bot appends or
+# rewrites it. A lock makes the cold-start request burst single-flight — the
+# first request parses, the rest wait and reuse the result instead of each
+# launching its own 4s parse.
+_cache_lock = threading.Lock()
+_records_cache: dict[str, tuple[float, int, list[dict]]] = {}
+
+
+def _parse_jsonl(p: Path) -> list[dict]:
     out: list[dict] = []
     for line in p.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -87,6 +97,37 @@ def load_records(path: str | Path) -> list[dict]:
         if isinstance(obj, dict):
             out.append(obj)
     return out
+
+
+def load_records(path: str | Path) -> list[dict]:
+    """Read a JSONL file into a list of dicts. Missing file → []. Bad lines skipped.
+
+    Cached by (mtime, size) — see the note above. The returned list is shared;
+    callers must treat it as read-only (all analytics functions here do, they
+    project into fresh dicts rather than mutating records in place).
+    """
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        st = p.stat()
+    except OSError:
+        return []
+    key = str(p)
+    sig = (st.st_mtime, st.st_size)
+
+    cached = _records_cache.get(key)
+    if cached is not None and (cached[0], cached[1]) == sig:
+        return cached[2]
+
+    with _cache_lock:
+        # Re-check inside the lock: another thread may have just parsed it.
+        cached = _records_cache.get(key)
+        if cached is not None and (cached[0], cached[1]) == sig:
+            return cached[2]
+        out = _parse_jsonl(p)
+        _records_cache[key] = (st.st_mtime, st.st_size, out)
+        return out
 
 
 # ── history rows (§4.2 GET /api/history) ─────────────────────────────────────
@@ -142,6 +183,9 @@ def full_detail_row(rec: dict) -> dict:
         "pnl_currency": rec.get("pnl_currency") or "USD",
         "status": rec.get("status"),
         "outcome": rec.get("outcome"),
+        "sentiment": rec.get("sentiment"),          # 0-100 crowd buy% at decision
+        "payout_pct": rec.get("payout_pct"),
+        "shadow_kind": rec.get("shadow_kind"),
     })
     return base
 

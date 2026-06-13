@@ -21,22 +21,27 @@ SSID_LIVE = '42["auth",{"session":"abc","isDemo":0,"uid":42,"platform":1}]'
 
 
 def _seed(tmp_path):
-    """Point settings at a temp data dir and seed decisions + live_state."""
+    """Point settings at a temp data dir and seed the decision store + live_state."""
+    from data import decisions_store as store
     decisions = tmp_path / "decisions.jsonl"
+    db = tmp_path / "decisions.db"
     state = tmp_path / "live_state.json"
     from tools.dashboard_demo import generate
     rows, live = generate(40, seed=7)
     with decisions.open("w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r) + "\n")
+    store.migrate_jsonl(decisions, db)  # load the seed rows into the SQLite store
+    store.reset_cache(db)
     state.write_text(json.dumps(live), encoding="utf-8")
-    return decisions, state
+    return decisions, db, state
 
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    decisions, state = _seed(tmp_path)
+    decisions, db, state = _seed(tmp_path)
     monkeypatch.setattr(settings, "decisions_log_path", str(decisions), raising=False)
+    monkeypatch.setattr(settings, "decisions_db_path", str(db), raising=False)
     monkeypatch.setattr(settings, "live_state_path", str(state), raising=False)
     monkeypatch.setattr(settings, "events_log_path", str(tmp_path / "events.jsonl"), raising=False)
     monkeypatch.setattr(settings, "dashboard_token", None, raising=False)
@@ -94,8 +99,9 @@ def test_post_settings_live_guard_rejects(client):
 
 
 def test_post_settings_token_required(tmp_path, monkeypatch):
-    decisions, state = _seed(tmp_path)
+    decisions, db, state = _seed(tmp_path)
     monkeypatch.setattr(settings, "decisions_log_path", str(decisions), raising=False)
+    monkeypatch.setattr(settings, "decisions_db_path", str(db), raising=False)
     monkeypatch.setattr(settings, "live_state_path", str(state), raising=False)
     monkeypatch.setattr(settings, "events_log_path", str(tmp_path / "events.jsonl"), raising=False)
     monkeypatch.setattr(settings, "dashboard_token", "s3cret", raising=False)

@@ -90,6 +90,10 @@ class BotSettings(BaseSettings):
     min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
+    # SQLite decision store — the live data path (fast INSERT/UPDATE, indexed
+    # reads). Replaces append-and-rewrite of decisions.jsonl, which became O(N²)
+    # at scale. The .jsonl above is retained only as the migration source/archive.
+    decisions_db_path: str = Field(default="data/decisions.db", alias="DECISIONS_DB_PATH")
     # List of pair_api values (e.g., "EURUSD_otc") to block at pair selection.
     # This prevents wasting time on analysis for known underperforming pairs.
     # Empirical losers to skip even when the bot rates them highly (2026-06-09 research,
@@ -99,6 +103,34 @@ class BotSettings(BaseSettings):
                  "EURTRY_otc", "USDPHP_otc", "CHFNOK_otc"],
         alias="BLOCKED_PAIRS",
     )
+
+    # ── SuperTrend-flip strategy (2026-06-14) ────────────────────────────────
+    # strategy_mode selects the decision engine:
+    #   "confluence" — the legacy 11-signal weighted vote (decision.py path).
+    #   "flip"       — SuperTrend flip / strong-trend continuation, confirmed by
+    #                  MACD + ADX movement (strategy/flip_strategy.py).
+    strategy_mode: str = Field(default="flip", alias="STRATEGY_MODE")
+    # Curated high-payout OTC allowlist (FX + crypto). When non-empty, the scan
+    # trades ONLY these symbols (and ignores blocked_pairs for them). Each still
+    # honours MIN_PAYOUT_PCT, so sub-floor entries sit idle until payout rises.
+    allowed_pairs: list[str] = Field(
+        default=[
+            "EURUSD_otc", "USDJPY_otc", "AEDCNY_otc", "EURCHF_otc",
+            "USDMXN_otc", "ZARUSD_otc", "GBPUSD_otc", "AUDUSD_otc",
+            "DOGE_otc", "ETHUSD_otc", "TRX-USD_otc", "BITB_otc",
+        ],
+        alias="ALLOWED_PAIRS",
+    )
+    # One open trade per pair: don't re-enter a pair until its trade resolves
+    # (~5s). Paces trend-continuation entries instead of firing every cycle.
+    one_open_trade_per_pair: bool = Field(default=True, alias="ONE_OPEN_TRADE_PER_PAIR")
+    # Flip-strategy parameters (live-tunable; calibrate on DEMO results).
+    st_period: int = Field(default=10, alias="ST_PERIOD", ge=1)
+    st_multiplier: float = Field(default=3.0, alias="ST_MULTIPLIER", gt=0)
+    flip_adx_min: float = Field(default=22.0, alias="FLIP_ADX_MIN", ge=0)
+    trend_adx_min: float = Field(default=25.0, alias="TREND_ADX_MIN", ge=0)
+    trend_require_adx_rising: bool = Field(default=True, alias="TREND_REQUIRE_ADX_RISING")
+    trend_atr_distance_min: float = Field(default=0.5, alias="TREND_ATR_DISTANCE_MIN", ge=0)
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
     # the bot-direction trade anyway and records the outcome, tagging the row with
@@ -190,9 +222,9 @@ class BotSettings(BaseSettings):
             raise SettingsError(f"Invalid TRADE_MODE: {v!r}. Must be DEMO or LIVE.")
         return TradeMode(mode)
 
-    @field_validator("blocked_pairs", mode="before")
+    @field_validator("blocked_pairs", "allowed_pairs", mode="before")
     @classmethod
-    def _parse_blocked_pairs(cls, v):
+    def _parse_pair_list(cls, v):
         # Accept comma-separated string or list; normalize to list
         if v is None:
             return []
