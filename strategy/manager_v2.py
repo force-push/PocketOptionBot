@@ -297,35 +297,38 @@ class StrategyManagerV2:
                     "bot_is_top_pick": False,
                 })
 
-            # ── Research opportunity detection (compute direction only, no I/O) ──
-            _fade_dir: str | None = None
-            _fade_top_dir: str | None = None
-            _fade_top_count: int = 0
+            # ── Research shadow triggers (fire on every evaluated pair) ──────
+            # FADE (Finding 4a): >=N signals agree on one direction → the move
+            # is exhausted; shadow the OPPOSITE direction.
             if settings.shadow_fade_min_agree > 0:
-                _dc: dict[str, int] = {"CALL": 0, "PUT": 0}
-                for _v in (conf.breakdown or {}).values():
-                    _sd = (list(_v) + [None])[0]
-                    if _sd in _dc:
-                        _dc[_sd] += 1
-                _top = max(_dc, key=_dc.get)
-                if _dc[_top] >= settings.shadow_fade_min_agree:
-                    _fade_dir = "PUT" if _top == "CALL" else "CALL"
-                    _fade_top_dir = _top
-                    _fade_top_count = _dc[_top]
+                dir_counts = {"CALL": 0, "PUT": 0}
+                for v in (conf.breakdown or {}).values():
+                    sd = (list(v) + [None])[0]
+                    if sd in dir_counts:
+                        dir_counts[sd] += 1
+                top_dir = max(dir_counts, key=dir_counts.get)
+                if dir_counts[top_dir] >= settings.shadow_fade_min_agree:
+                    fade_dir = "PUT" if top_dir == "CALL" else "CALL"
+                    asyncio.create_task(self._place_single_shadow(
+                        pair_api=pair_api, direction=fade_dir,
+                        base_row=row, log_path=log_path,
+                        shadow_kind="fade",
+                        would_skip_reason=f"fade_{dir_counts[top_dir]}_agree_{top_dir}",
+                    ))
 
-            _adx_dir: str | None = None
-            _adx_conf_val: float = 0.0
+            # ADX-REGIME (Finding 4b): strong trend (ADX conf >= threshold) →
+            # shadow FOLLOWING the ADX direction.
             if settings.shadow_adx_regime_min_conf > 0:
-                _adx = (conf.breakdown or {}).get("ADX_DMI")
-                if _adx:
-                    _ad, _ac = (list(_adx) + [None, 0])[:2]
-                    if _ad in ("CALL", "PUT") and (_ac or 0) >= settings.shadow_adx_regime_min_conf:
-                        _adx_dir = _ad
-                        _adx_conf_val = float(_ac or 0.0)
-
-            # ── Main trade path (mutually exclusive branches, no early continue) ──
-            _trade_placed = False
-            _trade_dir: str | None = None
+                adx = (conf.breakdown or {}).get("ADX_DMI")
+                if adx:
+                    adx_dir, adx_conf = (list(adx) + [None, 0])[:2]
+                    if adx_dir in ("CALL", "PUT") and (adx_conf or 0) >= settings.shadow_adx_regime_min_conf:
+                        asyncio.create_task(self._place_single_shadow(
+                            pair_api=pair_api, direction=adx_dir,
+                            base_row=row, log_path=log_path,
+                            shadow_kind="adx_regime",
+                            would_skip_reason=f"adx_conf_{adx_conf:.2f}",
+                        ))
 
             if not d.trade:
                 write_decision(log_path, row)
@@ -336,35 +339,24 @@ class StrategyManagerV2:
                     cid, pair_api, d.skip_reason,
                     conf.direction or "None", conf.score, payout_pct,
                 )
-                # Majority-blocked CALL with ≥3 agreeing signals → promote to a
-                # real trade. Data (last 200): CALL=64.5% WR, PUT=48.4% WR.
-                # PUT and agree<3 cases remain shadow-only.
+                # Majority-blocked: place shadow trade at the score-winner direction
+                # to collect outcome data. Over time this shows whether the majority
+                # check is correctly blocking losing trades or incorrectly blocking winners.
                 if d.skip_reason == "no_direction" and conf.majority_blocked_direction:
-                    _mbd = conf.majority_blocked_direction
-                    _mbd_agree = sum(
-                        1 for _bv in (conf.breakdown or {}).values()
-                        if isinstance(_bv, (list, tuple)) and len(_bv) > 0 and _bv[0] == _mbd
-                    )
-                    if _mbd == "CALL" and _mbd_agree >= 3:
-                        _trade_placed, _trade_dir = await self._promote_majority_blocked_real(
-                            pair_api=pair_api, direction=_mbd, row=row,
-                            log_path=log_path, payout_pct=payout_pct,
-                            balance_before=balance_before, expiry=expiry,
-                            agree_n=_mbd_agree,
-                        )
-                    else:
-                        asyncio.create_task(self._place_single_shadow(
-                            pair_api=pair_api,
-                            direction=_mbd,
-                            base_row=row,
-                            log_path=log_path,
-                            shadow_kind="majority_blocked",
-                            would_skip_reason="majority_blocked",
-                        ))
+                    asyncio.create_task(self._place_single_shadow(
+                        pair_api=pair_api,
+                        direction=conf.majority_blocked_direction,
+                        base_row=row,
+                        log_path=log_path,
+                        shadow_kind="majority_blocked",
+                        would_skip_reason="majority_blocked",
+                    ))
+                continue
 
-            elif blocked_hour_shadow:
-                # Signal gates passed but this hour is blocked — shadow the main
-                # direction; fade/ADX research fires as shadow below.
+            # Blocked-hour shadow mode: the signal gates passed, but this hour is
+            # blocked by the time-of-day filter. Place a shadow instead of a real
+            # trade and skip the production EV/risk/concurrency gates entirely.
+            if blocked_hour_shadow:
                 asyncio.create_task(self._place_single_shadow(
                     pair_api=pair_api,
                     direction=conf.direction,
@@ -373,124 +365,99 @@ class StrategyManagerV2:
                     shadow_kind="time_of_day",
                     would_skip_reason=TimeOfDayFilter.skip_reason(utc_hour),
                 ))
+                continue
 
-            else:
-                # EV gate
-                _ev_ok = True
-                if payout_pct and n_tracked >= settings.min_ev_samples:
-                    ev = tracked_rate * (payout_pct / 100 + 1) - 1
-                    if ev < settings.min_expected_value:
-                        row.decision = "SKIP"; row.skip_reason = "negative_ev"
-                        write_decision(log_path, row)
-                        if self._bridge:
-                            self._bridge.on_decision(asdict(row))
-                        log.info(
-                            "[{}] SKIP {}  reason=negative_ev  ev={:.3f}  wr={:.1%}  n={}  payout={}%",
-                            cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
-                        )
-                        _ev_ok = False
-
-                if _ev_ok:
-                    # Risk gate — session-wide block, stop scanning all pairs
-                    if not self._risk.is_allowed(balance_before):
-                        row.decision = "SKIP"; row.skip_reason = "risk_blocked"
-                        write_decision(log_path, row)
-                        if self._bridge:
-                            self._bridge.on_decision(asdict(row))
-                        log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
-                        break
-
-                    # Concurrency cap (re-check; may have filled from a prior pair this cycle)
-                    if self._open_trade_count >= self._max_concurrent_trades:
-                        row.decision = "SKIP"; row.skip_reason = "max_concurrent_trades"
-                        write_decision(log_path, row)
-                        log.info("[{}] SKIP {}  reason=max_concurrent_trades  open={}/{}",
-                                 cid, pair_api, self._open_trade_count, self._max_concurrent_trades)
-                        break
-                    self._open_trade_count += 1
-
-                    # Capture balance at the moment this specific trade is placed.
-                    balance_at_placement = await self._api.balance()
-                    row.balance_before = balance_at_placement
-
-                    api_call = self._api.buy if conf.direction == "CALL" else self._api.sell
-                    trade = await api_call(pair_api, settings.stake_amount, expiry)
-                    row.trade_id = getattr(trade, "trade_id", None)
-                    row.status = getattr(trade, "status", "PENDING")
-
-                    if row.status in ("ERROR", "DRY_RUN") or not row.trade_id:
-                        self._open_trade_count = max(0, self._open_trade_count - 1)
-                    else:
-                        _trade_placed = True
-                        _trade_dir = conf.direction
-
+            # EV gate
+            if payout_pct and n_tracked >= settings.min_ev_samples:
+                ev = tracked_rate * (payout_pct / 100 + 1) - 1
+                if ev < settings.min_expected_value:
+                    row.decision = "SKIP"; row.skip_reason = "negative_ev"
                     write_decision(log_path, row)
                     if self._bridge:
-                        _now = datetime.now(timezone.utc)
-                        self._bridge.trade_opened({
-                            "trade_id": row.trade_id, "pair_raw": pair_api, "pair_api": pair_api,
-                            "dir": conf.direction, "stake": settings.stake_amount,
-                            "entry": getattr(trade, "entry", None),
-                            "opened_at": _now.isoformat(),
-                            "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
-                            "expiry_seconds": expiry,
-                            "confluence_n": agreeing,
-                            "confluence_score": conf.score,
-                        })
+                        self._bridge.on_decision(asdict(row))
                     log.info(
-                        "[{}] TRADE {}  {}  @{:.2f}  exp={}s  payout={}%  prob={:.2f}  id={}",
-                        cid, conf.direction, pair_api, settings.stake_amount,
-                        expiry, payout_pct, d.combined_probability, row.trade_id,
+                        "[{}] SKIP {}  reason=negative_ev  ev={:.3f}  wr={:.1%}  n={}  payout={}%",
+                        cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
                     )
-                    trades_placed += 1
+                    continue
 
-                    if settings.trade_stagger_seconds > 0 and self._open_trade_count < self._max_concurrent_trades:
-                        await asyncio.sleep(settings.trade_stagger_seconds)
+            # Risk gate — session-wide block, stop scanning all pairs
+            if not self._risk.is_allowed(balance_before):
+                row.decision = "SKIP"; row.skip_reason = "risk_blocked"
+                write_decision(log_path, row)
+                if self._bridge:
+                    self._bridge.on_decision(asdict(row))
+                log.warning("[{}] risk blocked: {}", cid, getattr(self._risk, "block_reason", ""))
+                break
 
-                    if row.trade_id:
-                        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expiry)
-                        self._open_trades[row.trade_id] = {
-                            "log_path": log_path,
-                            "row": row,
-                            "balance_before": balance_at_placement,
-                            "expires_at": expires_at,
-                        }
-                        asyncio.create_task(self._resolve_trade_background(row.trade_id))
-                        asyncio.create_task(self._place_shadow_expiry_trades(
-                            pair_api=pair_api, direction=conf.direction, base_row=row,
-                            log_path=log_path,
-                        ))
+            # Concurrency cap (re-check; may have filled from a prior pair this cycle)
+            if self._open_trade_count >= self._max_concurrent_trades:
+                row.decision = "SKIP"; row.skip_reason = "max_concurrent_trades"
+                write_decision(log_path, row)
+                log.info("[{}] SKIP {}  reason=max_concurrent_trades  open={}/{}",
+                         cid, pair_api, self._open_trade_count, self._max_concurrent_trades)
+                break
+            self._open_trade_count += 1
 
-            # ── Research signal resolution ─────────────────────────────────────
-            # Fade: promote to real when no position was taken this pair/cycle
-            # (last 200: CALL=57.3%, PUT=56.8% — both above 52.2% break-even).
-            # When a conflicting real trade exists, fall back to shadow.
-            # During blocked hours always shadow (research data only).
-            if _fade_dir is not None:
-                if not _trade_placed and not blocked_hour_shadow:
-                    await self._place_fade_real_trade(
-                        pair_api=pair_api, direction=_fade_dir, base_row=row,
-                        log_path=log_path, payout_pct=payout_pct,
-                        balance_before=balance_before, expiry=expiry,
-                        agree_count=_fade_top_count, agree_dir=_fade_top_dir,
-                    )
-                elif _trade_dir != _fade_dir:
-                    # Real trade in opposite direction → shadow to avoid conflict
-                    asyncio.create_task(self._place_single_shadow(
-                        pair_api=pair_api, direction=_fade_dir,
-                        base_row=row, log_path=log_path,
-                        shadow_kind="fade",
-                        would_skip_reason=f"fade_{_fade_top_count}_agree_{_fade_top_dir}",
-                    ))
-                # else: fade same direction as placed trade → skip (redundant)
+            # Capture balance at the moment this specific trade is placed.
+            # All concurrent trades in a burst share the same cycle-start `balance_before`
+            # above, which makes individual pnl = balance_after - balance_before meaningless
+            # (wins show negative pnl because prior concurrent losses already reduced the
+            # balance). Fetching fresh here gives an accurate per-trade baseline.
+            balance_at_placement = await self._api.balance()
+            row.balance_before = balance_at_placement
 
-            # ADX-REGIME: still shadow-only (WR ≈ 50%, not promoted).
-            if _adx_dir is not None:
-                asyncio.create_task(self._place_single_shadow(
-                    pair_api=pair_api, direction=_adx_dir,
-                    base_row=row, log_path=log_path,
-                    shadow_kind="adx_regime",
-                    would_skip_reason=f"adx_conf_{_adx_conf_val:.2f}",
+            api_call = self._api.buy if conf.direction == "CALL" else self._api.sell
+            trade = await api_call(pair_api, settings.stake_amount, expiry)
+            row.trade_id = getattr(trade, "trade_id", None)
+            row.status = getattr(trade, "status", "PENDING")
+
+            if row.status in ("ERROR", "DRY_RUN") or not row.trade_id:
+                self._open_trade_count = max(0, self._open_trade_count - 1)
+
+            write_decision(log_path, row)
+            if self._bridge:
+                _now = datetime.now(timezone.utc)
+                self._bridge.trade_opened({
+                    "trade_id": row.trade_id, "pair_raw": pair_api, "pair_api": pair_api,
+                    "dir": conf.direction, "stake": settings.stake_amount,
+                    "entry": getattr(trade, "entry", None),
+                    "opened_at": _now.isoformat(),
+                    "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
+                    "expiry_seconds": expiry,
+                    "confluence_n": agreeing,
+                    "confluence_score": conf.score,
+                })
+            log.info(
+                "[{}] TRADE {}  {}  @{:.2f}  exp={}s  payout={}%  prob={:.2f}  id={}",
+                cid, conf.direction, pair_api, settings.stake_amount,
+                expiry, payout_pct, d.combined_probability, row.trade_id,
+            )
+            trades_placed += 1
+
+            # Stagger placements so PO doesn't receive a burst of simultaneous orders.
+            # Sleep after every trade except the last slot; still fires concurrently
+            # since resolution happens in background tasks started below.
+            if settings.trade_stagger_seconds > 0 and self._open_trade_count < self._max_concurrent_trades:
+                await asyncio.sleep(settings.trade_stagger_seconds)
+
+            if row.trade_id:
+                expires_at = datetime.now(timezone.utc) + timedelta(seconds=expiry)
+                self._open_trades[row.trade_id] = {
+                    "log_path": log_path,
+                    "row": row,
+                    "balance_before": balance_at_placement,
+                    "expires_at": expires_at,
+                }
+                asyncio.create_task(self._resolve_trade_background(row.trade_id))
+
+                # Shadow expiry experiment: replicate this entry at other durations
+                # (demo only, research). Fired as a background task so the 4 shadow
+                # placements (60/120/216/300s) don't block the scan — each API call
+                # carries its own 20s buy() timeout so they still resolve cleanly.
+                asyncio.create_task(self._place_shadow_expiry_trades(
+                    pair_api=pair_api, direction=conf.direction, base_row=row,
+                    log_path=log_path,
                 ))
 
         log.info("[{}] signals cycle complete — {} trade(s) placed of {} evaluated",
@@ -640,137 +607,6 @@ class StrategyManagerV2:
         except Exception as exc:
             log.warning("[{}] {} shadow failed for {}: {}",
                         base_row.cycle_id, shadow_kind, pair_api, exc)
-
-    async def _promote_majority_blocked_real(
-        self, *, pair_api, direction, row, log_path,
-        payout_pct, balance_before, expiry, agree_n,
-    ) -> tuple[bool, str | None]:
-        """Promote a majority-blocked CALL setup to a real trade.
-
-        Called when the score-winner (CALL) was blocked by the signal-majority
-        check but has ≥3 signals agreeing. Data shows 64.5% WR for this case.
-        Returns (placed, direction) so the caller can track conflict with fade.
-        """
-        tracked_rate, n_tracked = self._tracker.rate(pair_api, direction, expiry)
-        if payout_pct and n_tracked >= settings.min_ev_samples:
-            ev = tracked_rate * (payout_pct / 100 + 1) - 1
-            if ev < settings.min_expected_value:
-                asyncio.create_task(self._place_single_shadow(
-                    pair_api=pair_api, direction=direction, base_row=row,
-                    log_path=log_path, shadow_kind="majority_blocked",
-                    would_skip_reason="majority_blocked_neg_ev",
-                ))
-                return False, None
-
-        if not self._risk.is_allowed(balance_before):
-            return False, None
-
-        if self._open_trade_count >= self._max_concurrent_trades:
-            return False, None
-
-        self._open_trade_count += 1
-        try:
-            bal = await self._api.balance()
-            api_call = self._api.buy if direction == "CALL" else self._api.sell
-            trade = await api_call(pair_api, settings.stake_amount, expiry)
-            tid = getattr(trade, "trade_id", None)
-            status = getattr(trade, "status", "PENDING")
-            mrow = replace(
-                row,
-                bot_direction=direction,
-                our_direction=direction,
-                decision="TRADE",
-                skip_reason=None,
-                shadow=False,
-                shadow_kind="majority_blocked_real",
-                would_skip_reason=f"majority_blocked_agree{agree_n}",
-                trade_id=tid,
-                status=status,
-                balance_before=bal,
-                outcome=None, pnl=None, balance_after=None,
-                ts=datetime.now(timezone.utc).isoformat(),
-            )
-            write_decision(log_path, mrow)
-            log.info("[{}] MB-TRADE {}  {}  agree={}  exp={}s  id={}",
-                     row.cycle_id, direction, pair_api, agree_n, expiry, tid)
-            if status in ("ERROR", "DRY_RUN") or not tid:
-                self._open_trade_count = max(0, self._open_trade_count - 1)
-                return False, None
-            self._open_trades[tid] = {
-                "log_path": log_path, "row": mrow, "balance_before": bal,
-                "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expiry),
-            }
-            asyncio.create_task(self._resolve_trade_background(tid))
-            return True, direction
-        except Exception as exc:
-            log.warning("[majority_blocked] trade failed for {}: {}", pair_api, exc)
-            self._open_trade_count = max(0, self._open_trade_count - 1)
-            return False, None
-
-    async def _place_fade_real_trade(
-        self, *, pair_api, direction, base_row, log_path,
-        payout_pct, balance_before, expiry, agree_count, agree_dir,
-    ) -> None:
-        """Promote a fade setup to a real trade (no conflicting position this pair/cycle).
-
-        Called inline (awaited) so concurrency accounting is synchronous.
-        Records shadow=False so outcomes feed the win-rate tracker.
-        Last 200 trades: CALL=57.3%, PUT=56.8% — both above 52.2% break-even.
-        """
-        tracked_rate, n_tracked = self._tracker.rate(pair_api, direction, expiry)
-        if payout_pct and n_tracked >= settings.min_ev_samples:
-            ev = tracked_rate * (payout_pct / 100 + 1) - 1
-            if ev < settings.min_expected_value:
-                asyncio.create_task(self._place_single_shadow(
-                    pair_api=pair_api, direction=direction, base_row=base_row,
-                    log_path=log_path, shadow_kind="fade",
-                    would_skip_reason=f"fade_neg_ev_{ev:.3f}",
-                ))
-                return
-
-        if not self._risk.is_allowed(balance_before):
-            return
-
-        if self._open_trade_count >= self._max_concurrent_trades:
-            return
-
-        self._open_trade_count += 1
-        try:
-            bal = await self._api.balance()
-            api_call = self._api.buy if direction == "CALL" else self._api.sell
-            trade = await api_call(pair_api, settings.stake_amount, expiry)
-            tid = getattr(trade, "trade_id", None)
-            status = getattr(trade, "status", "PENDING")
-            frow = replace(
-                base_row,
-                bot_direction=direction,
-                our_direction=direction,
-                decision="TRADE",
-                skip_reason=None,
-                shadow=False,
-                shadow_kind="fade_real",
-                would_skip_reason=f"fade_{agree_count}_agree_{agree_dir}",
-                trade_id=tid,
-                status=status,
-                balance_before=bal,
-                outcome=None, pnl=None, balance_after=None,
-                ts=datetime.now(timezone.utc).isoformat(),
-            )
-            write_decision(log_path, frow)
-            log.info("[{}] FADE-TRADE {}  {}  agree={}_{}  exp={}s  id={}",
-                     base_row.cycle_id, direction, pair_api,
-                     agree_count, agree_dir, expiry, tid)
-            if status in ("ERROR", "DRY_RUN") or not tid:
-                self._open_trade_count = max(0, self._open_trade_count - 1)
-                return
-            self._open_trades[tid] = {
-                "log_path": log_path, "row": frow, "balance_before": bal,
-                "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expiry),
-            }
-            asyncio.create_task(self._resolve_trade_background(tid))
-        except Exception as exc:
-            log.warning("[fade] trade failed for {}: {}", pair_api, exc)
-            self._open_trade_count = max(0, self._open_trade_count - 1)
 
     async def _resolve_trade_background(self, trade_id: str) -> None:
         """Background task: wait for trade expiry, check outcome, update decisions.jsonl."""
