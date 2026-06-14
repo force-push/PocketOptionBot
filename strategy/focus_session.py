@@ -34,10 +34,12 @@ from strategy.flip_levers import load_levers
 from strategy.flip_strategy import FlipParams, evaluate_flip
 from utils.logger import log
 
-_WARMUP_BARS = 40       # min completed bars before evaluate_flip is called
-_SESSION_TIMEOUT = 300  # seconds before forced rotation if trade quota not reached
-_PAYOUT_CHECK_BARS = 30 # re-check live payout every N bar-closes (~30 seconds)
+_WARMUP_BARS = 40        # min completed bars before evaluate_flip is called
+_SESSION_TIMEOUT = 300   # seconds before forced rotation if trade quota not reached
+_PAYOUT_CHECK_BARS = 30  # re-check live payout every N bar-closes (~30 seconds)
 _ILLIQUID_COOLDOWN = 300  # seconds to skip an illiquid pair before re-trying
+_TICK_CHECK_BARS = 20    # live bars to accumulate before checking tick rate
+                         # (must be ≥ 20 so the check uses live data, not seeded history)
 
 
 def _params(levers: dict) -> FlipParams:
@@ -203,6 +205,7 @@ class FocusSessionManager:
         done = asyncio.Event()
         bars_since_payout_check = 0
         tick_rate_checked = False
+        live_bars = 0  # bar-closes from live ticks (not seeded history)
 
         while not done.is_set() and self._running:
             try:
@@ -216,14 +219,16 @@ class FocusSessionManager:
                 continue
 
             n_bars = len(df)
+            live_bars += 1
 
             # ── tick-rate liquidity gate ──────────────────────────────────────
-            # After warmup, verify the pair has enough tick activity to produce
-            # meaningful 1s bars.  Low tick rate → noisy/flat OHLC → unreliable
-            # indicator signals.  Cool off and rotate rather than waste the session.
-            if not tick_rate_checked and n_bars >= _WARMUP_BARS:
+            # After _TICK_CHECK_BARS live bar-closes, measure avg ticks using ONLY
+            # the live bars (df.iloc[-live_bars:]).  Cannot use df["v"].tail(N):
+            # seeded history bars may have v=0 from the OHLC API, giving a false
+            # illiquid result even on active pairs.
+            if not tick_rate_checked and live_bars >= _TICK_CHECK_BARS:
                 tick_rate_checked = True
-                avg_ticks = df["v"].tail(20).mean()
+                avg_ticks = df.iloc[-live_bars:]["v"].mean()
                 min_rate = settings.focus_min_tick_rate
                 if avg_ticks < min_rate:
                     log.info(
