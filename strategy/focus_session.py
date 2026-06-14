@@ -206,12 +206,26 @@ class FocusSessionManager:
         bars_since_payout_check = 0
         tick_rate_checked = False
         live_bars = 0  # bar-closes from live ticks (not seeded history)
+        session_start = asyncio.get_event_loop().time()
 
         while not done.is_set() and self._running:
             try:
                 raw = await asyncio.wait_for(handler.wait_next(), timeout=10.0)
             except asyncio.TimeoutError:
                 log.debug("FocusSession: {} tick timeout — still waiting", pair)
+                # Time-based illiquid check: if we can't accumulate _TICK_CHECK_BARS
+                # live bars within 60s, the pair is too sparse to be useful —
+                # it would never pass the tick-rate check before the 300s timeout.
+                if not tick_rate_checked:
+                    elapsed = asyncio.get_event_loop().time() - session_start
+                    if elapsed > 60.0 and live_bars < _TICK_CHECK_BARS:
+                        log.info(
+                            "FocusSession: {} illiquid ({} live bars in {:.0f}s) "
+                            "— cooling off {}s",
+                            pair, live_bars, elapsed, _ILLIQUID_COOLDOWN,
+                        )
+                        self._illiquid[pair] = asyncio.get_event_loop().time()
+                        return
                 continue
 
             df = acc.process(raw)
