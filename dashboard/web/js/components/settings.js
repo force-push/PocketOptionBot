@@ -290,7 +290,9 @@ function simulateSave(fields, confirmLive) {
   if (fields.TRADE_MODE === 'LIVE' && !confirmLive) {
     return { ok: false, applied: {}, errors: { TRADE_MODE: 'confirm_live required to enable LIVE' }, requires_restart: [] };
   }
-  const restartKeys = ['TRADE_MODE', 'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'SIGNAL_BOT_USERNAME', 'PO_SSID'];
+  const restartKeys = ['TRADE_MODE', 'STRATEGY_MODE', 'PO_SSID', 'STAKE_AMOUNT', 'ALLOWED_PAIRS',
+    'STREAMING_ENABLED', 'STREAMING_PAIRS', 'CANDLE_FETCH_CONCURRENCY',
+    'MAX_TRADES_PER_HOUR', 'MAX_DAILY_LOSS_USD', 'COOLDOWN_AFTER_LOSS_SECONDS', 'MIN_BALANCE_MULTIPLIER'];
   const requires_restart = Object.keys(fields).filter((k) => restartKeys.includes(k));
   return { ok: true, applied: { ...fields }, errors: {}, requires_restart };
 }
