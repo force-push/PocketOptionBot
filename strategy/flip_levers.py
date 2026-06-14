@@ -24,7 +24,7 @@ LEVERS_PATH = "data/flip_levers.json"
 _LEVER_KEYS = (
     "st_period", "st_multiplier", "flip_window_bars",
     "adx_flip_min", "adx_trend_min", "adx_max",
-    "require_adx_rising", "atr_distance_min",
+    "require_adx_rising", "atr_distance_min", "cont_macd_gap_min",
 )
 
 _lock = threading.Lock()
@@ -41,6 +41,7 @@ def _defaults() -> dict:
         "adx_max": settings.flip_adx_max,
         "require_adx_rising": settings.trend_require_adx_rising,
         "atr_distance_min": settings.trend_atr_distance_min,
+        "cont_macd_gap_min": settings.cont_macd_gap_min,
     }
 
 

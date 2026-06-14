@@ -269,6 +269,7 @@ class StrategyManagerV2:
                     adx_max=levers["adx_max"],
                     require_adx_rising=levers["require_adx_rising"],
                     atr_distance_min=levers["atr_distance_min"],
+                    cont_macd_gap_min=levers["cont_macd_gap_min"],
                     flip_window_bars=levers["flip_window_bars"],
                 ))
                 conf = ConfluenceResult(

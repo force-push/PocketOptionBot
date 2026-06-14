@@ -98,6 +98,28 @@ def test_adx_max_cap_blocks_overextended():
     assert evaluate_flip(_df(prices), open_cap).direction == "CALL"
 
 
+def test_metrics_include_macd_gap_atr():
+    fd = evaluate_flip(_df(list(np.linspace(90, 110, 120))), _PERMISSIVE)
+    assert fd.metrics is not None
+    assert fd.metrics.get("macd_gap_atr") is not None
+
+
+def test_cont_macd_gap_min_blocks_weak_continuation():
+    # Strong steady uptrend = established trend (continuation). A huge MACD-gap
+    # requirement blocks it; zero requirement lets it through.
+    prices = list(np.linspace(90, 110, 200))
+    blocked = FlipParams(adx_flip_min=0, adx_trend_min=0, require_adx_rising=False,
+                         atr_distance_min=0, flip_window_bars=1, cont_macd_gap_min=999.0)
+    fd_b = evaluate_flip(_df(prices), blocked)
+    # last bar is deep in the trend (continuation), so the MACD-gap gate applies
+    if fd_b.entry_kind != "flip":
+        assert fd_b.direction is None
+        assert "MACD gap" in fd_b.reason
+    opened = FlipParams(adx_flip_min=0, adx_trend_min=0, require_adx_rising=False,
+                        atr_distance_min=0, flip_window_bars=1, cont_macd_gap_min=0.0)
+    assert evaluate_flip(_df(prices), opened).direction == "CALL"
+
+
 def test_insufficient_candles():
     fd = evaluate_flip(_df(list(np.linspace(90, 100, 20))), FlipParams())
     assert fd.direction is None

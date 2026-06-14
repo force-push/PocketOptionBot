@@ -97,7 +97,9 @@ Key settings groups:
 - **Dynamic flip levers (live, no restart):** the entry thresholds —
   `st_period`/`st_multiplier`, `flip_window_bars`, `adx_flip_min` (22),
   `adx_trend_min` (25), **`adx_max` (40 — skip over-extended/exhausted moves;
-  ADX 45+ ~17% WR)**, `require_adx_rising`, `atr_distance_min` — are read every
+  ADX 45+ ~17% WR)**, `require_adx_rising`, `atr_distance_min`, `cont_macd_gap_min`
+  (continuation requires |MACD−signal|/ATR ≥ this — momentum gate; the trend
+  "runs off the MACD", large-gap continuations ~53% WR vs small-gap ~47%) — read every
   cycle from `data/flip_levers.json` (mtime-cached), overlaid on the settings
   defaults. Edit that file to retune **without restarting the bot**. The active
   lever set is stamped onto every `DecisionRow.flip_levers` for historical review.
@@ -217,7 +219,9 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   Pure rule: SuperTrend direction, entered on a fresh **flip** (ADX ≥ flip_min)
   **or** strong-trend **continuation** (ADX ≥ trend_min & rising, price ≥
   atr_distance_min×ATR from the band), always confirmed by MACD agreement + ADX
-  +DI/−DI direction, and **rejected when ADX > adx_max** (exhausted). Uses shared
+  +DI/−DI direction, **rejected when ADX > adx_max** (exhausted), and continuation
+  additionally gated on MACD momentum (`cont_macd_gap_min` on the ATR-normalized
+  `macd_gap_atr`). Uses shared
   helpers `compute_supertrend`, `compute_macd`, `compute_adx` (in `signals/`) so
   the dashboard breakdown and the entry rule agree. `FlipDecision.metrics` carries
   per-trade diagnostics (adx, +DI/−DI, dist_atr, atr_bps, bb_width_bps, bars_in_trend).
