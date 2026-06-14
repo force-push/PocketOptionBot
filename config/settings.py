@@ -170,7 +170,7 @@ class BotSettings(BaseSettings):
     # Payout floor for FocusSession pair selection — typically higher than the
     # global min_payout_pct because FocusSession only wants top-tier pairs.
     # Pairs that drop below this mid-session trigger immediate rotation.
-    focus_payout_floor: int = Field(default=92, alias="FOCUS_PAYOUT_FLOOR", ge=0, le=100)
+    focus_payout_floor: int = Field(default=90, alias="FOCUS_PAYOUT_FLOOR", ge=0, le=100)
     # When True, FocusSession only considers forex pairs (6-char alpha OTC symbols).
     # Stocks (# prefix), indices (VIX), and crypto (BTC/ETH/BNB prefixes, dashes)
     # are excluded.  Stocks behave differently at intra-minute scale — news gaps,
