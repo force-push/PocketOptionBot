@@ -594,3 +594,25 @@ class PocketOptionAPIClient:
         if self._client is None:
             raise RuntimeError("API client not connected.")
         await self._client.send_raw_message(msg)
+
+    async def create_timed_stream(self, pair: str, seconds: int = 1) -> Any:
+        """Subscribe to a real-OHLC candle stream at ``seconds`` cadence.
+
+        Returns an async iterator yielding one candle dict per ``seconds`` (real
+        wicks, like history()). Used by the event-driven flip streamer to evaluate
+        on each new 1s bar instead of polling. Must be awaited; iterate with
+        ``async for``. Caller is responsible for ``unsubscribe(pair)`` on stop.
+        """
+        if self._client is None:
+            raise RuntimeError("API client not connected.")
+        from datetime import timedelta
+        return await self._client.subscribe_symbol_timed(pair, timedelta(seconds=seconds))
+
+    async def unsubscribe(self, pair: str) -> None:
+        """Stop a symbol subscription (best-effort)."""
+        if self._client is None:
+            return
+        try:
+            await self._client.unsubscribe(pair)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("unsubscribe({}) failed: {}", pair, exc)

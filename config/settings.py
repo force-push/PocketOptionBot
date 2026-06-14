@@ -147,6 +147,16 @@ class BotSettings(BaseSettings):
     # the scan evaluate each pair more often (catch flips sooner). Capped to avoid
     # the WS-hang seen with unbounded concurrency (see git history 2026-06-13).
     candle_fetch_concurrency: int = Field(default=3, alias="CANDLE_FETCH_CONCURRENCY", ge=1)
+    # Event-driven flip streamer (strategy/flip_streamer.py): subscribe to live 1s
+    # candle streams for STREAMING_PAIRS and place fresh flips at the turn (~1s)
+    # instead of the ~6s poll cadence. OFF by default (concurrent WS streams carry
+    # hang risk — validate live before relying on it). Streamed pairs are excluded
+    # from the poll scan. Cap ~4 concurrent subscriptions.
+    streaming_enabled: bool = Field(default=False, alias="STREAMING_ENABLED")
+    streaming_pairs: list[str] = Field(
+        default=["EURUSD_otc", "AUDUSD_otc", "GBPUSD_otc", "DOGE_otc"],
+        alias="STREAMING_PAIRS",
+    )
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
     # the bot-direction trade anyway and records the outcome, tagging the row with
@@ -238,7 +248,7 @@ class BotSettings(BaseSettings):
             raise SettingsError(f"Invalid TRADE_MODE: {v!r}. Must be DEMO or LIVE.")
         return TradeMode(mode)
 
-    @field_validator("blocked_pairs", "allowed_pairs", mode="before")
+    @field_validator("blocked_pairs", "allowed_pairs", "streaming_pairs", mode="before")
     @classmethod
     def _parse_pair_list(cls, v):
         # Accept comma-separated string or list; normalize to list

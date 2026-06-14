@@ -61,6 +61,8 @@ class StrategyManagerV2:
             init_db(settings.decisions_db_path)
         except Exception as exc:  # never block startup on store init
             log.error("decision store init failed: {}", exc)
+        # Event-driven flip streamer (started lazily in run_once when enabled).
+        self._streamer = None
 
     @property
     def tracker(self):
@@ -114,6 +116,14 @@ class StrategyManagerV2:
                 await self._sentiment.attach(self._api)
             except Exception as exc:
                 log.warning("SentimentCollector attach failed (continuing without sentiment): {}", exc)
+        # Start the event-driven flip streamer once, if enabled.
+        if settings.streaming_enabled and self._streamer is None and settings.strategy_mode == "flip":
+            try:
+                from strategy.flip_streamer import FlipStreamer
+                self._streamer = FlipStreamer(self._api, self)
+                await self._streamer.start(settings.streaming_pairs)
+            except Exception as exc:
+                log.warning("FlipStreamer start failed (continuing with poll loop): {}", exc)
         await self._run_once_signals()
 
     async def _run_once_signals(self) -> None:
@@ -189,9 +199,13 @@ class StrategyManagerV2:
         # symbols and ignore the blocklist for them (curated focus set). Each
         # still honours the payout floor, so a sub-floor pair simply sits idle.
         allow = set(settings.allowed_pairs)
+        # Pairs handled by the event-driven streamer are excluded from the poll
+        # scan so they aren't evaluated/traded twice.
+        streamed = set(settings.streaming_pairs) if (settings.streaming_enabled and self._streamer) else set()
         candidates = [
             p for p in all_pairs
             if ((p.get("symbol") in allow) if allow else (p.get("symbol") not in settings.blocked_pairs))
+            and p.get("symbol") not in streamed
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
         ]
         if settings.max_pairs_per_cycle > 0:
@@ -642,6 +656,86 @@ class StrategyManagerV2:
                 fh.write(json.dumps(row) + "\n")
         except Exception:
             pass
+
+    async def _place_flip_trade(self, pair_api, direction, *, conf_score, flip_metrics,
+                                flip_levers, payout_pct) -> bool:
+        """Place a flip trade from the event-driven streamer.
+
+        Self-contained mirror of the scan loop's placement gates (payout, per-pair
+        in-flight, concurrency, risk, EV) so the streamer never double-trades a
+        pair or breaches the concurrency cap. The concurrency slot is reserved
+        BEFORE any await (cheap checks → increment) so concurrent per-pair stream
+        consumers can't race past the cap. Returns True if a trade was placed.
+        """
+        if direction not in ("CALL", "PUT"):
+            return False
+        if settings.min_payout_pct and (payout_pct or 0) < settings.min_payout_pct:
+            return False
+        # ── atomic reservation: no await between these checks and the increment ──
+        if settings.one_open_trade_per_pair:
+            inflight = {info["row"].pair_api for info in self._open_trades.values()}
+            if pair_api in inflight:
+                return False
+        if self._open_trade_count >= self._max_concurrent_trades:
+            return False
+        self._open_trade_count += 1
+        try:
+            cid = self._next_cycle_id()
+            expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
+            log_path = settings.decisions_db_path
+            tracked_rate, n_tracked = self._tracker.rate(pair_api, direction, expiry)
+            balance = await self._api.balance()
+            if not self._risk.is_allowed(balance or 0):
+                self._open_trade_count = max(0, self._open_trade_count - 1)
+                return False
+            if payout_pct and n_tracked >= settings.min_ev_samples:
+                ev = tracked_rate * (payout_pct / 100 + 1) - 1
+                if ev < settings.min_expected_value:
+                    self._open_trade_count = max(0, self._open_trade_count - 1)
+                    return False
+            row = DecisionRow(
+                cycle_id=cid, pair_raw=pair_api, pair_api=pair_api,
+                bot_win_rate=tracked_rate, bot_is_top_pick=False,
+                bot_direction=direction, bot_setup="flip_stream", bot_indicators_raw="",
+                our_direction=direction, our_confluence_score=conf_score,
+                our_signal_breakdown={}, agreement=True,
+                combined_probability=tracked_rate, expiry_seconds=expiry,
+                decision="TRADE", skip_reason=None,
+                stake=settings.stake_amount, balance_before=balance,
+                payout_pct=payout_pct, sentiment=None,
+                flip_metrics=flip_metrics, flip_levers=flip_levers,
+            )
+            api_call = self._api.buy if direction == "CALL" else self._api.sell
+            trade = await api_call(pair_api, settings.stake_amount, expiry)
+            row.trade_id = getattr(trade, "trade_id", None)
+            row.status = getattr(trade, "status", "PENDING")
+            if row.status in ("ERROR", "DRY_RUN") or not row.trade_id:
+                self._open_trade_count = max(0, self._open_trade_count - 1)
+            write_decision(log_path, row)
+            log.info("[{}] STREAM-FLIP {}  {}  @{:.2f}  exp={}s  payout={}%  id={}",
+                     cid, direction, pair_api, settings.stake_amount, expiry, payout_pct, row.trade_id)
+            if row.trade_id and row.status not in ("ERROR", "DRY_RUN"):
+                if self._bridge:
+                    _now = datetime.now(timezone.utc)
+                    self._bridge.trade_opened({
+                        "trade_id": row.trade_id, "pair_raw": pair_api, "pair_api": pair_api,
+                        "dir": direction, "stake": settings.stake_amount,
+                        "opened_at": _now.isoformat(),
+                        "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
+                        "expiry_seconds": expiry,
+                    })
+                self._open_trades[row.trade_id] = {
+                    "log_path": log_path, "row": row,
+                    "balance_before": balance,
+                    "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expiry),
+                }
+                asyncio.create_task(self._resolve_trade_background(row.trade_id))
+                return True
+            return False
+        except Exception as exc:
+            self._open_trade_count = max(0, self._open_trade_count - 1)
+            log.error("_place_flip_trade {} failed: {}", pair_api, exc)
+            return False
 
     async def _place_single_shadow(
         self, *, pair_api, direction, base_row, log_path,

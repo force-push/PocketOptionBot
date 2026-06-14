@@ -106,6 +106,12 @@ Key settings groups:
   defaults. Edit that file to retune **without restarting the bot**. The active
   lever set is stamped onto every `DecisionRow.flip_levers` for historical review.
   See `strategy/flip_levers.py`.
+- **Event-driven flip streamer (`STREAMING_ENABLED`, default off):** subscribes
+  to live 1s candle streams for `STREAMING_PAIRS` (≤4, subscription cap) and
+  places **fresh flips at the turn (~1s)** instead of the ~6s poll cadence —
+  the poll loop misses most 1s flips. Streamed pairs are excluded from the poll
+  scan. OFF by default: concurrent WS streams carry hang risk, validate live
+  before relying on it. See `strategy/flip_streamer.py`.
 - **Safety:** `TRADE_MODE` (defaults to `DEMO`, hard-reset to DEMO if
   unset/empty; `LIVE` must be explicit), `DRY_RUN` (defaults `true` — log trades
   without calling the API; set to `false` for real execution), plus the RiskManager
@@ -232,6 +238,14 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   thresholds: settings defaults overlaid with `data/flip_levers.json` (mtime-cached,
   re-read each cycle → retune live with no restart). The manager builds `FlipParams`
   from it and records the resolved set on `DecisionRow.flip_levers` per trade.
+
+- **`strategy/flip_streamer.py`** — `FlipStreamer`: event-driven flip catcher.
+  Per focus pair, seeds a rolling buffer from `history(1)`, subscribes to the live
+  1s candle stream (`api.create_timed_stream`), runs `evaluate_flip` on each new
+  bar, and on a fresh flip calls `manager._place_flip_trade` (self-contained
+  placement: atomic concurrency reservation + payout/in-flight/risk/EV gates, so
+  it can't double-trade vs the poll loop). Fail-soft per stream. Off unless
+  `STREAMING_ENABLED`.
 
 - **`strategy/trade_logger.py`** — `write_decision(path, row)` / `backfill_outcome(
   path, trade_id, ...)`. Routes by suffix: a `.db` path → the SQLite store
