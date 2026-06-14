@@ -38,8 +38,8 @@ _WARMUP_BARS = 40        # min completed bars before evaluate_flip is called
 _SESSION_TIMEOUT = 300   # seconds before forced rotation if trade quota not reached
 _PAYOUT_CHECK_BARS = 30  # re-check live payout every N bar-closes (~30 seconds)
 _ILLIQUID_COOLDOWN = 300  # seconds to skip an illiquid pair before re-trying
-_TICK_CHECK_BARS = 20    # live bars to accumulate before checking tick rate
-                         # (must be ≥ 20 so the check uses live data, not seeded history)
+_TICK_CHECK_BARS = 10    # live bars to accumulate before checking tick rate
+                         # (seeded history bars may have v=0; only live bars are reliable)
 
 
 def _params(levers: dict) -> FlipParams:
