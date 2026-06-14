@@ -1,23 +1,26 @@
-"""Focus-session manager: trade one pair for N flips, then rotate.
+"""Focus-session manager: lock onto the best live pair, trade N flips, rotate.
 
-The poll loop scans all pairs every ~2s; the FlipStreamer watches several pairs
-concurrently.  The FocusSession takes a different approach — it mirrors how a
-manual trader works:
+Pair selection is dynamic — every rotation considers ALL active pairs above
+`FOCUS_PAYOUT_FLOOR` (default 92%), not just a static allowlist.  Two runtime
+filters cull unsuitable pairs:
 
-  1. Rank allowed pairs by live payout.  Pick the top pair above MIN_PAYOUT_PCT.
-  2. Subscribe to that pair's raw tick stream via TickAccumulator (~0-500ms lag).
-  3. Evaluate the flip strategy on every closed 1s bar.
-  4. Place trades (both fresh flips AND trend continuations) through the same
-     _place_flip_trade gate stack as the poll/streamer paths.
-  5. After FOCUS_SESSION_TRADES are placed (or SESSION_TIMEOUT seconds elapse),
-     unsubscribe, re-rank, and lock onto the next best pair.
+  1. Payout floor (checked at selection AND monitored every ~30 bars mid-session).
+     When a pair's payout drops below the floor the session aborts immediately
+     and the rotation loop picks the next best pair.
 
-The focus pair is exposed on `manager._focus_pair` so the poll loop can exclude
-it from its own scan (avoids double-evaluation on the same symbol).
+  2. Tick-rate gate (checked after warmup).  Pairs with <FOCUS_MIN_TICK_RATE
+     average ticks per 1s bar are too illiquid for reliable 1s OHLC; they are
+     cooled off for 5 minutes before being re-considered.
 
-Safety: all placement goes through _place_flip_trade which enforces payout floor,
-per-pair in-flight cap, concurrency cap, risk manager, and EV gate — identical
-to the poll and streamer paths.
+The rotation loop mirrors how a manual trader works:
+  1. Rank all active pairs by live payout.  Pick the highest above the floor.
+  2. Subscribe to raw tick stream via TickAccumulator (~0-500ms lag).
+  3. Evaluate evaluate_flip() on every closed 1s bar.
+  4. Place trades through _place_flip_trade (same gate stack as poll/streamer).
+  5. After FOCUS_SESSION_TRADES placements (or SESSION_TIMEOUT seconds), rotate.
+
+The current focus pair is exposed on self.current_pair so the poll loop can
+exclude it from its own scan (avoids double-evaluation on the same symbol).
 """
 from __future__ import annotations
 
@@ -31,8 +34,10 @@ from strategy.flip_levers import load_levers
 from strategy.flip_strategy import FlipParams, evaluate_flip
 from utils.logger import log
 
-_WARMUP_BARS = 40     # minimum completed bars before evaluate_flip is called
+_WARMUP_BARS = 40       # min completed bars before evaluate_flip is called
 _SESSION_TIMEOUT = 300  # seconds before forced rotation if trade quota not reached
+_PAYOUT_CHECK_BARS = 30 # re-check live payout every N bar-closes (~30 seconds)
+_ILLIQUID_COOLDOWN = 300  # seconds to skip an illiquid pair before re-trying
 
 
 def _params(levers: dict) -> FlipParams:
@@ -57,6 +62,8 @@ class FocusSessionManager:
         self._mgr = manager
         self._task: asyncio.Task | None = None
         self._running = False
+        # pair → loop.time() when it was flagged illiquid; cleared after cooldown
+        self._illiquid: dict[str, float] = {}
         # Current focus pair — read by manager to exclude from poll scan
         self.current_pair: str | None = None
         self.session_trades: int = 0   # trades placed in the current pair session
@@ -68,7 +75,7 @@ class FocusSessionManager:
         self._task = asyncio.create_task(self._run(), name="focus-session")
         log.info(
             "FocusSessionManager started — {} trades/pair, payout floor={}%",
-            settings.focus_session_trades, settings.min_payout_pct,
+            settings.focus_session_trades, settings.focus_payout_floor,
         )
 
     async def stop(self) -> None:
@@ -89,8 +96,8 @@ class FocusSessionManager:
             pair = await self._pick_pair()
             if pair is None:
                 log.info(
-                    "FocusSession: no allowed pair ≥{}% payout — waiting 20s",
-                    settings.min_payout_pct,
+                    "FocusSession: no pair ≥{}% payout — waiting 20s",
+                    settings.focus_payout_floor,
                 )
                 await asyncio.sleep(20)
                 continue
@@ -116,8 +123,6 @@ class FocusSessionManager:
             except Exception as exc:  # noqa: BLE001
                 log.warning("FocusSession: {} session error: {} — rotating", pair, exc)
             finally:
-                # Best-effort unsubscribe (changeSymbol subscriptions don't need
-                # an explicit close, but clean up if the library supports it)
                 try:
                     await self._api.unsubscribe(pair)
                 except Exception:  # noqa: BLE001
@@ -132,21 +137,43 @@ class FocusSessionManager:
     # ── pair selection ────────────────────────────────────────────────────────
 
     async def _pick_pair(self) -> str | None:
-        """Highest-payout allowed pair above MIN_PAYOUT_PCT, or None."""
+        """Highest-payout active pair above FOCUS_PAYOUT_FLOOR.
+
+        Considers ALL active pairs (not restricted to ALLOWED_PAIRS) so the
+        session can discover any high-payout opportunity dynamically.
+        Pairs in blocked_pairs or in the illiquid cooldown set are skipped.
+        """
         try:
             active = await self._api.get_active_pairs()
         except Exception as exc:  # noqa: BLE001
             log.debug("FocusSession._pick_pair error: {}", exc)
             return None
-        allowed = set(settings.allowed_pairs)
-        floor = settings.min_payout_pct
+
+        floor = settings.focus_payout_floor
+        blocked = set(settings.blocked_pairs)
+        now = asyncio.get_event_loop().time()
+        cooling = {p for p, t in self._illiquid.items() if now - t < _ILLIQUID_COOLDOWN}
+
         candidates = [
             p for p in active
-            if p.get("symbol") in allowed and (p.get("payout") or 0) >= floor
+            if (p.get("payout") or 0) >= floor
+            and p.get("symbol") not in blocked
+            and p.get("symbol") not in cooling
         ]
         if not candidates:
+            if cooling:
+                log.debug(
+                    "FocusSession: {} pair(s) in illiquid cooldown: {}",
+                    len(cooling), ", ".join(sorted(cooling)),
+                )
             return None
-        return max(candidates, key=lambda p: p.get("payout", 0))["symbol"]
+
+        best = max(candidates, key=lambda p: p.get("payout", 0))
+        log.debug(
+            "FocusSession: {} candidates ≥{}% | picking {} at {}%",
+            len(candidates), floor, best["symbol"], best.get("payout"),
+        )
+        return best["symbol"]
 
     # ── pair session ──────────────────────────────────────────────────────────
 
@@ -154,8 +181,7 @@ class FocusSessionManager:
         """Subscribe to raw ticks, evaluate flips, place until quota filled."""
         acc = TickAccumulator(pair)
 
-        # Seed the rolling bar buffer from recent history so SuperTrend/MACD/ADX
-        # indicators are warm when the first live tick arrives.
+        # Seed the rolling bar buffer so SuperTrend/MACD/ADX are warm immediately.
         try:
             seed = await asyncio.wait_for(
                 self._api.get_real_candles(pair, period=1), timeout=12.0
@@ -168,9 +194,6 @@ class FocusSessionManager:
         except Exception as exc:  # noqa: BLE001
             log.debug("FocusSession: {} seed error (continuing cold): {}", pair, exc)
 
-        # Open a dedicated raw WS handler and subscribe the pair's tick stream.
-        # Each create_raw_handler() call opens an independent message queue —
-        # this won't interfere with the SentimentCollector's handler.
         handler = await self._api.create_raw_handler()
         await self._api.send_raw_message(
             f'42["changeSymbol",{{"asset":"{pair}","period":1}}]'
@@ -178,6 +201,9 @@ class FocusSessionManager:
         log.debug("FocusSession: raw tick stream subscribed for {}", pair)
 
         done = asyncio.Event()
+        bars_since_payout_check = 0
+        tick_rate_checked = False
+
         while not done.is_set() and self._running:
             try:
                 raw = await asyncio.wait_for(handler.wait_next(), timeout=10.0)
@@ -186,9 +212,46 @@ class FocusSessionManager:
                 continue
 
             df = acc.process(raw)
-            if df is None or len(df) < _WARMUP_BARS:
+            if df is None:
                 continue
 
+            n_bars = len(df)
+
+            # ── tick-rate liquidity gate ──────────────────────────────────────
+            # After warmup, verify the pair has enough tick activity to produce
+            # meaningful 1s bars.  Low tick rate → noisy/flat OHLC → unreliable
+            # indicator signals.  Cool off and rotate rather than waste the session.
+            if not tick_rate_checked and n_bars >= _WARMUP_BARS:
+                tick_rate_checked = True
+                avg_ticks = df["v"].tail(20).mean()
+                min_rate = settings.focus_min_tick_rate
+                if avg_ticks < min_rate:
+                    log.info(
+                        "FocusSession: {} illiquid (avg {:.1f} ticks/bar < {}) "
+                        "— cooling off {}s",
+                        pair, avg_ticks, min_rate, _ILLIQUID_COOLDOWN,
+                    )
+                    self._illiquid[pair] = asyncio.get_event_loop().time()
+                    return
+
+            if n_bars < _WARMUP_BARS:
+                continue
+
+            # ── mid-session payout monitoring ─────────────────────────────────
+            # If the broker drops payout below our floor, abandon this pair so
+            # the rotation loop can find a better opportunity.
+            bars_since_payout_check += 1
+            if bars_since_payout_check >= _PAYOUT_CHECK_BARS:
+                bars_since_payout_check = 0
+                live_payout = await self._api.get_payout(pair)
+                if live_payout is None or live_payout < settings.focus_payout_floor:
+                    log.info(
+                        "FocusSession: {} payout dropped to {}% (floor {}%) — rotating",
+                        pair, live_payout, settings.focus_payout_floor,
+                    )
+                    return
+
+            # ── flip evaluation ───────────────────────────────────────────────
             levers = load_levers()
             fd = evaluate_flip(df, _params(levers))
             if not fd.direction:

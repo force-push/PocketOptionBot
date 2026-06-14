@@ -167,6 +167,15 @@ class BotSettings(BaseSettings):
     # session unsubscribes and re-ranks.  A forced rotation also fires after
     # 300s so a quiet pair never blocks the queue indefinitely.
     focus_session_trades: int = Field(default=10, alias="FOCUS_SESSION_TRADES", ge=1)
+    # Payout floor for FocusSession pair selection — typically higher than the
+    # global min_payout_pct because FocusSession only wants top-tier pairs.
+    # Pairs that drop below this mid-session trigger immediate rotation.
+    focus_payout_floor: int = Field(default=92, alias="FOCUS_PAYOUT_FLOOR", ge=0, le=100)
+    # Minimum average ticks per 1s bar for a pair to be considered liquid.
+    # Illiquid pairs (too few ticks) produce noisy/flat OHLC bars — the
+    # SuperTrend/MACD indicators fire on microstructure rather than real moves.
+    # Pairs below this rate are cooled off for 5 minutes before being re-tried.
+    focus_min_tick_rate: float = Field(default=2.0, alias="FOCUS_MIN_TICK_RATE", ge=0.1)
 
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
