@@ -41,6 +41,31 @@ _ILLIQUID_COOLDOWN = 300  # seconds to skip an illiquid pair before re-trying
 _TICK_CHECK_BARS = 10    # live bars to accumulate before checking tick rate
                          # (seeded history bars may have v=0; only live bars are reliable)
 
+# Crypto base-currency prefixes that appear as 6-char OTC symbols (e.g. BTCUSD).
+# Blocking these keeps FX-only mode from accidentally picking crypto tickers that
+# happen to match the 6-alpha length filter.
+_CRYPTO_PREFIXES = {"BTC", "ETH", "BNB", "SOL", "ADA", "XRP", "LTC", "TRX",
+                    "XLM", "DOT", "MAT", "UNI", "LNK", "AVA", "DFX", "BIT"}
+
+
+def _is_fx_pair(symbol: str) -> bool:
+    """Return True if the PocketOption OTC symbol looks like a forex pair.
+
+    Accepts: EURUSD_otc, AUDCAD_otc, NGNUSD_otc, JODCNY_otc (6-char alpha + _otc)
+    Rejects: #MSFT_otc (stock), CITI_otc (4-char stock), BNB-USD_otc (dash=crypto),
+             BTCUSD_otc (crypto prefix), DOGE_otc (4-char crypto), VIX_otc (index).
+    """
+    base = symbol.removesuffix("_otc")
+    if base.startswith("#"):        # stock (PocketOption prefixes stocks with #)
+        return False
+    if "-" in base:                 # crypto like BNB-USD, TRX-USD
+        return False
+    if len(base) != 6 or not base.isalpha():  # forex pairs are always 6 alpha chars
+        return False
+    if base[:3].upper() in _CRYPTO_PREFIXES:  # crypto disguised as forex-length
+        return False
+    return True
+
 
 def _params(levers: dict) -> FlipParams:
     return FlipParams(
@@ -155,12 +180,14 @@ class FocusSessionManager:
         blocked = set(settings.blocked_pairs)
         now = asyncio.get_event_loop().time()
         cooling = {p for p, t in self._illiquid.items() if now - t < _ILLIQUID_COOLDOWN}
+        fx_only = settings.focus_fx_only
 
         candidates = [
             p for p in active
             if (p.get("payout") or 0) >= floor
             and p.get("symbol") not in blocked
             and p.get("symbol") not in cooling
+            and (not fx_only or _is_fx_pair(p.get("symbol", "")))
         ]
         if not candidates:
             if cooling:

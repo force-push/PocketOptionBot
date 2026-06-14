@@ -171,6 +171,11 @@ class BotSettings(BaseSettings):
     # global min_payout_pct because FocusSession only wants top-tier pairs.
     # Pairs that drop below this mid-session trigger immediate rotation.
     focus_payout_floor: int = Field(default=92, alias="FOCUS_PAYOUT_FLOOR", ge=0, le=100)
+    # When True, FocusSession only considers forex pairs (6-char alpha OTC symbols).
+    # Stocks (# prefix), indices (VIX), and crypto (BTC/ETH/BNB prefixes, dashes)
+    # are excluded.  Stocks behave differently at intra-minute scale — news gaps,
+    # circuit breakers, and thin spreads make SuperTrend signals unreliable.
+    focus_fx_only: bool = Field(default=True, alias="FOCUS_FX_ONLY")
     # Minimum average ticks per 1s bar for a pair to be considered liquid.
     # Illiquid pairs (too few ticks) produce noisy/flat OHLC bars — the
     # SuperTrend/MACD indicators fire on microstructure rather than real moves.
