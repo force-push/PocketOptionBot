@@ -214,11 +214,18 @@ class StrategyManagerV2:
         streamed = set(settings.streaming_pairs) if (settings.streaming_enabled and self._streamer) else set()
         if self._focus and self._focus.current_pair:
             streamed = streamed | {self._focus.current_pair}
+        # FX-only filter: applied when no explicit allowlist and focus_fx_only=True.
+        # Reuses _is_fx_pair() from focus_session (same logic, same setting).
+        if not allow and settings.focus_fx_only:
+            from strategy.focus_session import _is_fx_pair as _fx_check
+        else:
+            _fx_check = None
         candidates = [
             p for p in all_pairs
             if ((p.get("symbol") in allow) if allow else (p.get("symbol") not in settings.blocked_pairs))
             and p.get("symbol") not in streamed
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
+            and (_fx_check is None or _fx_check(p.get("symbol", "")))
         ]
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
