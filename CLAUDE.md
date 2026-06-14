@@ -78,8 +78,10 @@ Key settings groups:
   `binaryoptionstoolsv2`.
 - **v2 gate settings:** `DEFAULT_EXPIRY_SECONDS` (30), `STAKE_AMOUNT` (default
   `3.00`, live-editable in dashboard without restart),
-  `MIN_PAYOUT_PCT` (default `92` — skip trade if PocketOption's live payout for
-  the pair is below this %; set to `0` to disable), `MIN_EXPECTED_VALUE` (default
+  `MIN_PAYOUT_PCT` (default `88` — skip trade if PocketOption's live payout for
+  the pair is below this %; set to `0` to disable. Lowered 92→88 on 2026-06-14:
+  at 92% the allowlist majors (EURUSD/AUDUSD) were sidelined most of the day by
+  OTC payout dips, concentrating trades on the weaker exotics), `MIN_EXPECTED_VALUE` (default
   `0.0` — EV gate; `EV = win_rate*(payout/100+1) - 1`, skip when EV is below this;
   `-0.05` allows 5% below break-even for warmup) and `MIN_EV_SAMPLES` (default
   `15` — tracked trades per (pair, direction, expiry) before the EV gate

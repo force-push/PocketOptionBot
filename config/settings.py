@@ -83,7 +83,7 @@ class BotSettings(BaseSettings):
     allowed_expiries: tuple[int, ...] = (5, 10, 15, 30, 50, 60, 80, 120, 128, 216, 300)
     # Minimum payout % from PocketOption for a trade to proceed. 0 disables the gate.
     # Set to 92 to only trade when PO is offering ≥92% profit on a win.
-    min_payout_pct: int = Field(default=92, alias="MIN_PAYOUT_PCT", ge=0, le=100)
+    min_payout_pct: int = Field(default=88, alias="MIN_PAYOUT_PCT", ge=0, le=100)
     # EV gate: minimum expected value to trade. EV = win_rate*(payout/100+1) - 1.
     # 0.0 = break-even required; -0.05 = allow 5% below break-even (warmup tolerance).
     # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
