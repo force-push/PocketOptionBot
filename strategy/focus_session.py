@@ -1,0 +1,215 @@
+"""Focus-session manager: trade one pair for N flips, then rotate.
+
+The poll loop scans all pairs every ~2s; the FlipStreamer watches several pairs
+concurrently.  The FocusSession takes a different approach — it mirrors how a
+manual trader works:
+
+  1. Rank allowed pairs by live payout.  Pick the top pair above MIN_PAYOUT_PCT.
+  2. Subscribe to that pair's raw tick stream via TickAccumulator (~0-500ms lag).
+  3. Evaluate the flip strategy on every closed 1s bar.
+  4. Place trades (both fresh flips AND trend continuations) through the same
+     _place_flip_trade gate stack as the poll/streamer paths.
+  5. After FOCUS_SESSION_TRADES are placed (or SESSION_TIMEOUT seconds elapse),
+     unsubscribe, re-rank, and lock onto the next best pair.
+
+The focus pair is exposed on `manager._focus_pair` so the poll loop can exclude
+it from its own scan (avoids double-evaluation on the same symbol).
+
+Safety: all placement goes through _place_flip_trade which enforces payout floor,
+per-pair in-flight cap, concurrency cap, risk manager, and EV gate — identical
+to the poll and streamer paths.
+"""
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from broker.tick_stream import TickAccumulator
+from config.settings import settings
+from data.candles import candles_to_df
+from strategy.flip_levers import load_levers
+from strategy.flip_strategy import FlipParams, evaluate_flip
+from utils.logger import log
+
+_WARMUP_BARS = 40     # minimum completed bars before evaluate_flip is called
+_SESSION_TIMEOUT = 300  # seconds before forced rotation if trade quota not reached
+
+
+def _params(levers: dict) -> FlipParams:
+    return FlipParams(
+        st_period=levers["st_period"],
+        st_multiplier=levers["st_multiplier"],
+        adx_flip_min=levers["adx_flip_min"],
+        adx_trend_min=levers["adx_trend_min"],
+        adx_max=levers["adx_max"],
+        require_adx_rising=levers["require_adx_rising"],
+        atr_distance_min=levers["atr_distance_min"],
+        cont_macd_gap_min=levers["cont_macd_gap_min"],
+        flip_window_bars=levers["flip_window_bars"],
+    )
+
+
+class FocusSessionManager:
+    """Lock onto the best payout pair, trade N flips, rotate."""
+
+    def __init__(self, api_client: Any, manager: Any) -> None:
+        self._api = api_client
+        self._mgr = manager
+        self._task: asyncio.Task | None = None
+        self._running = False
+        # Current focus pair — read by manager to exclude from poll scan
+        self.current_pair: str | None = None
+        self.session_trades: int = 0   # trades placed in the current pair session
+        self.total_trades: int = 0     # lifetime total
+
+    async def start(self) -> None:
+        await self.stop()
+        self._running = True
+        self._task = asyncio.create_task(self._run(), name="focus-session")
+        log.info(
+            "FocusSessionManager started — {} trades/pair, payout floor={}%",
+            settings.focus_session_trades, settings.min_payout_pct,
+        )
+
+    async def stop(self) -> None:
+        self._running = False
+        self.current_pair = None
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._task = None
+
+    # ── main rotation loop ────────────────────────────────────────────────────
+
+    async def _run(self) -> None:
+        while self._running:
+            pair = await self._pick_pair()
+            if pair is None:
+                log.info(
+                    "FocusSession: no allowed pair ≥{}% payout — waiting 20s",
+                    settings.min_payout_pct,
+                )
+                await asyncio.sleep(20)
+                continue
+
+            self.current_pair = pair
+            self.session_trades = 0
+            log.info(
+                "FocusSession ▶ {} — targeting {} trades (timeout {}s)",
+                pair, settings.focus_session_trades, _SESSION_TIMEOUT,
+            )
+            try:
+                await asyncio.wait_for(
+                    self._run_pair_session(pair),
+                    timeout=float(_SESSION_TIMEOUT),
+                )
+            except asyncio.TimeoutError:
+                log.info(
+                    "FocusSession: {} timed out after {}s ({} trades) — rotating",
+                    pair, _SESSION_TIMEOUT, self.session_trades,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("FocusSession: {} session error: {} — rotating", pair, exc)
+            finally:
+                # Best-effort unsubscribe (changeSymbol subscriptions don't need
+                # an explicit close, but clean up if the library supports it)
+                try:
+                    await self._api.unsubscribe(pair)
+                except Exception:  # noqa: BLE001
+                    pass
+                self.current_pair = None
+
+            log.info(
+                "FocusSession ■ {} — {} trades placed (total: {})",
+                pair, self.session_trades, self.total_trades,
+            )
+
+    # ── pair selection ────────────────────────────────────────────────────────
+
+    async def _pick_pair(self) -> str | None:
+        """Highest-payout allowed pair above MIN_PAYOUT_PCT, or None."""
+        try:
+            active = await self._api.get_active_pairs()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("FocusSession._pick_pair error: {}", exc)
+            return None
+        allowed = set(settings.allowed_pairs)
+        floor = settings.min_payout_pct
+        candidates = [
+            p for p in active
+            if p.get("symbol") in allowed and (p.get("payout") or 0) >= floor
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: p.get("payout", 0))["symbol"]
+
+    # ── pair session ──────────────────────────────────────────────────────────
+
+    async def _run_pair_session(self, pair: str) -> None:
+        """Subscribe to raw ticks, evaluate flips, place until quota filled."""
+        acc = TickAccumulator(pair)
+
+        # Seed the rolling bar buffer from recent history so SuperTrend/MACD/ADX
+        # indicators are warm when the first live tick arrives.
+        try:
+            seed = await asyncio.wait_for(
+                self._api.get_real_candles(pair, period=1), timeout=12.0
+            )
+            if seed:
+                seed_df = candles_to_df(list(seed)[-200:])
+                if not seed_df.empty:
+                    acc.seed_df(seed_df)
+                    log.debug("FocusSession: {} seeded {} bars", pair, len(seed_df))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("FocusSession: {} seed error (continuing cold): {}", pair, exc)
+
+        # Open a dedicated raw WS handler and subscribe the pair's tick stream.
+        # Each create_raw_handler() call opens an independent message queue —
+        # this won't interfere with the SentimentCollector's handler.
+        handler = await self._api.create_raw_handler()
+        await self._api.send_raw_message(
+            f'42["changeSymbol",{{"asset":"{pair}","period":1}}]'
+        )
+        log.debug("FocusSession: raw tick stream subscribed for {}", pair)
+
+        done = asyncio.Event()
+        while not done.is_set() and self._running:
+            try:
+                raw = await asyncio.wait_for(handler.wait_next(), timeout=10.0)
+            except asyncio.TimeoutError:
+                log.debug("FocusSession: {} tick timeout — still waiting", pair)
+                continue
+
+            df = acc.process(raw)
+            if df is None or len(df) < _WARMUP_BARS:
+                continue
+
+            levers = load_levers()
+            fd = evaluate_flip(df, _params(levers))
+            if not fd.direction:
+                continue
+
+            payout = await self._api.get_payout(pair)
+            placed = await self._mgr._place_flip_trade(
+                pair, fd.direction,
+                conf_score=1.0,
+                flip_metrics=fd.metrics,
+                flip_levers=levers,
+                payout_pct=payout,
+            )
+            if placed:
+                self.session_trades += 1
+                self.total_trades += 1
+                remaining = settings.focus_session_trades - self.session_trades
+                log.info(
+                    "FocusSession: {} trade {}/{} — {} {} | {} more to rotate",
+                    pair, self.session_trades, settings.focus_session_trades,
+                    fd.direction, fd.reason, remaining,
+                )
+                if self.session_trades >= settings.focus_session_trades:
+                    done.set()

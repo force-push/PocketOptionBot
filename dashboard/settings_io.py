@@ -101,6 +101,12 @@ FIELDS: list[_F] = [
     _F("CANDLE_FETCH_CONCURRENCY", "candle_fetch_concurrency", "Flip Strategy", "int", False, True,
        "Candle Fetch Concurrency", "number",
        hint="parallel history() fetches per cycle (cap avoids WS hang)", step=1, min=1, max=6),
+    _F("FOCUS_SESSION_ENABLED", "focus_session_enabled", "Flip Strategy", "bool", False, True,
+       "Focus Session", "toggle",
+       hint="lock onto one pair, trade N flips, rotate — restart required"),
+    _F("FOCUS_SESSION_TRADES", "focus_session_trades", "Flip Strategy", "int", False, False,
+       "Focus Trades / Pair", "number",
+       hint="placements before rotating to next best-payout pair", step=1, min=1, max=50),
     # SuperTrend Entry Params — .env defaults, overridden live by data/flip_levers.json
     _F("ST_PERIOD", "st_period", "SuperTrend Entry Params", "int", False, False, "SuperTrend Period", "number",
        hint="edit data/flip_levers.json to retune live without restart", step=1, min=5, max=50),

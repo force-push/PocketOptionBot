@@ -63,6 +63,8 @@ class StrategyManagerV2:
             log.error("decision store init failed: {}", exc)
         # Event-driven flip streamer (started lazily in run_once when enabled).
         self._streamer = None
+        # Focus-session manager (started lazily in run_once when enabled).
+        self._focus: Any = None
 
     @property
     def tracker(self):
@@ -124,6 +126,14 @@ class StrategyManagerV2:
                 await self._streamer.start(settings.streaming_pairs)
             except Exception as exc:
                 log.warning("FlipStreamer start failed (continuing with poll loop): {}", exc)
+        # Start the focus-session manager once, if enabled.
+        if settings.focus_session_enabled and self._focus is None and settings.strategy_mode == "flip":
+            try:
+                from strategy.focus_session import FocusSessionManager
+                self._focus = FocusSessionManager(self._api, self)
+                await self._focus.start()
+            except Exception as exc:
+                log.warning("FocusSessionManager start failed (continuing without): {}", exc)
         await self._run_once_signals()
 
     async def _run_once_signals(self) -> None:
@@ -199,9 +209,11 @@ class StrategyManagerV2:
         # symbols and ignore the blocklist for them (curated focus set). Each
         # still honours the payout floor, so a sub-floor pair simply sits idle.
         allow = set(settings.allowed_pairs)
-        # Pairs handled by the event-driven streamer are excluded from the poll
-        # scan so they aren't evaluated/traded twice.
+        # Pairs handled by the event-driven streamer or focus-session are excluded
+        # from the poll scan so they aren't evaluated/traded twice.
         streamed = set(settings.streaming_pairs) if (settings.streaming_enabled and self._streamer) else set()
+        if self._focus and self._focus.current_pair:
+            streamed = streamed | {self._focus.current_pair}
         candidates = [
             p for p in all_pairs
             if ((p.get("symbol") in allow) if allow else (p.get("symbol") not in settings.blocked_pairs))

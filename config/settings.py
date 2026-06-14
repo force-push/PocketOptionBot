@@ -157,6 +157,17 @@ class BotSettings(BaseSettings):
         default=["EURUSD_otc", "AUDUSD_otc", "GBPUSD_otc", "DOGE_otc"],
         alias="STREAMING_PAIRS",
     )
+    # ── Focus-session manager (strategy/focus_session.py) ────────────────────
+    # When enabled, a background task locks onto the highest-payout allowed pair,
+    # subscribes to its raw tick stream, trades N flips, then rotates to the next
+    # best pair.  The current focus pair is excluded from the poll loop scan.
+    # OFF by default — validate alongside the poll loop before relying on it.
+    focus_session_enabled: bool = Field(default=False, alias="FOCUS_SESSION_ENABLED")
+    # Trades to place per pair before rotating.  After this many placements the
+    # session unsubscribes and re-ranks.  A forced rotation also fires after
+    # 300s so a quiet pair never blocks the queue indefinitely.
+    focus_session_trades: int = Field(default=10, alias="FOCUS_SESSION_TRADES", ge=1)
+
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
     # the bot-direction trade anyway and records the outcome, tagging the row with
