@@ -230,12 +230,27 @@ class FocusSessionManager:
 
             df = acc.process(raw)
             if df is None:
+                # No NGNUSD bar closed (this was a tick for another pair or a
+                # mid-second tick).  Still check the time-based illiquid gate:
+                # other subscriptions (FlipStreamer) keep the handler alive even
+                # when the focus pair emits zero ticks, so the TimeoutError path
+                # above never fires for truly idle pairs.
+                if not tick_rate_checked:
+                    elapsed = asyncio.get_event_loop().time() - session_start
+                    if elapsed > 60.0 and live_bars < _TICK_CHECK_BARS:
+                        log.info(
+                            "FocusSession: {} illiquid ({} live bars in {:.0f}s) "
+                            "— cooling off {}s",
+                            pair, live_bars, elapsed, _ILLIQUID_COOLDOWN,
+                        )
+                        self._illiquid[pair] = asyncio.get_event_loop().time()
+                        return
                 continue
 
             n_bars = len(df)
             live_bars += 1
 
-            # ── tick-rate liquidity gate ──────────────────────────────────────
+            # ── tick-rate liquidity gate (count-based) ────────────────────────
             # After _TICK_CHECK_BARS live bar-closes, measure avg ticks using ONLY
             # the live bars (df.iloc[-live_bars:]).  Cannot use df["v"].tail(N):
             # seeded history bars may have v=0 from the OHLC API, giving a false
