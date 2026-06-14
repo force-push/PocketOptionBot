@@ -131,6 +131,9 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         return FlipDecision(None, None, f"DI disagrees ({diag})", metrics)
 
     if flipped:
+        if macd_gap_atr < params.cont_macd_gap_min:
+            return FlipDecision(None, None,
+                                f"flip but weak MACD gap {macd_gap_atr}<{params.cont_macd_gap_min} ({diag})", metrics)
         if adx_now >= params.adx_flip_min:
             return FlipDecision(direction, "flip", f"FLIP {direction} confirmed ({diag})",
                                 {**metrics, "entry_kind": "flip"})
