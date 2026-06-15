@@ -136,6 +136,8 @@ async def test_signals_loop_skips_blocked_pairs(tmp_path, monkeypatch):
     api.sell = AsyncMock()
 
     mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    # Explicitly block the two test pairs so the test doesn't rely on .env state
+    monkeypatch.setattr(settings, "blocked_pairs", ["EURUSD_otc", "ETHUSD_otc"])
     await mgr.run_once()
 
     api.buy.assert_not_awaited()

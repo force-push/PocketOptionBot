@@ -17,8 +17,8 @@ from broker.sentiment_collector import SentimentCollector
 from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide_signals, Decision
-from strategy.flip_strategy import evaluate_flip, FlipParams
-from strategy.flip_levers import load_levers
+from strategy.flip_strategy import evaluate_flip
+from strategy.flip_levers import load_levers, build_flip_params
 from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter
@@ -63,6 +63,8 @@ class StrategyManagerV2:
             log.error("decision store init failed: {}", exc)
         # Event-driven flip streamer (started lazily in run_once when enabled).
         self._streamer = None
+        # Focus-session manager (started lazily in run_once when enabled).
+        self._focus: Any = None
 
     @property
     def tracker(self):
@@ -124,6 +126,14 @@ class StrategyManagerV2:
                 await self._streamer.start(settings.streaming_pairs)
             except Exception as exc:
                 log.warning("FlipStreamer start failed (continuing with poll loop): {}", exc)
+        # Start the focus-session manager once, if enabled.
+        if settings.focus_session_enabled and self._focus is None and settings.strategy_mode == "flip":
+            try:
+                from strategy.focus_session import FocusSessionManager
+                self._focus = FocusSessionManager(self._api, self)
+                await self._focus.start()
+            except Exception as exc:
+                log.warning("FocusSessionManager start failed (continuing without): {}", exc)
         await self._run_once_signals()
 
     async def _run_once_signals(self) -> None:
@@ -199,14 +209,23 @@ class StrategyManagerV2:
         # symbols and ignore the blocklist for them (curated focus set). Each
         # still honours the payout floor, so a sub-floor pair simply sits idle.
         allow = set(settings.allowed_pairs)
-        # Pairs handled by the event-driven streamer are excluded from the poll
-        # scan so they aren't evaluated/traded twice.
+        # Pairs handled by the event-driven streamer or focus-session are excluded
+        # from the poll scan so they aren't evaluated/traded twice.
         streamed = set(settings.streaming_pairs) if (settings.streaming_enabled and self._streamer) else set()
+        if self._focus and self._focus.current_pair:
+            streamed = streamed | {self._focus.current_pair}
+        # FX-only filter: applied when no explicit allowlist and focus_fx_only=True.
+        # Reuses _is_fx_pair() from focus_session (same logic, same setting).
+        if not allow and settings.focus_fx_only:
+            from strategy.focus_session import _is_fx_pair as _fx_check
+        else:
+            _fx_check = None
         candidates = [
             p for p in all_pairs
             if ((p.get("symbol") in allow) if allow else (p.get("symbol") not in settings.blocked_pairs))
             and p.get("symbol") not in streamed
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
+            and (_fx_check is None or _fx_check(p.get("symbol", "")))
         ]
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
@@ -277,15 +296,7 @@ class StrategyManagerV2:
                 # Live-tunable levers (re-read each cycle from data/flip_levers.json
                 # without restart; recorded per trade below for historical review).
                 levers = load_levers()
-                fd = evaluate_flip(df, FlipParams(
-                    st_period=levers["st_period"], st_multiplier=levers["st_multiplier"],
-                    adx_flip_min=levers["adx_flip_min"], adx_trend_min=levers["adx_trend_min"],
-                    adx_max=levers["adx_max"],
-                    require_adx_rising=levers["require_adx_rising"],
-                    atr_distance_min=levers["atr_distance_min"],
-                    cont_macd_gap_min=levers["cont_macd_gap_min"],
-                    flip_window_bars=levers["flip_window_bars"],
-                ))
+                fd = evaluate_flip(df, build_flip_params(levers))
                 conf = ConfluenceResult(
                     direction=fd.direction,
                     score=1.0 if fd.direction else 0.0,

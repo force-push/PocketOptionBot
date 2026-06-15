@@ -29,18 +29,34 @@ def make_settings(*, mode="DEMO", ssid=SSID_DEMO):
     """A lightweight stand-in for the BotSettings singleton."""
     return SimpleNamespace(
         trade_mode=_Mode(mode),
+        strategy_mode="flip",
         dry_run=True,
         stake_amount=1.5,
-        default_expiry_seconds=30,
-        telegram_api_id=2040123,
-        telegram_api_hash="super-secret-hash",
-        signal_bot_username="po_broker_bot",
+        default_expiry_seconds=5,
         po_ssid=ssid,
-        pair_select_min_win_rate=0.82,
-        min_confluence_score=0.75,
-        click_trade_anyway=True,
-        max_trades_per_hour=10,
-        max_daily_loss_usd=25.0,
+        # Flip Strategy
+        allowed_pairs=["AUDUSD_otc", "NZDUSD_otc", "AUDNZD_otc", "EURUSD_otc"],
+        streaming_enabled=True,
+        streaming_pairs=["EURNZD_otc", "NZDUSD_otc", "AUDUSD_otc", "AUDNZD_otc"],
+        one_open_trade_per_pair=True,
+        flip_window_bars=3,
+        candle_fetch_concurrency=3,
+        # SuperTrend Entry Params
+        st_period=10,
+        st_multiplier=3.0,
+        flip_adx_min=22.0,
+        trend_adx_min=25.0,
+        flip_adx_max=40.0,
+        trend_require_adx_rising=True,
+        trend_atr_distance_min=0.5,
+        cont_macd_gap_min=0.0,
+        # Entry Gates
+        min_payout_pct=88,
+        min_expected_value=0.0,
+        min_ev_samples=15,
+        # Risk
+        max_trades_per_hour=240,
+        max_daily_loss_usd=20.0,
         cooldown_after_loss_seconds=120,
         min_balance_multiplier=5.0,
     )
@@ -96,7 +112,7 @@ def test_read_settings_groups_mirror_mockup():
     # groups is an ORDERED array of cards with display metadata (UI shape).
     assert isinstance(out["groups"], list)
     ids = [g["id"] for g in out["groups"]]
-    assert ids == ["safety", "gate", "ta", "risk", "pocketoption"]
+    assert ids == ["safety", "flip", "supertrend", "gate", "risk", "pocketoption"]
     safety = out["groups"][0]
     assert safety["span2"] is True and safety["title"] == "Safety & Trade Mode"
     assert all("fields" in g and g["fields"] for g in out["groups"])

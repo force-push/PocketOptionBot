@@ -8,20 +8,63 @@
       "span2": true,
       "fields": [
         {"key": "TRADE_MODE", "label": "Trade Mode", "type": "mode", "value": "DEMO", "requires_restart": true},
-        {"key": "DRY_RUN", "label": "Dry Run", "hint": "Log trades without calling the API", "type": "toggle", "value": true, "requires_restart": false},
-        {"key": "STAKE_AMOUNT", "label": "Stake Amount (USD)", "type": "number", "value": 1.50, "step": 0.50, "requires_restart": false},
-        {"key": "DEFAULT_EXPIRY_SECONDS", "label": "Default Expiry (s)", "type": "number", "value": 30, "step": 1, "requires_restart": false}
+        {"key": "STRATEGY_MODE", "label": "Strategy Mode", "hint": "flip = SuperTrend flip/trend (default); confluence = legacy 11-signal", "type": "text", "value": "flip", "requires_restart": true},
+        {"key": "DRY_RUN", "label": "Dry Run", "hint": "Log trades without calling the API", "type": "toggle", "value": false, "requires_restart": false},
+        {"key": "STAKE_AMOUNT", "label": "Stake Amount (USD)", "type": "number", "value": 1.00, "step": 0.50, "requires_restart": true},
+        {"key": "DEFAULT_EXPIRY_SECONDS", "label": "Default Expiry (s)", "type": "number", "value": 5, "step": 1, "requires_restart": false}
       ]
     },
     {
-      "id": "telegram",
-      "title": "Telegram Session",
-      "icon": "✈️",
-      "subtitle": "Telethon user session (MTProto)",
+      "id": "flip",
+      "title": "Flip Strategy",
+      "icon": "📈",
+      "subtitle": "Pair allowlist · streamer · cycle control",
       "fields": [
-        {"key": "TELEGRAM_API_ID", "label": "API ID", "type": "text", "value": "2040123", "requires_restart": true},
-        {"key": "TELEGRAM_API_HASH", "label": "API Hash", "type": "secret", "value": "••••", "requires_restart": true},
-        {"key": "SIGNAL_BOT_USERNAME", "label": "Signal Bot", "type": "text", "value": "po_broker_bot", "requires_restart": true}
+        {"key": "ALLOWED_PAIRS", "label": "Allowed Pairs", "hint": "curated OTC allowlist, comma-separated (authoritative; BLOCKED_PAIRS ignored when set)", "type": "text", "value": "AUDUSD_otc,NZDUSD_otc,AUDNZD_otc,AUDCHF_otc,EURUSD_otc,EURNZD_otc", "requires_restart": true},
+        {"key": "STREAMING_ENABLED", "label": "FlipStreamer", "hint": "event-driven bar-close entries (~1s lag vs ~6s poll); restart required", "type": "toggle", "value": true, "requires_restart": true},
+        {"key": "STREAMING_PAIRS", "label": "Streaming Pairs", "hint": "comma-separated; ≤4 (WS subscription cap); excluded from poll scan", "type": "text", "value": "EURNZD_otc,NZDUSD_otc,AUDUSD_otc,AUDNZD_otc", "requires_restart": true},
+        {"key": "ONE_OPEN_TRADE_PER_PAIR", "label": "One Trade / Pair", "hint": "block re-entry until the active trade resolves (~5s)", "type": "toggle", "value": true, "requires_restart": false},
+        {"key": "FLIP_WINDOW_BARS", "label": "Flip Window (bars)", "hint": "flip treated as 'fresh' if trend started ≤N bars ago", "type": "number", "value": 3, "step": 1, "requires_restart": false},
+        {"key": "CANDLE_FETCH_CONCURRENCY", "label": "Candle Fetch Concurrency", "hint": "parallel history() fetches per cycle (cap avoids WS hang)", "type": "number", "value": 3, "step": 1, "requires_restart": true}
+      ]
+    },
+    {
+      "id": "supertrend",
+      "title": "SuperTrend Entry Params",
+      "icon": "⚡",
+      "subtitle": ".env defaults · tune live via data/flip_levers.json (no restart)",
+      "fields": [
+        {"key": "ST_PERIOD", "label": "SuperTrend Period", "hint": "edit data/flip_levers.json to retune live without restart", "type": "number", "value": 10, "step": 1, "requires_restart": false},
+        {"key": "ST_MULTIPLIER", "label": "SuperTrend Multiplier", "hint": "edit data/flip_levers.json to retune live without restart", "type": "number", "value": 3.0, "step": 0.5, "requires_restart": false},
+        {"key": "FLIP_ADX_MIN", "label": "ADX Min – flip", "hint": "ADX floor for fresh SuperTrend flips", "type": "number", "value": 22, "step": 1, "requires_restart": false},
+        {"key": "TREND_ADX_MIN", "label": "ADX Min – trend", "hint": "ADX floor for trend continuation entries", "type": "number", "value": 25, "step": 1, "requires_restart": false},
+        {"key": "FLIP_ADX_MAX", "label": "ADX Max (exhaustion cap)", "hint": "skip if ADX above this; 999=disabled; data: ADX 45+ → ~17% WR", "type": "number", "value": 40, "step": 1, "requires_restart": false},
+        {"key": "TREND_REQUIRE_ADX_RISING", "label": "Require ADX Rising", "hint": "trend continuation: ADX must be increasing", "type": "toggle", "value": true, "requires_restart": false},
+        {"key": "TREND_ATR_DISTANCE_MIN", "label": "ATR Distance Min", "hint": "price ≥ N × ATR from SuperTrend band (trend entries)", "type": "number", "value": 0.5, "step": 0.1, "requires_restart": false},
+        {"key": "CONT_MACD_GAP_MIN", "label": "MACD Gap Min (ATR-norm)", "hint": "|MACD−signal|/ATR floor; 0=off; gates both flips and continuations", "type": "number", "value": 0.0, "step": 0.05, "requires_restart": false}
+      ]
+    },
+    {
+      "id": "gate",
+      "title": "Entry Gates",
+      "icon": "🎯",
+      "subtitle": "Payout floor · EV gate · cold-start bypass",
+      "fields": [
+        {"key": "MIN_PAYOUT_PCT", "label": "Min Payout %", "hint": "skip pair if PO payout below this (0=disabled)", "type": "number", "value": 88, "step": 1, "requires_restart": false},
+        {"key": "MIN_EXPECTED_VALUE", "label": "Min Expected Value", "hint": "EV = win_rate×(payout/100+1)−1; 0=break-even, −0.05=warmup tolerance", "type": "number", "value": 0.0, "step": 0.01, "requires_restart": false},
+        {"key": "MIN_EV_SAMPLES", "label": "Min EV Samples", "hint": "tracked trades per (pair, direction, expiry) before EV gate activates", "type": "number", "value": 15, "step": 1, "requires_restart": false}
+      ]
+    },
+    {
+      "id": "risk",
+      "title": "Risk Manager",
+      "icon": "⚖️",
+      "subtitle": "Hard limits & cooldowns",
+      "fields": [
+        {"key": "MAX_TRADES_PER_HOUR", "label": "Max Trades / Hour", "type": "number", "value": 240, "step": 1, "requires_restart": true},
+        {"key": "MAX_DAILY_LOSS_USD", "label": "Daily Loss Limit (USD)", "type": "number", "value": 20.0, "step": 1, "requires_restart": true},
+        {"key": "COOLDOWN_AFTER_LOSS_SECONDS", "label": "Post-Loss Cooldown (s)", "type": "number", "value": 120, "step": 5, "requires_restart": true},
+        {"key": "MIN_BALANCE_MULTIPLIER", "label": "Min Balance Multiplier", "type": "number", "value": 5, "step": 1, "requires_restart": true}
       ]
     },
     {
@@ -31,31 +74,7 @@
       "subtitle": "Trading-terminal auth frame",
       "fields": [
         {"key": "PO_SSID", "label": "SSID", "hint": "full 42[\"auth\",{…}] frame", "type": "secret", "value": "••••", "requires_restart": true},
-        {"key": "_detected_mode", "label": "Detected Mode", "hint": "from is_demo()", "type": "pill", "value": "DEMO · valid", "variant": "win", "readonly": true},
-        {"key": "_connection", "label": "Connection", "hint": "WebSocket assets ready", "type": "pill", "value": "● connected", "variant": "win", "readonly": true}
-      ]
-    },
-    {
-      "id": "gate",
-      "title": "Signal Gate",
-      "icon": "🎯",
-      "subtitle": "Entry thresholds",
-      "fields": [
-        {"key": "PAIR_SELECT_MIN_WIN_RATE", "label": "Min Win Rate", "hint": "bot pair gate", "type": "ratio", "value": 0.82, "requires_restart": false},
-        {"key": "MIN_CONFLUENCE_SCORE", "label": "Min Confluence", "type": "ratio", "value": 0.75, "requires_restart": false},
-        {"key": "CLICK_TRADE_ANYWAY", "label": "Click Trade Anyway", "hint": "auto-dismiss nag screens", "type": "toggle", "value": true, "requires_restart": false}
-      ]
-    },
-    {
-      "id": "risk",
-      "title": "Risk Manager",
-      "icon": "⚖️",
-      "subtitle": "Hard limits & cooldowns",
-      "fields": [
-        {"key": "MAX_TRADES_PER_HOUR", "label": "Max Trades / Hour", "type": "number", "value": 10, "step": 1, "requires_restart": true},
-        {"key": "MAX_DAILY_LOSS_USD", "label": "Daily Loss Limit (USD)", "type": "number", "value": 25.00, "step": 1, "requires_restart": true},
-        {"key": "COOLDOWN_AFTER_LOSS_SECONDS", "label": "Post-Loss Cooldown (s)", "type": "number", "value": 120, "step": 5, "requires_restart": true},
-        {"key": "MIN_BALANCE_MULTIPLIER", "label": "Min Balance Multiplier", "type": "number", "value": 5, "step": 1, "requires_restart": true}
+        {"key": "_detected_mode", "label": "Detected Mode", "hint": "from is_demo()", "type": "pill", "value": "DEMO · valid", "variant": "win", "readonly": true}
       ]
     }
   ]

@@ -138,7 +138,7 @@ class BotSettings(BaseSettings):
     # Continuation MACD-momentum gate: require |MACD-signal|/ATR ≥ this for trend
     # continuation entries (the trend "runs off the MACD"; data: large-gap
     # continuations ~53% WR vs small-gap ~47%). 0 = off; tune via levers file.
-    cont_macd_gap_min: float = Field(default=0.0, alias="CONT_MACD_GAP_MIN", ge=0)
+    cont_macd_gap_min: float = Field(default=0.5, alias="CONT_MACD_GAP_MIN", ge=0)
     # Treat a flip as "fresh" if the SuperTrend trend started within this many of
     # the most recent 1s bars. >1 catches flips the ~cycle-cadence scan would
     # otherwise miss (the flip is a 1-bar event sampled every few seconds).
@@ -157,6 +157,31 @@ class BotSettings(BaseSettings):
         default=["EURUSD_otc", "AUDUSD_otc", "GBPUSD_otc", "DOGE_otc"],
         alias="STREAMING_PAIRS",
     )
+    # ── Focus-session manager (strategy/focus_session.py) ────────────────────
+    # When enabled, a background task locks onto the highest-payout allowed pair,
+    # subscribes to its raw tick stream, trades N flips, then rotates to the next
+    # best pair.  The current focus pair is excluded from the poll loop scan.
+    # OFF by default — validate alongside the poll loop before relying on it.
+    focus_session_enabled: bool = Field(default=False, alias="FOCUS_SESSION_ENABLED")
+    # Trades to place per pair before rotating.  After this many placements the
+    # session unsubscribes and re-ranks.  A forced rotation also fires after
+    # 300s so a quiet pair never blocks the queue indefinitely.
+    focus_session_trades: int = Field(default=10, alias="FOCUS_SESSION_TRADES", ge=1)
+    # Payout floor for FocusSession pair selection — typically higher than the
+    # global min_payout_pct because FocusSession only wants top-tier pairs.
+    # Pairs that drop below this mid-session trigger immediate rotation.
+    focus_payout_floor: int = Field(default=90, alias="FOCUS_PAYOUT_FLOOR", ge=0, le=100)
+    # When True, FocusSession only considers forex pairs (6-char alpha OTC symbols).
+    # Stocks (# prefix), indices (VIX), and crypto (BTC/ETH/BNB prefixes, dashes)
+    # are excluded.  Stocks behave differently at intra-minute scale — news gaps,
+    # circuit breakers, and thin spreads make SuperTrend signals unreliable.
+    focus_fx_only: bool = Field(default=True, alias="FOCUS_FX_ONLY")
+    # Minimum average ticks per 1s bar for a pair to be considered liquid.
+    # Illiquid pairs (too few ticks) produce noisy/flat OHLC bars — the
+    # SuperTrend/MACD indicators fire on microstructure rather than real moves.
+    # Pairs below this rate are cooled off for 5 minutes before being re-tried.
+    focus_min_tick_rate: float = Field(default=2.0, alias="FOCUS_MIN_TICK_RATE", ge=0.1)
+
     # Research/data-collection mode. When True AND trade_mode == DEMO, the bot
     # stops *blocking* trades at the TA-agreement, EV, and risk gates: it places
     # the bot-direction trade anyway and records the outcome, tagging the row with
