@@ -177,6 +177,9 @@ class FocusSessionManager:
         fx_only = settings.focus_fx_only and not settings.allowed_pairs
         # Skip pairs already covered by FlipStreamer to avoid subscription conflicts
         already_streamed = set(settings.streaming_pairs) if settings.streaming_enabled else set()
+        # Per-pair post-loss cooldown (shared with the poll loop): rotate onto a
+        # different pair while a just-lost one is in its weak window.
+        pc = getattr(self._mgr, "_pair_cooldown", None)
 
         candidates = [
             p for p in active
@@ -184,6 +187,7 @@ class FocusSessionManager:
             and is_pair_allowed(p.get("symbol", ""))
             and p.get("symbol") not in cooling
             and p.get("symbol") not in already_streamed
+            and (pc is None or not pc.is_cooling(p.get("symbol", "")))
             and (not fx_only or _is_fx_pair(p.get("symbol", "")))
         ]
         if not candidates:
@@ -284,6 +288,15 @@ class FocusSessionManager:
 
                 if df.empty or len(df) < _WARMUP_BARS:
                     continue
+
+                # ── post-loss cooldown: rotate off a pair that just lost ───────
+                pc = getattr(self._mgr, "_pair_cooldown", None)
+                if pc is not None and pc.is_cooling(pair):
+                    log.info(
+                        "FocusSession: {} hit post-loss cooldown — rotating to another pair",
+                        pair,
+                    )
+                    return
 
                 # ── mid-session payout monitoring ─────────────────────────────
                 bars_since_payout_check += 1

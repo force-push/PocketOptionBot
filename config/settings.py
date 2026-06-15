@@ -53,6 +53,11 @@ class BotSettings(BaseSettings):
     candle_interval_seconds: int = Field(default=5, alias="CANDLE_INTERVAL_SECONDS", ge=1)
     history_length: int = Field(default=100, alias="HISTORY_LENGTH", ge=10)
     cooldown_after_loss_seconds: int = Field(default=120, alias="COOLDOWN_AFTER_LOSS_SECONDS", ge=0)
+    # Per-pair post-loss cooldown: after a pair loses, skip RE-ENTERING that pair
+    # for this many seconds (the poll loop / FocusSession trade other pairs in the
+    # meantime — no idle time). Data: trades <60s after a loss on a pair ~42% WR.
+    # 0 disables. Distinct from cooldown_after_loss_seconds (a global pause).
+    post_loss_pair_cooldown_seconds: int = Field(default=60, alias="POST_LOSS_PAIR_COOLDOWN_SECONDS", ge=0)
 
     # ── Per-signal parameters (wired into signal constructors in main_v2.py) ──
     # Expose here so they can be tuned via .env or dashboard without code changes.
