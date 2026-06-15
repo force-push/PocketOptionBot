@@ -30,6 +30,9 @@ from signals.macd import compute_macd
 from signals.adx_dmi import compute_adx
 
 
+_MACD_CONSISTENCY_BARS = 5   # window for MACD-width consistency diagnostics (capture-only)
+
+
 def _rsi(prices: pd.Series, period: int = 14) -> pd.Series:
     delta = prices.diff()
     gain = delta.where(delta > 0, 0).rolling(window=period).mean()
@@ -151,9 +154,34 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         if (np.isfinite(a_f) and a_f > 0 and not pd.isna(ml_f) and not pd.isna(sl_f)):
             gap_at_flip = round(abs(float(ml_f - sl_f)) / float(a_f), 3)
     gap_expansion = round(macd_gap_atr - gap_at_flip, 3) if gap_at_flip is not None else None
+    # MACD-width consistency (continuation hypothesis): how *stable* the MACD gap
+    # has been over the bars leading into the entry. A trend "running off the MACD"
+    # holds a steady width; an erratic width = a shaky trend. Computed over the
+    # last _MACD_CONSISTENCY_BARS bars of the ATR-normalised |gap|:
+    #   macd_gap_std  — std-dev of |gap|/ATR (LOW = consistent)
+    #   macd_gap_mean — mean |gap|/ATR over the window
+    #   macd_sign_consistency — fraction of the window the MACD stayed on the
+    #     current side (1.0 = never crossed back; a clean one-sided trend)
+    # Capture-only (no gate) — analyse first, then decide if/how to gate.
+    macd_gap_std = macd_gap_mean = macd_sign_consistency = None
+    k = _MACD_CONSISTENCY_BARS
+    if len(df) >= k and np.isfinite(a):
+        hist = (macd_line - signal_line).to_numpy()[-k:]
+        atr_w = atr.to_numpy()[-k:]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            gaps = np.abs(hist) / atr_w
+        gaps = gaps[np.isfinite(gaps)]
+        if gaps.size:
+            macd_gap_std = round(float(np.std(gaps)), 4)
+            macd_gap_mean = round(float(np.mean(gaps)), 4)
+        cur_sign = 1.0 if (ml - sl) >= 0 else -1.0
+        signs = np.sign(hist[np.isfinite(hist)])
+        if signs.size:
+            macd_sign_consistency = round(float(np.mean(signs == cur_sign)), 3)
     diag = (f"ST={direction} adx={adx_now:.1f}{'↑' if adx_rising else '↓'} "
             f"+DI={pdi:.1f} -DI={ndi:.1f} macd_gap={ml - sl:.6f} gapATR={macd_gap_atr} "
             f"gap@flip={gap_at_flip} gapExp={gap_expansion} "
+            f"gapStd={macd_gap_std} gapMean={macd_gap_mean} signConsist={macd_sign_consistency} "
             f"dist={dist:.2f}ATR rsi={rsi_now} atr={atr_bps}bps bbw={bb_width_bps}bps")
     metrics = {
         "st_dir": direction, "flipped": bool(flipped), "bars_in_trend": bars_in_trend,
@@ -162,6 +190,8 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         "dist_atr": round(float(dist), 3), "macd_gap": float(ml - sl),
         "macd_gap_atr": macd_gap_atr, "gap_at_flip": gap_at_flip,
         "gap_expansion": gap_expansion, "rsi": rsi_now,
+        "macd_gap_std": macd_gap_std, "macd_gap_mean": macd_gap_mean,
+        "macd_sign_consistency": macd_sign_consistency,
         "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
     }
 

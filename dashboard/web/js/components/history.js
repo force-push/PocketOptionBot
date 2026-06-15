@@ -173,6 +173,7 @@ function detailHtml(d) {
           <tr><td style="font-weight:500">MACD gap (12/26/9)</td><td>${fm.macd_gap != null ? Number(fm.macd_gap).toFixed(6) : '—'}</td></tr>
           <tr><td style="font-weight:500">MACD gap / ATR</td><td>${fm.macd_gap_atr ?? '—'}${fm.gap_at_flip != null ? ` <span class="muted">(at flip: ${fm.gap_at_flip})</span>` : ''}</td></tr>
           <tr><td style="font-weight:500">Gap expansion since flip</td><td>${fm.gap_expansion != null ? `<span class="${fm.gap_expansion >= 0 ? 'up' : 'down'}">${fm.gap_expansion >= 0 ? '+' : ''}${fm.gap_expansion}</span>` : '—'}</td></tr>
+          <tr><td style="font-weight:500">MACD width consistency</td><td>${fm.macd_gap_std != null ? `std ${fm.macd_gap_std} · mean ${fm.macd_gap_mean ?? '—'}` : '—'}${fm.macd_sign_consistency != null ? ` <span class="muted">· same-side ${Math.round(fm.macd_sign_consistency * 100)}%</span>` : ''}</td></tr>
         </tbody>
       </table>` : '<div class="muted" style="font-size:12px">No signal data</div>'}
     </div>`;

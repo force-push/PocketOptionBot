@@ -185,6 +185,28 @@ def test_flip_gap_expansion_min_gate():
                          "flip_gap_expansion_min": 0.0})).direction == "CALL"
 
 
+def test_macd_consistency_metrics_captured():
+    # A clean steady uptrend should yield consistent MACD width (low std) and a
+    # high same-side fraction. Capture-only — never affects the decision.
+    prices = list(np.linspace(90, 110, 120))
+    fd = evaluate_flip(_df(prices), _PERMISSIVE)
+    m = fd.metrics
+    assert "macd_gap_std" in m and m["macd_gap_std"] is not None
+    assert "macd_gap_mean" in m and m["macd_gap_mean"] is not None
+    assert m["macd_sign_consistency"] is not None
+    assert 0.0 <= m["macd_sign_consistency"] <= 1.0
+    # steady trend → MACD stays on one side the whole window
+    assert m["macd_sign_consistency"] == 1.0
+
+
+def test_macd_consistency_does_not_gate():
+    # Even with erratic width the metric is recorded, not a filter — direction
+    # still comes from the rule, not the consistency value.
+    prices = list(np.linspace(90, 110, 120))
+    fd = evaluate_flip(_df(prices), _PERMISSIVE)
+    assert fd.direction == "CALL"   # unaffected by the new capture-only metric
+
+
 def test_bb_width_gate_blocks_chop_and_whipsaw():
     prices = list(np.linspace(90, 110, 120))
     base = evaluate_flip(_df(prices), _PERMISSIVE)
