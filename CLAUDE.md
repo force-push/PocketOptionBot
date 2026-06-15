@@ -266,8 +266,10 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   Uses shared helpers `compute_supertrend`, `compute_macd`, `compute_adx` (in
   `signals/`) so the dashboard breakdown and the entry rule agree.
   `FlipDecision.metrics` carries per-trade diagnostics (adx, +DI/−DI, dist_atr,
-  rsi, macd_gap_atr, **gap_at_flip, gap_expansion**, atr_bps, bb_width_bps,
-  bars_in_trend) — all shown in the dashboard trade-detail modal.
+  rsi, macd_gap_atr, gap_at_flip, gap_expansion, **macd_gap_std/macd_gap_mean/
+  macd_sign_consistency** — MACD-width consistency over the last 5 bars, the
+  continuation hypothesis, capture-only), atr_bps, bb_width_bps, bars_in_trend) —
+  all shown in the dashboard trade-detail modal.
 
 - **`strategy/flip_levers.py`** — `load_levers()` returns the active entry
   thresholds: settings defaults overlaid with `data/flip_levers.json` (mtime-cached,

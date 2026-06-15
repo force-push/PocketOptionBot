@@ -61,6 +61,7 @@ def main() -> None:
         f"json_extract(data,'$.flip_metrics.adx') adx, "
         f"json_extract(data,'$.flip_metrics.dist_atr') dist, "
         f"json_extract(data,'$.flip_metrics.bb_width_bps') bbw, "
+        f"json_extract(data,'$.flip_metrics.macd_gap_std') gapstd, "
         f"json_extract(data,'$.flip_metrics.st_dir') dir "
         f"FROM decisions WHERE {where} ORDER BY pair_api, ts"
     ).fetchall()
@@ -123,6 +124,14 @@ def main() -> None:
     _scan(rows, "ADX", "adx", [(0, 25, "<25"), (25, 30, "25-30 dead"),
           (30, 40, "30-40"), (40, 1e9, "40+")])
     _scan(rows, "dist_atr", "dist", [(0, 2, "<2"), (2, 3, "2-3"), (3, 1e9, "3+")])
+    # MACD-width consistency (continuation hypothesis): low gap-std = steadier
+    # width. Restrict to continuations where the edge is claimed.
+    cont = [r for r in rows if r["kind"] == "trend"]
+    if cont:
+        print("  MACD gap-std (continuations only; low = consistent width):")
+        _scan(cont, "  cont gapstd", "gapstd",
+              [(0, 0.05, "<0.05 steady"), (0.05, 0.15, "0.05-0.15"),
+               (0.15, 0.3, "0.15-0.3"), (0.3, 1e9, "0.3+ erratic")])
     print("  direction:")
     for d in ("CALL", "PUT"):
         w, k, p = _wr([r["outcome"] for r in rows if r["dir"] == d])
