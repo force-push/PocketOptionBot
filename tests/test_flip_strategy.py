@@ -185,6 +185,29 @@ def test_flip_gap_expansion_min_gate():
                          "flip_gap_expansion_min": 0.0})).direction == "CALL"
 
 
+def test_bb_width_gate_blocks_chop_and_whipsaw():
+    prices = list(np.linspace(90, 110, 120))
+    base = evaluate_flip(_df(prices), _PERMISSIVE)
+    assert base.direction == "CALL"
+    bbw = base.metrics["bb_width_bps"]
+    assert bbw is not None
+    # Require a band tighter than reality → chop block.
+    chop = evaluate_flip(_df(prices), FlipParams(
+        adx_flip_min=0, adx_trend_min=0, require_adx_rising=False, atr_distance_min=0,
+        bb_width_min=bbw + 5))
+    assert chop.direction is None and "chop" in chop.reason
+    # Require a band wider than reality → whipsaw block.
+    whip = evaluate_flip(_df(prices), FlipParams(
+        adx_flip_min=0, adx_trend_min=0, require_adx_rising=False, atr_distance_min=0,
+        bb_width_max=max(bbw - 1, 0.1)))
+    assert whip.direction is None and "whipsaw" in whip.reason
+    # Band that brackets reality → trades.
+    ok = evaluate_flip(_df(prices), FlipParams(
+        adx_flip_min=0, adx_trend_min=0, require_adx_rising=False, atr_distance_min=0,
+        bb_width_min=max(bbw - 2, 0.0), bb_width_max=bbw + 2))
+    assert ok.direction == "CALL"
+
+
 def test_insufficient_candles():
     fd = evaluate_flip(_df(list(np.linspace(90, 100, 20))), FlipParams())
     assert fd.direction is None
