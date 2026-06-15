@@ -134,7 +134,7 @@ function detailHtml(d) {
   const isLoss   = result === 'loss';
   const parts    = fmt.pairParts(d.pair_raw);
   const pairLabel = `${parts.base}${parts.otc ? ' <span class="otc" style="font-size:11px">OTC</span>' : ''}`;
-  const dir      = d.bot_direction || d.dir || '';
+  const dir      = d.dir || (d.flip_metrics && d.flip_metrics.st_dir) || '';
   const dirCls   = dir.toLowerCase();
   const resCls   = isWin ? 'up' : isLoss ? 'down' : 'muted';
   const resLabel = isSkip ? 'SKIP' : (result || 'PENDING').toUpperCase();
@@ -148,116 +148,33 @@ function detailHtml(d) {
         ${isWin ? '▲' : isLoss ? '▼' : '○'} ${resLabel}
         ${!isSkip && d.pnl != null ? `&nbsp;${fmt.pnl(d.pnl)}` : ''}
       </span>
-      ${d.shadow ? `<span class="shadow-tag" title="Intentional data-collection trade">TEST</span>` : ''}
       <span class="md-time">${fmt.time(d.ts)}</span>
-    </div>
-    ${d.shadow ? `<div class="md-shadow-note">🧪 <b>Shadow trade</b> — intentionally placed for data collection (would normally skip: <b>${escHtml(d.would_skip_reason || '?')}</b>). Excluded from the real strategy's win-rate and risk stats.</div>` : ''}`;
-
-  // ── Bot section ───────────────────────────────────────────────────────────
-  const botSection = `
-    <div class="md-section">
-      <div class="md-section-title">PO Broker Bot</div>
-      <div class="md-bot-row" style="display:flex;gap:16px;align-items:center;font-size:13px">
-        <div><span style="color:var(--tx-2)">Direction</span> <b class="pill ${dirCls}" style="font-size:10px;padding:2px 8px;margin-left:4px">${fmt.dirSym(dir)} ${dir || '—'}</b></div>
-        <div><span style="color:var(--tx-2)">Win rate</span> <b class="${(d.bot_win_rate||0) >= 0.8 ? 'up' : 'warn'}" style="margin-left:4px">${fmt.pct(d.bot_win_rate, 1)}</b></div>
-        <div><span style="color:var(--tx-2)">Setup</span> <b style="margin-left:4px">${escHtml(d.bot_setup || '—')}</b></div>
-        <div><span style="color:var(--tx-2)">Top pick</span> <b style="margin-left:4px">${d.bot_is_top_pick ? '<span class="up">✓</span>' : '<span class="muted">–</span>'}</b></div>
-      </div>
-      ${d.bot_indicators_raw ? `<div class="md-indicators">${escHtml(d.bot_indicators_raw)}</div>` : ''}
     </div>`;
 
-  // ── Signal table ──────────────────────────────────────────────────────────
-  const breakdown = d.our_signal_breakdown || {};
-  const sigRows = Object.entries(breakdown).map(([name, vals]) => {
-    const [sigDir, sigConf, sigReason] = Array.isArray(vals) ? vals : [null, 0, ''];
-    const dc  = (sigDir || '').toLowerCase();
-    const pct = Math.round((sigConf || 0) * 100);
-    const dirLabel = sigDir
-      ? `<span class="pill ${dc}" style="font-size:10px;padding:1px 6px">${sigDir}</span>`
-      : `<span class="muted" style="font-size:11px">—</span>`;
-    return `<tr>
-      <td style="font-weight:500;padding-right:12px">${escHtml(name)}</td>
-      <td>${dirLabel}</td>
-      <td>
-        <div class="sig-conf-bar">
-          <div class="sig-bar-bg"><div class="sig-bar-fill ${dc || 'none'}" style="width:${pct}%"></div></div>
-          <span class="sig-conf-val">${(sigConf||0).toFixed(3)}</span>
-        </div>
-      </td>
-      <td class="sig-reason">${escHtml(sigReason || '')}</td>
-    </tr>`;
-  }).join('');
-
-  // Flip-strategy diagnostics (SuperTrend/MACD/ADX) — present on flip-mode trades,
-  // where our_signal_breakdown is empty.
+  // ── Flip-strategy signals (the actual entry decision: SuperTrend flip /
+  //    continuation, confirmed by MACD + ADX/DI + RSI, gated on dist & gap) ────
   const fm = d.flip_metrics;
-  const flipRows = fm ? `
-    <table class="sig-table">
-      <thead><tr><th>Signal</th><th>Value</th></tr></thead>
-      <tbody>
-        <tr><td style="font-weight:500">SuperTrend</td><td>
-          <span class="pill ${(fm.st_dir||'').toLowerCase()}" style="font-size:10px;padding:1px 6px">${fm.st_dir||'—'}</span>
-          ${fm.entry_kind ? `&nbsp;<span class="muted" style="font-size:11px">${escHtml(fm.entry_kind)}${fm.flipped ? ' · fresh flip' : ''}</span>` : ''}
-        </td></tr>
-        <tr><td style="font-weight:500">ADX (14)</td><td>${fm.adx ?? '—'} <span class="${fm.adx_rising ? 'up' : 'down'}">${fm.adx_rising ? '↑ rising' : '↓ falling'}</span></td></tr>
-        <tr><td style="font-weight:500">+DI / −DI</td><td><span class="up">${fm.plus_di ?? '—'}</span> / <span class="down">${fm.minus_di ?? '—'}</span></td></tr>
-        <tr><td style="font-weight:500">Dist from band</td><td>${fm.dist_atr ?? '—'} ATR</td></tr>
-        <tr><td style="font-weight:500">RSI (14)</td><td>${fm.rsi ?? '—'}</td></tr>
-        <tr><td style="font-weight:500">Bars since flip</td><td>${fm.bars_in_trend ?? '—'}</td></tr>
-        <tr><td style="font-weight:500">MACD gap (12/26/9)</td><td>${fm.macd_gap != null ? Number(fm.macd_gap).toFixed(6) : '—'}</td></tr>
-        <tr><td style="font-weight:500">MACD gap / ATR</td><td>${fm.macd_gap_atr ?? '—'}${fm.gap_at_flip != null ? ` <span class="muted">(at flip: ${fm.gap_at_flip})</span>` : ''}</td></tr>
-        <tr><td style="font-weight:500">Gap expansion since flip</td><td>${fm.gap_expansion != null ? `<span class="${fm.gap_expansion >= 0 ? 'up' : 'down'}">${fm.gap_expansion >= 0 ? '+' : ''}${fm.gap_expansion}</span>` : '—'}</td></tr>
-      </tbody>
-    </table>` : '';
-
-  const sigTable = `
+  const flipSection = `
     <div class="md-section">
-      <div class="md-section-title">Internal TA Analysis</div>
-      ${sigRows ? `
-        <table class="sig-table">
-          <thead><tr><th>Signal</th><th>Direction</th><th>Confidence</th><th>Reason</th></tr></thead>
-          <tbody>${sigRows}</tbody>
-        </table>`
-        : (flipRows || '<div class="muted" style="font-size:12px">No signal data</div>')}
-    </div>`;
-
-  // ── Confluence ────────────────────────────────────────────────────────────
-  const conf     = d.our_confluence_score;
-  const ourDir   = d.our_direction;
-  const totalSig = Object.keys(breakdown).length;
-
-  const settings = store.get('settings') || {};
-  const minAgreement = settings.min_signal_agreement ?? 2;
-  let displayDir = ourDir;
-  if (!displayDir) {
-    // Count signals per direction to find the winner
-    const callCount = Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === 'CALL').length;
-    const putCount  = Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === 'PUT').length;
-    displayDir = callCount >= putCount ? 'CALL' : putCount > 0 ? 'PUT' : null;
-  }
-
-  const agreed   = displayDir ? Object.values(breakdown).filter(v => Array.isArray(v) && v[0] === displayDir).length : 0;
-  const confCls  = ourDir === 'CALL' ? 'up' : ourDir === 'PUT' ? 'down' : 'muted';
-  const gatePass = ourDir != null && agreed >= minAgreement;
-
-  const confSection = `
-    <div class="md-section">
-      <div class="md-section-title">Confluence Gate</div>
-      <div class="md-conf-row">
-        <span class="md-conf-score ${confCls}">${conf != null ? conf.toFixed(3) : '—'}</span>
-        <div class="md-conf-meta">
-          <div>${displayDir ? `<b>${displayDir}</b>` : '<span class="muted">No direction</span>'} &nbsp;·&nbsp; ${agreed}/${totalSig} signals agree</div>
-          <div class="${gatePass ? 'gate-pass' : 'gate-fail'}">${ourDir ? (agreed >= minAgreement ? '✓ Gate passed (≥' + minAgreement + ' agree)' : `✗ Gate failed: only ${agreed} signal(s) on ${ourDir} (need ≥${minAgreement})`) : '✗ Gate failed (tie or no signals)'}</div>
-        </div>
-        ${d.combined_probability != null ? `<div class="mono" style="font-size:12px;color:var(--tx-1)">confidence&nbsp;<b>${(d.combined_probability*100).toFixed(1)}%</b>${d.calibrated_probability != null ? ` &nbsp;·&nbsp; <span style="color:var(--ac-1)">P(win)&nbsp;<b>${(d.calibrated_probability*100).toFixed(1)}%</b></span>` : ''}</div>` : ''}
-      </div>
-      <div class="md-agree-row">
-        ${d.agreement && dir && ourDir
-          ? `<span class="agree-yes">✓ Agreement</span><span style="color:var(--tx-1);font-size:12px">Bot and TA both say <b>${dir}</b></span>`
-          : dir && ourDir
-            ? `<span class="agree-no">✗ Disagreement</span><span style="color:var(--tx-1);font-size:12px">Bot: <b>${dir}</b> &nbsp; TA: <b>${ourDir}</b></span>`
-            : `<span class="muted" style="font-size:12px">No bot direction — signals mode</span>`}
-      </div>
+      <div class="md-section-title">Flip Strategy Signals</div>
+      ${fm ? `
+      <table class="sig-table">
+        <thead><tr><th>Signal</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td style="font-weight:500">SuperTrend</td><td>
+            <span class="pill ${(fm.st_dir||'').toLowerCase()}" style="font-size:10px;padding:1px 6px">${fm.st_dir||'—'}</span>
+            ${fm.entry_kind ? `&nbsp;<span class="muted" style="font-size:11px">${escHtml(fm.entry_kind)}${fm.flipped ? ' · fresh flip' : ''}</span>` : ''}
+          </td></tr>
+          <tr><td style="font-weight:500">ADX (14)</td><td>${fm.adx ?? '—'} <span class="${fm.adx_rising ? 'up' : 'down'}">${fm.adx_rising ? '↑ rising' : '↓ falling'}</span></td></tr>
+          <tr><td style="font-weight:500">+DI / −DI</td><td><span class="up">${fm.plus_di ?? '—'}</span> / <span class="down">${fm.minus_di ?? '—'}</span></td></tr>
+          <tr><td style="font-weight:500">Dist from band</td><td>${fm.dist_atr ?? '—'} ATR</td></tr>
+          <tr><td style="font-weight:500">RSI (14)</td><td>${fm.rsi ?? '—'}</td></tr>
+          <tr><td style="font-weight:500">Bars since flip</td><td>${fm.bars_in_trend ?? '—'}</td></tr>
+          <tr><td style="font-weight:500">MACD gap (12/26/9)</td><td>${fm.macd_gap != null ? Number(fm.macd_gap).toFixed(6) : '—'}</td></tr>
+          <tr><td style="font-weight:500">MACD gap / ATR</td><td>${fm.macd_gap_atr ?? '—'}${fm.gap_at_flip != null ? ` <span class="muted">(at flip: ${fm.gap_at_flip})</span>` : ''}</td></tr>
+          <tr><td style="font-weight:500">Gap expansion since flip</td><td>${fm.gap_expansion != null ? `<span class="${fm.gap_expansion >= 0 ? 'up' : 'down'}">${fm.gap_expansion >= 0 ? '+' : ''}${fm.gap_expansion}</span>` : '—'}</td></tr>
+        </tbody>
+      </table>` : '<div class="muted" style="font-size:12px">No signal data</div>'}
     </div>`;
 
   // ── Trade info ────────────────────────────────────────────────────────────
@@ -289,11 +206,6 @@ function detailHtml(d) {
             <div class="md-stat-label">Result</div>
             <div class="md-stat-val ${resCls}">${resLabel}</div>
           </div>
-          <div class="md-stat">
-            <div class="md-stat-label">Sentiment</div>
-            <div class="md-stat-val ${d.sentiment != null ? (d.sentiment >= 50 ? 'up' : 'down') : 'muted'}"
-                 title="Crowd buy% at decision (0-100). ≥50 = crowd leaning CALL.">${d.sentiment != null ? d.sentiment + '% buy' : '—'}</div>
-          </div>
         </div>
         ${d.balance_before != null ? `
           <div class="md-agree-row" style="margin-top:8px;font-family:var(--mono);font-size:12px">
@@ -313,7 +225,7 @@ function detailHtml(d) {
       </div>`;
   }
 
-  return header + botSection + sigTable + confSection + tradeSection;
+  return header + flipSection + tradeSection;
 }
 
 function escHtml(s) {
