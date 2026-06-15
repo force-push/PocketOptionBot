@@ -3,8 +3,12 @@
 Direction comes from SuperTrend; a trade is taken only when MACD agrees and ADX
 confirms real movement. Two ways in:
 
-  • FLIP        — SuperTrend just flipped this bar (the chart's Buy/Sell label),
-                  MACD on the same side, ADX ≥ adx_flip_min.
+  • FLIP        — SuperTrend flipped recently (the chart's Buy/Sell label), MACD
+                  on the same side, ADX ≥ adx_flip_min. Entry is *not* taken at the
+                  exact turn: it waits flip_confirm_bars for the reversal to prove
+                  itself (MACD gap is ~0 at the turn and opens up over the next few
+                  seconds), can require the gap to be expanding (flip_gap_expansion_min),
+                  and skips the ADX dead zone (flip_adx_dead_lo..hi).
   • CONTINUATION— SuperTrend already established on this side (no fresh flip),
                   MACD agrees, and the trend is *strong*: ADX ≥ adx_trend_min,
                   ADX rising, and price is beyond the SuperTrend band by
@@ -52,6 +56,14 @@ class FlipParams:
     cont_rsi_min: float = 0.0       # continuation: RSI > this for CALL / < (100-this) for PUT (0=off)
     rsi_period: int = 14            # RSI period for continuation confirmation
     flip_window_bars: int = 3       # treat as fresh flip if trend started ≤ this many bars ago
+    # ── flip wait-and-confirm (don't trade exactly at the SuperTrend turn) ──────
+    # At the turn the MACD gap is ~0 — the reversal hasn't proven itself yet (data:
+    # gap avg 0.56 at bars 1-3 vs 0.75 at bars 4-9). These gates make the flip
+    # entry wait for confirmation to build, the way a continuation already has it.
+    flip_confirm_bars: int = 1      # wait ≥ this many bars after the flip before entering (1 = enter at the turn, legacy)
+    flip_gap_expansion_min: float = 0.0  # require MACD gap to have widened by ≥ this since the flip bar (0 = off, capture-only)
+    flip_adx_dead_lo: float = 0.0   # skip flips when flip_adx_dead_lo < ADX < flip_adx_dead_hi (dead zone; lo≥hi = off)
+    flip_adx_dead_hi: float = 0.0   #   data: ADX 25-30 flips ~42% WR vs both neighbours profitable
     bb_period: int = 20             # Bollinger period for band-width volatility metric
     min_candles: int = 40
 
@@ -121,15 +133,29 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     # real momentum (data: large-gap continuations ~53% WR vs small-gap ~47%).
     macd_gap_atr = round(abs(float(ml - sl)) / float(a), 3) if (np.isfinite(a) and a > 0) else 0.0
     rsi_now = round(float(rsi_val), 1) if (not pd.isna(rsi_val)) else None
+    # Reversal-strength signal: the MACD gap at the *flip bar* (bars_in_trend ago)
+    # vs now. A real reversal opens the gap from ~0 over the next few seconds; a
+    # fake-out leaves it flat. gap_expansion = now − at-flip. Computed live from
+    # the same df (no extra data needed): the flip bar is at index -bars_in_trend.
+    flip_idx = len(df) - bars_in_trend
+    gap_at_flip = None
+    if 0 <= flip_idx < len(df):
+        a_f = atr.iloc[flip_idx]
+        ml_f, sl_f = macd_line.iloc[flip_idx], signal_line.iloc[flip_idx]
+        if (np.isfinite(a_f) and a_f > 0 and not pd.isna(ml_f) and not pd.isna(sl_f)):
+            gap_at_flip = round(abs(float(ml_f - sl_f)) / float(a_f), 3)
+    gap_expansion = round(macd_gap_atr - gap_at_flip, 3) if gap_at_flip is not None else None
     diag = (f"ST={direction} adx={adx_now:.1f}{'↑' if adx_rising else '↓'} "
             f"+DI={pdi:.1f} -DI={ndi:.1f} macd_gap={ml - sl:.6f} gapATR={macd_gap_atr} "
+            f"gap@flip={gap_at_flip} gapExp={gap_expansion} "
             f"dist={dist:.2f}ATR rsi={rsi_now} atr={atr_bps}bps bbw={bb_width_bps}bps")
     metrics = {
         "st_dir": direction, "flipped": bool(flipped), "bars_in_trend": bars_in_trend,
         "adx": round(float(adx_now), 2), "adx_rising": adx_rising,
         "plus_di": round(float(pdi), 2), "minus_di": round(float(ndi), 2),
         "dist_atr": round(float(dist), 3), "macd_gap": float(ml - sl),
-        "macd_gap_atr": macd_gap_atr, "rsi": rsi_now,
+        "macd_gap_atr": macd_gap_atr, "gap_at_flip": gap_at_flip,
+        "gap_expansion": gap_expansion, "rsi": rsi_now,
         "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
     }
 
@@ -146,9 +172,25 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         return FlipDecision(None, None, f"DI disagrees ({diag})", metrics)
 
     if flipped:
-        if macd_gap_atr < params.cont_macd_gap_min:
+        # ADX dead-zone exclusion: the 25-30 band resists the flip without being
+        # strong enough to make it decisive (data: ~42% WR vs profitable neighbours).
+        if (params.flip_adx_dead_hi > params.flip_adx_dead_lo
+                and params.flip_adx_dead_lo < adx_now < params.flip_adx_dead_hi):
             return FlipDecision(None, None,
-                                f"flip but weak MACD gap {macd_gap_atr}<{params.cont_macd_gap_min} ({diag})", metrics)
+                                f"flip in ADX dead zone "
+                                f"[{params.flip_adx_dead_lo},{params.flip_adx_dead_hi}) ({diag})", metrics)
+        # Wait-and-confirm: don't enter exactly at the turn — the MACD gap is ~0
+        # there. Require flip_confirm_bars of development first.
+        if bars_in_trend < params.flip_confirm_bars:
+            return FlipDecision(None, None,
+                                f"flip pending confirmation "
+                                f"({bars_in_trend}<{params.flip_confirm_bars} bars) ({diag})", metrics)
+        # Reversal strength = MACD gap expanding since the flip bar (off when 0).
+        if params.flip_gap_expansion_min > 0:
+            if gap_expansion is None or gap_expansion < params.flip_gap_expansion_min:
+                return FlipDecision(None, None,
+                                    f"flip gap not expanding "
+                                    f"({gap_expansion}<{params.flip_gap_expansion_min}) ({diag})", metrics)
         if adx_now >= params.adx_flip_min:
             return FlipDecision(direction, "flip", f"FLIP {direction} confirmed ({diag})",
                                 {**metrics, "entry_kind": "flip"})

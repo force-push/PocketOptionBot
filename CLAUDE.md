@@ -97,8 +97,8 @@ Key settings groups:
   if the trend started ≤N bars ago), `CANDLE_FETCH_CONCURRENCY` (3 — parallel
   history(1) prefetch cap). These are the static/.env defaults.
 - **Dynamic flip levers (live, no restart):** the entry thresholds —
-  `st_period`/`st_multiplier`, `flip_window_bars`, `adx_flip_min` (22),
-  `adx_trend_min` (25), **`adx_max` (40 — skip over-extended/exhausted moves;
+  `st_period`/`st_multiplier`, `flip_window_bars`, `adx_flip_min` (15),
+  `adx_trend_min` (30), **`adx_max` (40 — skip over-extended/exhausted moves;
   ADX 45+ ~17% WR)**, `require_adx_rising`, `atr_distance_min`, `cont_macd_gap_min`
   (continuation requires |MACD−signal|/ATR ≥ this — momentum gate; the trend
   "runs off the MACD", large-gap continuations ~53% WR vs small-gap ~47%) — read every
@@ -106,6 +106,18 @@ Key settings groups:
   defaults. Edit that file to retune **without restarting the bot**. The active
   lever set is stamped onto every `DecisionRow.flip_levers` for historical review.
   See `strategy/flip_levers.py`.
+- **Flip wait-and-confirm levers (2026-06-15):** flips no longer enter at the exact
+  SuperTrend turn — at the turn the MACD gap is ~0 (the reversal hasn't proven
+  itself; data: gap avg 0.56 at bars 1-3 vs 0.75 at bars 4-9, mirroring why
+  continuations enter *after* confirmation builds). `flip_confirm_bars` (live: 3)
+  waits N bars after the flip before entering; `flip_window_bars` was widened to 7
+  so the wait window (bars 3-7) still classifies as a flip. `flip_gap_expansion_min`
+  gates on the MACD gap *widening* since the flip bar — `gap_expansion = macd_gap_atr
+  − gap_at_flip`, both now stamped per trade (default 0 = capture-only until enough
+  data accrues). `flip_adx_dead_lo`/`flip_adx_dead_hi` (live: 25/30) skip the ADX
+  dead zone (~42% WR vs profitable neighbours; excluding it backtested
+  50.9%→54.0% WR, −$13→+$16 over 389 flips). All four default OFF in code
+  (`flip_confirm_bars=1`, others 0) so an absent levers file = legacy behaviour.
 - **Event-driven flip streamer (`STREAMING_ENABLED`, default off):** subscribes
   to live 1s candle streams for `STREAMING_PAIRS` (≤4, subscription cap) and
   places **fresh flips at the turn (~1s)** instead of the ~6s poll cadence —
@@ -224,15 +236,20 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   reader run concurrently. Full row kept in a `data` JSON column (nothing lost).
 
 - **`strategy/flip_strategy.py`** — `evaluate_flip(df, FlipParams) -> FlipDecision`.
-  Pure rule: SuperTrend direction, entered on a fresh **flip** (ADX ≥ flip_min)
-  **or** strong-trend **continuation** (ADX ≥ trend_min & rising, price ≥
+  Pure rule: SuperTrend direction, entered on a **flip** (ADX ≥ flip_min) **or**
+  strong-trend **continuation** (ADX ≥ trend_min & rising, price ≥
   atr_distance_min×ATR from the band), always confirmed by MACD agreement + ADX
   +DI/−DI direction, **rejected when ADX > adx_max** (exhausted), and continuation
   additionally gated on MACD momentum (`cont_macd_gap_min` on the ATR-normalized
-  `macd_gap_atr`). Uses shared
-  helpers `compute_supertrend`, `compute_macd`, `compute_adx` (in `signals/`) so
-  the dashboard breakdown and the entry rule agree. `FlipDecision.metrics` carries
-  per-trade diagnostics (adx, +DI/−DI, dist_atr, atr_bps, bb_width_bps, bars_in_trend).
+  `macd_gap_atr`). **Flips don't fire at the exact turn:** they wait
+  `flip_confirm_bars` for the reversal to develop, can require the MACD gap to be
+  expanding since the flip bar (`flip_gap_expansion_min` on `gap_expansion =
+  macd_gap_atr − gap_at_flip`), and skip the `flip_adx_dead_lo..hi` ADX dead zone.
+  Uses shared helpers `compute_supertrend`, `compute_macd`, `compute_adx` (in
+  `signals/`) so the dashboard breakdown and the entry rule agree.
+  `FlipDecision.metrics` carries per-trade diagnostics (adx, +DI/−DI, dist_atr,
+  rsi, macd_gap_atr, **gap_at_flip, gap_expansion**, atr_bps, bb_width_bps,
+  bars_in_trend) — all shown in the dashboard trade-detail modal.
 
 - **`strategy/flip_levers.py`** — `load_levers()` returns the active entry
   thresholds: settings defaults overlaid with `data/flip_levers.json` (mtime-cached,
