@@ -202,7 +202,11 @@ function detailHtml(d) {
         <tr><td style="font-weight:500">ADX (14)</td><td>${fm.adx ?? '—'} <span class="${fm.adx_rising ? 'up' : 'down'}">${fm.adx_rising ? '↑ rising' : '↓ falling'}</span></td></tr>
         <tr><td style="font-weight:500">+DI / −DI</td><td><span class="up">${fm.plus_di ?? '—'}</span> / <span class="down">${fm.minus_di ?? '—'}</span></td></tr>
         <tr><td style="font-weight:500">Dist from band</td><td>${fm.dist_atr ?? '—'} ATR</td></tr>
+        <tr><td style="font-weight:500">RSI (14)</td><td>${fm.rsi ?? '—'}</td></tr>
+        <tr><td style="font-weight:500">Bars since flip</td><td>${fm.bars_in_trend ?? '—'}</td></tr>
         <tr><td style="font-weight:500">MACD gap (12/26/9)</td><td>${fm.macd_gap != null ? Number(fm.macd_gap).toFixed(6) : '—'}</td></tr>
+        <tr><td style="font-weight:500">MACD gap / ATR</td><td>${fm.macd_gap_atr ?? '—'}${fm.gap_at_flip != null ? ` <span class="muted">(at flip: ${fm.gap_at_flip})</span>` : ''}</td></tr>
+        <tr><td style="font-weight:500">Gap expansion since flip</td><td>${fm.gap_expansion != null ? `<span class="${fm.gap_expansion >= 0 ? 'up' : 'down'}">${fm.gap_expansion >= 0 ? '+' : ''}${fm.gap_expansion}</span>` : '—'}</td></tr>
       </tbody>
     </table>` : '';
 

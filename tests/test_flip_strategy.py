@@ -120,6 +120,71 @@ def test_cont_macd_gap_min_blocks_weak_continuation():
     assert evaluate_flip(_df(prices), opened).direction == "CALL"
 
 
+# ── flip wait-and-confirm ──────────────────────────────────────────────────────
+
+def _flip_df() -> pd.DataFrame:
+    """Downtrend then a short reversal up → a recent flip at the last bar."""
+    prices = list(np.linspace(110, 95, 50)) + list(np.linspace(95, 110, 8))
+    return _df(prices)
+
+
+# Permissive flip baseline with a wide window so the recent reversal is a 'flip'.
+_FLIP_BASE = dict(adx_flip_min=0, adx_trend_min=0, require_adx_rising=False,
+                  atr_distance_min=0, flip_window_bars=12)
+
+
+def test_flip_gap_metrics_captured():
+    fd = evaluate_flip(_flip_df(), FlipParams(**_FLIP_BASE))
+    assert fd.entry_kind == "flip"
+    assert "gap_at_flip" in fd.metrics
+    assert "gap_expansion" in fd.metrics
+    # gap_expansion = macd_gap_atr − gap_at_flip when both are present
+    if fd.metrics["gap_at_flip"] is not None:
+        assert fd.metrics["gap_expansion"] == round(
+            fd.metrics["macd_gap_atr"] - fd.metrics["gap_at_flip"], 3
+        )
+
+
+def test_flip_confirm_bars_waits_for_confirmation():
+    df = _flip_df()
+    base = evaluate_flip(df, FlipParams(**_FLIP_BASE))
+    assert base.entry_kind == "flip"
+    bit = base.metrics["bars_in_trend"]
+    # Requiring more bars than have elapsed since the flip → pending, no entry.
+    waited = evaluate_flip(df, FlipParams(**{**_FLIP_BASE, "flip_confirm_bars": bit + 1}))
+    assert waited.direction is None
+    assert "pending confirmation" in waited.reason
+    # confirm_bars ≤ bars_in_trend → enters.
+    ready = evaluate_flip(df, FlipParams(**{**_FLIP_BASE, "flip_confirm_bars": bit}))
+    assert ready.direction == "CALL"
+
+
+def test_flip_adx_dead_zone_excludes():
+    df = _flip_df()
+    base = evaluate_flip(df, FlipParams(**_FLIP_BASE))
+    assert base.entry_kind == "flip"
+    adx = base.metrics["adx"]
+    # Bracket the actual ADX → flip falls in the dead zone, excluded.
+    dead = evaluate_flip(df, FlipParams(**{**_FLIP_BASE,
+                         "flip_adx_dead_lo": adx - 1, "flip_adx_dead_hi": adx + 1}))
+    assert dead.direction is None
+    assert "dead zone" in dead.reason
+    # Zone disabled (lo ≥ hi) → enters.
+    assert evaluate_flip(df, FlipParams(**{**_FLIP_BASE,
+                         "flip_adx_dead_lo": 0, "flip_adx_dead_hi": 0})).direction == "CALL"
+
+
+def test_flip_gap_expansion_min_gate():
+    df = _flip_df()
+    # Impossible expansion requirement → blocked.
+    blocked = evaluate_flip(df, FlipParams(**{**_FLIP_BASE, "flip_gap_expansion_min": 999.0}))
+    assert blocked.direction is None
+    assert "not expanding" in blocked.reason
+    # Disabled (0) → enters.
+    assert evaluate_flip(df, FlipParams(**{**_FLIP_BASE,
+                         "flip_gap_expansion_min": 0.0})).direction == "CALL"
+
+
 def test_insufficient_candles():
     fd = evaluate_flip(_df(list(np.linspace(90, 100, 20))), FlipParams())
     assert fd.direction is None

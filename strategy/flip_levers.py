@@ -30,6 +30,9 @@ _LEVER_KEYS = (
     "adx_flip_min", "adx_trend_min", "adx_max",
     "require_adx_rising", "atr_distance_min", "atr_distance_max",
     "cont_macd_gap_min", "cont_rsi_min",
+    # flip wait-and-confirm
+    "flip_confirm_bars", "flip_gap_expansion_min",
+    "flip_adx_dead_lo", "flip_adx_dead_hi",
 )
 
 _lock = threading.Lock()
@@ -49,6 +52,10 @@ def _defaults() -> dict:
         "atr_distance_max": 999.0,   # no cap by default; tune via levers file
         "cont_macd_gap_min": settings.cont_macd_gap_min,
         "cont_rsi_min": 0.0,         # disabled by default; tune via levers file
+        "flip_confirm_bars": 1,      # 1 = enter at the turn (legacy); raise to wait for confirmation
+        "flip_gap_expansion_min": 0.0,  # disabled by default (capture-only); tune via levers file
+        "flip_adx_dead_lo": 0.0,     # disabled by default; tune via levers file
+        "flip_adx_dead_hi": 0.0,
     }
 
 
