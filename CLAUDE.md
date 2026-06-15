@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **PocketOptionBot v2** — signals-driven binary options research bot.
 
+> **Core goal (2026-06-15): quality over quantity.** Optimise for high win-rate
+> per trade, not volume — break-even is 52.08% at 92% payout, and high-volume
+> break-even bleeds. Prefer filters/levers that lift WR even when they cut trade
+> count (post-loss cooldown, bb_width/ADX/dist gates). Once WR is *reliably* above
+> break-even over a large sample, **then raise the stake** — scaling P&L at lowered
+> relative risk. Stake increases come after the edge is proven, not before.
+
 > **Telegram integration removed 2026-06-12.** All Telethon/`po_broker_bot`
 > navigation code (`telegram_feed/`, v1 `main.py` pipeline, navigator-driven
 > loop) was deleted; the payout-first signals loop is the only driver. Setup
