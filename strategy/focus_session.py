@@ -41,6 +41,22 @@ _TICK_CHECK_BARS = 10    # live bars threshold for illiquid detection
 _BAR_TIMEOUT = 15        # seconds between bars before considering pair illiquid
 _ILLIQUID_ELAPSED = 60   # seconds elapsed + <_TICK_CHECK_BARS bars → flag illiquid
 _RANK_MIN_SAMPLES = 10   # tracked trades before a pair's win-rate ranks it above unproven pairs
+# Disconnect backoff: when a pair session ends almost immediately with no trades
+# (the signature of a dropped WS — stream setup fails instantly), back off with
+# exponential delay instead of hot-looping. A dropped connection otherwise made
+# _run spin at ~80% CPU churning stream/handler objects (memory bloat). The
+# watchdog/heartbeat (supervisor) handles a *sustained* dead connection by
+# restarting the process with a fresh client.
+_FAST_FAIL_SECONDS = 5.0   # a session shorter than this with 0 trades = likely disconnect
+_BACKOFF_BASE = 2.0        # first backoff (s); doubles per consecutive fast-fail
+_BACKOFF_MAX = 60.0        # cap
+
+
+def _disconnect_backoff(consecutive: int) -> float:
+    """Exponential backoff (seconds) for N consecutive fast-fail sessions, capped."""
+    if consecutive <= 0:
+        return 0.0
+    return min(_BACKOFF_BASE * (2.0 ** (consecutive - 1)), _BACKOFF_MAX)
 
 # Crypto base-currency prefixes that appear as 6-char OTC symbols (e.g. BTCUSD).
 _CRYPTO_PREFIXES = {"BTC", "ETH", "BNB", "SOL", "ADA", "XRP", "LTC", "TRX",
@@ -109,6 +125,8 @@ class FocusSessionManager:
     # ── main rotation loop ────────────────────────────────────────────────────
 
     async def _run(self) -> None:
+        consecutive_fast_fails = 0
+        loop = asyncio.get_event_loop()
         while self._running:
             pair = await self._pick_pair()
             if pair is None:
@@ -121,6 +139,7 @@ class FocusSessionManager:
 
             self.current_pair = pair
             self.session_trades = 0
+            sess_start = loop.time()
             log.info(
                 "FocusSession ▶ {} — targeting {} trades (timeout {}s)",
                 pair, settings.focus_session_trades, _SESSION_TIMEOUT,
@@ -150,6 +169,22 @@ class FocusSessionManager:
                 "FocusSession ■ {} — {} trades placed (total: {})",
                 pair, self.session_trades, self.total_trades,
             )
+
+            # Disconnect backoff: a session that ends almost instantly with no
+            # trades is the signature of a dropped WS (stream setup fails at once).
+            # Without this the loop hot-spins, pegging a core and churning objects.
+            elapsed = loop.time() - sess_start
+            if self.session_trades == 0 and elapsed < _FAST_FAIL_SECONDS:
+                consecutive_fast_fails += 1
+                backoff = _disconnect_backoff(consecutive_fast_fails)
+                log.warning(
+                    "FocusSession: {} ended in {:.1f}s with no trades (likely "
+                    "disconnect) — backing off {:.0f}s (#{} consecutive)",
+                    pair, elapsed, backoff, consecutive_fast_fails,
+                )
+                await asyncio.sleep(backoff)
+            else:
+                consecutive_fast_fails = 0
 
     # ── pair selection ────────────────────────────────────────────────────────
 

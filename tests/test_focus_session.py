@@ -9,7 +9,57 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from strategy import focus_session as fs_module
-from strategy.focus_session import FocusSessionManager, _ILLIQUID_COOLDOWN
+from strategy.focus_session import (
+    FocusSessionManager, _ILLIQUID_COOLDOWN, _disconnect_backoff,
+    _BACKOFF_MAX, _BACKOFF_BASE,
+)
+
+
+# ── disconnect backoff (Tier 2 memory/hot-loop fix) ───────────────────────────
+
+def test_disconnect_backoff_exponential_and_capped():
+    assert _disconnect_backoff(0) == 0.0
+    assert _disconnect_backoff(1) == _BACKOFF_BASE
+    assert _disconnect_backoff(2) == _BACKOFF_BASE * 2
+    assert _disconnect_backoff(3) == _BACKOFF_BASE * 4
+    # grows but never exceeds the cap
+    assert _disconnect_backoff(50) == _BACKOFF_MAX
+    assert all(_disconnect_backoff(n) <= _BACKOFF_MAX for n in range(0, 100))
+
+
+@pytest.mark.asyncio
+async def test_run_backs_off_on_fast_fail(monkeypatch):
+    """A pair session that returns instantly with 0 trades triggers a backoff
+    sleep instead of hot-looping."""
+    _clear_pair_filters(monkeypatch)
+    api = _make_api()
+    mgr = _make_mgr()
+    fsm = FocusSessionManager(api, mgr)
+    fsm._running = True
+
+    # _pick_pair always returns a pair; _run_pair_session returns immediately
+    # (simulating a disconnect/stream-setup failure with no trades).
+    async def _instant_session(pair):
+        return
+    monkeypatch.setattr(fsm, "_pick_pair", AsyncMock(return_value="EURUSD_otc"))
+    monkeypatch.setattr(fsm, "_run_pair_session", _instant_session)
+
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _spy_sleep(secs):
+        sleeps.append(secs)
+        if len(sleeps) >= 3:        # let a few iterations run, then stop the loop
+            fsm._running = False
+        await real_sleep(0)         # yield without real delay
+    monkeypatch.setattr(fs_module.asyncio, "sleep", _spy_sleep)
+
+    await fsm._run()
+
+    # backoffs recorded and they escalate (2, 4, ...) — i.e. not a hot-loop
+    assert len(sleeps) >= 2
+    assert sleeps[0] == _BACKOFF_BASE
+    assert sleeps[1] == _BACKOFF_BASE * 2
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
