@@ -40,6 +40,12 @@ class StrategyManagerV2:
         # `if self._bridge:` and the bridge itself never raises (fail-closed),
         # so trading behaviour is unchanged when the dashboard is disabled.
         self._bridge = bridge
+        # Per-pair post-loss cooldown: a pair that just lost is skipped for
+        # settings.post_loss_pair_cooldown_seconds (poll loop + FocusSession both
+        # honour it and trade other pairs meanwhile). Shared via self so the
+        # resolver, the poll scan, and FocusSession all see the same state.
+        from strategy.pair_cooldown import PairCooldown
+        self._pair_cooldown = PairCooldown()
         # Background trade resolver: maps trade_id → (log_path, row, expires_at)
         self._open_trades: dict = {}
         # Concurrent trade cap: never hold more than 6 unresolved trades at once.
@@ -225,6 +231,7 @@ class StrategyManagerV2:
             p for p in all_pairs
             if is_pair_allowed(p.get("symbol", ""))
             and p.get("symbol") not in streamed
+            and not self._pair_cooldown.is_cooling(p.get("symbol", ""))
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
             and (_fx_check is None or _fx_check(p.get("symbol", "")))
         ]
@@ -879,6 +886,10 @@ class StrategyManagerV2:
                 self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
                 risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
                 self._risk.record_trade(row.bot_direction, row.stake, risk_result)
+                # Start the per-pair post-loss cooldown so neither the poll loop
+                # nor FocusSession re-enters this pair during its weak window.
+                if outcome.lower() == "loss":
+                    self._pair_cooldown.record_loss(row.pair_api)
 
             # Notify dashboard with complete resolved data
             if self._bridge:

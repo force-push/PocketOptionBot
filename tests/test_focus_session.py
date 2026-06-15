@@ -80,6 +80,10 @@ def _make_api(pair=PAIR, payout=92, active_pairs=None):
 def _make_mgr(place_return=True):
     mgr = MagicMock()
     mgr._place_flip_trade = AsyncMock(return_value=place_return)
+    # Default: no perf tracker and no post-loss cooldown (MagicMock would auto-create
+    # truthy attrs that break ranking / exclude every pair). Tests set them explicitly.
+    mgr.tracker = None
+    mgr._pair_cooldown = None
     return mgr
 
 
@@ -319,10 +323,32 @@ async def test_pick_pair_bumps_high_performers(monkeypatch, tmp_path):
     mgr = MagicMock()
     mgr._place_flip_trade = AsyncMock(return_value=True)
     mgr.tracker = tr
+    mgr._pair_cooldown = None
     fsm = FocusSessionManager(api, mgr)
 
     result = await fsm._pick_pair()
     assert result == "AUDUSD_otc"   # proven winner bumped above higher-payout unproven
+
+
+@pytest.mark.asyncio
+async def test_pick_pair_skips_post_loss_cooldown(monkeypatch):
+    """A pair on per-pair post-loss cooldown is skipped; rotation picks the next."""
+    _clear_pair_filters(monkeypatch)
+    active = [
+        {"symbol": "EURUSD_otc", "payout": 96, "is_active": True},   # higher, but cooling
+        {"symbol": "AUDUSD_otc", "payout": 92, "is_active": True},
+    ]
+    api = _make_api(active_pairs=active)
+    api.get_active_pairs = AsyncMock(return_value=active)
+
+    from strategy.pair_cooldown import PairCooldown
+    mgr = _make_mgr()
+    mgr._pair_cooldown = PairCooldown(seconds=60)
+    mgr._pair_cooldown.record_loss("EURUSD_otc")   # just lost → cooling
+    fsm = FocusSessionManager(api, mgr)
+
+    result = await fsm._pick_pair()
+    assert result == "AUDUSD_otc"   # rotated off the cooling higher-payout pair
 
 
 @pytest.mark.asyncio
