@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from broker.tick_stream import RawTickStream
 from config.settings import settings
 from data.candles import candles_to_df
 from strategy.flip_levers import load_levers
@@ -67,11 +68,6 @@ def _is_fx_pair(symbol: str) -> bool:
 def _params(levers: dict) -> FlipParams:
     from strategy.flip_levers import build_flip_params
     return build_flip_params(levers)
-
-
-async def _anext(aiter: Any) -> Any:
-    """Await the next item from an async iterator (Python 3.9 compatible)."""
-    return await aiter.__anext__()
 
 
 class FocusSessionManager:
@@ -204,8 +200,9 @@ class FocusSessionManager:
     # ── pair session ──────────────────────────────────────────────────────────
 
     async def _run_pair_session(self, pair: str) -> None:
-        """Subscribe to 1s candle stream, evaluate flips, place until quota filled."""
-        # Seed the rolling bar buffer so SuperTrend/MACD/ADX are warm immediately.
+        """Subscribe to raw tick stream, accumulate 1s bars, evaluate flips, place until quota."""
+        # Pre-warm the accumulator from real OHLC history so indicators are ready
+        # immediately — no cold-start wait for 40 bars to accumulate from scratch.
         buf: list = []
         try:
             seed = await asyncio.wait_for(
@@ -217,88 +214,85 @@ class FocusSessionManager:
         except Exception as exc:  # noqa: BLE001
             log.debug("FocusSession: {} seed error (continuing cold): {}", pair, exc)
 
+        stream = RawTickStream(self._api, pair, history_bars=200)
+        if buf:
+            stream.seed(candles_to_df(buf))
+
         try:
-            stream = await self._api.create_timed_stream(pair, 1)
+            await stream.start()
         except Exception as exc:  # noqa: BLE001
             log.warning("FocusSession: {} stream setup failed: {} — rotating", pair, exc)
             return
 
         done = asyncio.Event()
         bars_since_payout_check = 0
-        last_bar_ts = None
         total_bars = 0
         session_start = asyncio.get_event_loop().time()
-        stream_iter = stream.__aiter__()
 
-        while not done.is_set() and self._running:
-            # Per-bar timeout — detect illiquid pairs without waiting the full 300s
-            try:
-                candle = await asyncio.wait_for(
-                    _anext(stream_iter), timeout=_BAR_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                elapsed = asyncio.get_event_loop().time() - session_start
-                if elapsed > _ILLIQUID_ELAPSED and total_bars < _TICK_CHECK_BARS:
-                    log.info(
-                        "FocusSession: {} illiquid ({} bars in {:.0f}s) — cooling off {}s",
-                        pair, total_bars, elapsed, _ILLIQUID_COOLDOWN,
+        try:
+            while not done.is_set() and self._running:
+                # Per-bar timeout detects illiquid pairs without waiting the full 300s.
+                # RawTickStream.__anext__ has an internal 5s yield-check, so the outer
+                # _BAR_TIMEOUT=15s effectively fires after no bar for 15s.
+                try:
+                    df = await asyncio.wait_for(
+                        stream.__anext__(), timeout=_BAR_TIMEOUT,
                     )
-                    self._illiquid[pair] = asyncio.get_event_loop().time()
+                except asyncio.TimeoutError:
+                    elapsed = asyncio.get_event_loop().time() - session_start
+                    if elapsed > _ILLIQUID_ELAPSED and total_bars < _TICK_CHECK_BARS:
+                        log.info(
+                            "FocusSession: {} illiquid ({} bars in {:.0f}s) — cooling off {}s",
+                            pair, total_bars, elapsed, _ILLIQUID_COOLDOWN,
+                        )
+                        self._illiquid[pair] = asyncio.get_event_loop().time()
+                        return
+                    continue
+                except StopAsyncIteration:
+                    log.debug("FocusSession: {} stream ended — rotating", pair)
                     return
-                continue
-            except StopAsyncIteration:
-                log.debug("FocusSession: {} stream ended — rotating", pair)
-                return
 
-            # Maintain rolling candle buffer (mirrors FlipStreamer pattern)
-            ts = candle.get("timestamp") if isinstance(candle, dict) else None
-            if ts is not None and ts == last_bar_ts:
-                if buf:
-                    buf[-1] = candle   # same bar updating intra-second
-            else:
-                buf.append(candle)
-                last_bar_ts = ts
                 total_bars += 1
-            buf = buf[-200:]
 
-            df = candles_to_df(buf)
-            if df.empty or len(df) < _WARMUP_BARS:
-                continue
+                if df.empty or len(df) < _WARMUP_BARS:
+                    continue
 
-            # ── mid-session payout monitoring ─────────────────────────────────
-            bars_since_payout_check += 1
-            if bars_since_payout_check >= _PAYOUT_CHECK_BARS:
-                bars_since_payout_check = 0
-                live_payout = await self._api.get_payout(pair)
-                if live_payout is None or live_payout < settings.focus_payout_floor:
-                    log.info(
-                        "FocusSession: {} payout dropped to {}% (floor {}%) — rotating",
-                        pair, live_payout, settings.focus_payout_floor,
-                    )
-                    return
+                # ── mid-session payout monitoring ─────────────────────────────
+                bars_since_payout_check += 1
+                if bars_since_payout_check >= _PAYOUT_CHECK_BARS:
+                    bars_since_payout_check = 0
+                    live_payout = await self._api.get_payout(pair)
+                    if live_payout is None or live_payout < settings.focus_payout_floor:
+                        log.info(
+                            "FocusSession: {} payout dropped to {}% (floor {}%) — rotating",
+                            pair, live_payout, settings.focus_payout_floor,
+                        )
+                        return
 
-            # ── flip evaluation ───────────────────────────────────────────────
-            levers = load_levers()
-            fd = evaluate_flip(df, _params(levers))
-            if not fd.direction:
-                continue
+                # ── flip evaluation ───────────────────────────────────────────
+                levers = load_levers()
+                fd = evaluate_flip(df, _params(levers))
+                if not fd.direction:
+                    continue
 
-            payout = await self._api.get_payout(pair)
-            placed = await self._mgr._place_flip_trade(
-                pair, fd.direction,
-                conf_score=1.0,
-                flip_metrics=fd.metrics,
-                flip_levers=levers,
-                payout_pct=payout,
-            )
-            if placed:
-                self.session_trades += 1
-                self.total_trades += 1
-                remaining = settings.focus_session_trades - self.session_trades
-                log.info(
-                    "FocusSession: {} trade {}/{} — {} {} | {} more to rotate",
-                    pair, self.session_trades, settings.focus_session_trades,
-                    fd.direction, fd.reason, remaining,
+                payout = await self._api.get_payout(pair)
+                placed = await self._mgr._place_flip_trade(
+                    pair, fd.direction,
+                    conf_score=1.0,
+                    flip_metrics=fd.metrics,
+                    flip_levers=levers,
+                    payout_pct=payout,
                 )
-                if self.session_trades >= settings.focus_session_trades:
-                    done.set()
+                if placed:
+                    self.session_trades += 1
+                    self.total_trades += 1
+                    remaining = settings.focus_session_trades - self.session_trades
+                    log.info(
+                        "FocusSession: {} trade {}/{} — {} {} | {} more to rotate",
+                        pair, self.session_trades, settings.focus_session_trades,
+                        fd.direction, fd.reason, remaining,
+                    )
+                    if self.session_trades >= settings.focus_session_trades:
+                        done.set()
+        finally:
+            await stream.stop()

@@ -1,32 +1,35 @@
-"""Event-driven flip catcher.
+"""Event-driven flip catcher — raw-tick edition.
 
 The poll loop re-scans each pair only every ~5-7s, so it misses most 1s
-SuperTrend flips and enters survivors ~1-4s late — fatal for a 5s expiry. This
-streamer subscribes to a live 1-second candle stream per focus pair
-(``subscribe_symbol_timed``), evaluates the flip rule on each closed bar, and
-places at the turn (~1s latency). It only acts on FRESH flips (the ~65% edge);
-continuation stays with the poll loop.
+SuperTrend flips and enters survivors ~1-4s late — fatal for a 5s expiry.
+
+Previously this streamer used ``subscribe_symbol_timed`` (1s bar-close callback,
+~1-2s entry lag).  It now uses ``RawTickStream``, which accumulates raw price
+ticks from the shared WS handler into 1s OHLC bars and emits each bar the
+instant the second boundary crosses — cutting entry lag to ~0-500ms.
 
 Constraints / safety:
-  • Concurrent symbol subscriptions cap at ~4 (tick probe) → STREAMING_PAIRS ≤ 4.
-  • Placement goes through manager._place_flip_trade, which reserves the
-    concurrency slot atomically and applies payout/in-flight/risk/EV gates, so
-    the streamer can't double-trade a pair or breach the cap.
+  • Concurrent subscriptions cap at ~4 → STREAMING_PAIRS ≤ 4 (unchanged).
+  • Placement goes through manager._place_flip_trade (atomic concurrency slot +
+    payout/in-flight/risk/EV gates), so the streamer can't double-trade a pair
+    or breach the cap.
   • The poll loop excludes streamed pairs (manager) to avoid double evaluation.
-  • Fail-soft: a stream error pauses that pair and retries; never raises.
+  • Fail-soft: a stream error pauses that pair 5s and retries; never raises.
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
+from broker.tick_stream import RawTickStream
 from data.candles import candles_to_df
 from strategy.flip_strategy import evaluate_flip, FlipParams
 from strategy.flip_levers import load_levers
 from utils.logger import log
 
 _SUBSCRIPTION_CAP = 4
-_BUFFER = 200  # rolling candles kept per pair (warmup for MACD/ADX/SuperTrend)
+_BUFFER = 200  # rolling bars kept per pair (warmup for MACD/ADX/SuperTrend)
+_MIN_BARS = 40  # minimum completed bars before evaluate_flip is called
 
 
 class FlipStreamer:
@@ -65,27 +68,23 @@ class FlipStreamer:
         return build_flip_params(levers)
 
     async def _consume(self, pair: str) -> None:
-        last_bar_ts = None
         while self._running:
+            stream: RawTickStream | None = None
             try:
-                # Seed the rolling buffer with real history so indicators are warm
-                # the moment streaming starts.
-                seed = await self._api.get_real_candles(pair, period=1)
-                buf = list(seed)[-_BUFFER:]
-                stream = await self._api.create_timed_stream(pair, 1)
-                async for candle in stream:
+                # Pre-warm the accumulator from real OHLC history so indicators
+                # are ready immediately (no cold-start period waiting for bars).
+                seed_candles = await self._api.get_real_candles(pair, period=1)
+                seed_df = candles_to_df(list(seed_candles)[-_BUFFER:])
+
+                stream = RawTickStream(self._api, pair, history_bars=_BUFFER)
+                if not seed_df.empty:
+                    stream.seed(seed_df)
+                await stream.start()
+
+                async for df in stream:
                     if not self._running:
                         break
-                    ts = candle.get("timestamp") if isinstance(candle, dict) else None
-                    if ts is not None and ts == last_bar_ts:
-                        # same bar updating; replace rather than append duplicates
-                        buf[-1] = candle
-                    else:
-                        buf.append(candle)
-                        last_bar_ts = ts
-                    buf = buf[-_BUFFER:]
-                    df = candles_to_df(buf)
-                    if df.empty or len(df) < 40:
+                    if df.empty or len(df) < _MIN_BARS:
                         continue
                     levers = load_levers()
                     fd = evaluate_flip(df, self._params(levers))
@@ -102,7 +101,5 @@ class FlipStreamer:
                 log.warning("FlipStreamer {} error: {} — retry in 5s", pair, exc)
                 await asyncio.sleep(5)
             finally:
-                try:
-                    await self._api.unsubscribe(pair)
-                except Exception:  # noqa: BLE001
-                    pass
+                if stream is not None:
+                    await stream.stop()
