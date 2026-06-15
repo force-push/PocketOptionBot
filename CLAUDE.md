@@ -215,6 +215,14 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   real statistical power, writes `data/deep_history_stats.jsonl`. Run with the bot
   stopped (one WS session per SSID).
 
+- **`tools/analyze_failures.py`** — failure-analysis + tuning advisor (read-only,
+  stdlib, safe to run while the bot is up). For a window (`--hours N` / `--all`)
+  prints WR/P&L (overall + by entry kind) vs the 52.08% break-even, the post-loss
+  window (WR by seconds-since-last-loss — tells you if `POST_LOSS_PAIR_COOLDOWN_SECONDS`
+  needs raising), a pair leaderboard, and a dimension scan (bb_width/ADX/dist/
+  direction) that flags any band below break-even with a real sample. This is the
+  repeatable "analyse the failures, then tune the levers" loop.
+
 - **`signals/`** — each signal subclasses `BaseSignal` (`signals/base.py`), sets
   class-level `name`/`weight`, implements `async def evaluate(df) ->
   SignalResult`. **DataFrame columns are short names `o, h, l, c, v`**, time
@@ -295,6 +303,18 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   truth for pair eligibility, used by both the poll loop and FocusSession.
   Precedence: `ALLOWED_PAIR_REGEX` (pattern, authoritative) → `ALLOWED_PAIRS`
   (exact list) → `BLOCKED_PAIRS` (deny-list). Bad regex degrades to "no regex".
+
+- **`strategy/pair_cooldown.py`** — `PairCooldown`: per-pair post-loss cooldown.
+  `record_loss(pair)` is called from the resolver on a losing outcome;
+  `is_cooling(pair)` is checked in the poll-loop candidate filter and
+  `FocusSession._pick_pair` (and mid-session — a focus pair that just lost rotates
+  off). A cooling pair is skipped for `POST_LOSS_PAIR_COOLDOWN_SECONDS` (default 60)
+  while the bot trades other pairs — no idle time. Rationale: outcomes are
+  positively autocorrelated per pair; trades <60s after a loss win only ~42%
+  (vs ~53% after a win) — skipping that window flipped the allowed-set backtest
+  from −$471 to +$107. Owned by `StrategyManagerV2` (`self._pair_cooldown`),
+  shared with FocusSession via `self._mgr`. State only; duration read from
+  settings each check (live-tunable). 0 disables.
 
 - **`strategy/risk.py`** — `RiskManager.is_allowed(balance)` checks, in order:
   min balance (`stake_amount × min_balance_multiplier`), max trades/hour (sliding
