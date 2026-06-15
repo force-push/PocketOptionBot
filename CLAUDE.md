@@ -118,6 +118,16 @@ Key settings groups:
   dead zone (~42% WR vs profitable neighbours; excluding it backtested
   50.9%→54.0% WR, −$13→+$16 over 389 flips). All four default OFF in code
   (`flip_confirm_bars=1`, others 0) so an absent levers file = legacy behaviour.
+- **Moderate-volatility regime gate (2026-06-15):** `bb_width_min`/`bb_width_max`
+  (live: 8/14 bps) skip entries when Bollinger band-width is outside the band —
+  too tight = chop, too wide = whipsaw. Applies to flip AND continuation. Data:
+  bb_width 8-14 bps ~54% WR vs ~48% (chop) / ~39% (wide). Both default 0 (off).
+- **Pair allowlist — regex (2026-06-15):** `ALLOWED_PAIR_REGEX` is a pattern-based
+  allowlist, authoritative for BOTH the poll loop and FocusSession (blocklist +
+  FX-only still apply). When set it overrides the exact `ALLOWED_PAIRS` list. Live:
+  `^(?!.*GBP).*(USD|CNY|CNH|EUR)` — USD/CNY/CNH/EUR crosses, GBP excluded via
+  lookahead (GBPUSD/GBPAUD/EURGBP all heavy losers). Centralised in
+  `strategy/pair_filter.py::is_pair_allowed` so the two loops can't diverge.
 - **Event-driven flip streamer (`STREAMING_ENABLED`, default off):** subscribes
   to live 1s candle streams for `STREAMING_PAIRS` (≤4, subscription cap) and
   places **fresh flips at the turn (~1s)** instead of the ~6s poll cadence —
@@ -275,8 +285,16 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   min_samples)`, `seed_from_po_history(deals, default_expiry_seconds=30) -> int`
   (one-time bootstrap from PO closed-deal history — **only seeds when the tracker
   is empty** to avoid double-counting; maps buy→CALL/sell→PUT, derives expiry from
-  the deal timestamp). **Cold start:** when `n < MIN_TRACKED_SAMPLES`, the
-  tracked-win gate is skipped.
+  the deal timestamp). `pair_rate(pair) -> (rate, n)` aggregates a pair's win/loss
+  across all directions+expiries — used by FocusSession to rank pairs by overall
+  historical performance ("bump high performers": proven high-WR pairs outrank
+  unproven ones; payout breaks ties). **Cold start:** when `n < MIN_TRACKED_SAMPLES`,
+  the tracked-win gate is skipped.
+
+- **`strategy/pair_filter.py`** — `is_pair_allowed(symbol)`: the single source of
+  truth for pair eligibility, used by both the poll loop and FocusSession.
+  Precedence: `ALLOWED_PAIR_REGEX` (pattern, authoritative) → `ALLOWED_PAIRS`
+  (exact list) → `BLOCKED_PAIRS` (deny-list). Bad regex degrades to "no regex".
 
 - **`strategy/risk.py`** — `RiskManager.is_allowed(balance)` checks, in order:
   min balance (`stake_amount × min_balance_multiplier`), max trades/hour (sliding

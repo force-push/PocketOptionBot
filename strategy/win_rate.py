@@ -175,6 +175,24 @@ class WinRateTracker:
             return 0.0, 0
         return wins / n, n
 
+    def pair_rate(self, pair: str) -> Tuple[float, int]:
+        """Return (win_rate, n) aggregated across ALL of a pair's keys.
+
+        Sums wins/losses over every (direction, expiry-bucket) entry whose key
+        starts with ``pair|``. Used to rank pairs by overall historical
+        performance (direction/expiry-agnostic). Returns (0.0, 0) if no data.
+        """
+        prefix = f"{pair}|"
+        wins = losses = 0
+        for key, entry in self._data.items():
+            if key.startswith(prefix):
+                wins += int(entry.get("wins", 0))
+                losses += int(entry.get("losses", 0))
+        n = wins + losses
+        if n == 0:
+            return 0.0, 0
+        return wins / n, n
+
     def passes(
         self,
         pair: str,

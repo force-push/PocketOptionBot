@@ -38,6 +38,18 @@ def test_record_loss(tmp_tracker):
     assert n == 1
 
 
+def test_pair_rate_aggregates_across_keys(tmp_tracker):
+    # Different directions and expiries for the same pair should aggregate.
+    tmp_tracker.record("EURUSD_otc", "CALL", 60, "win")
+    tmp_tracker.record("EURUSD_otc", "CALL", 60, "win")
+    tmp_tracker.record("EURUSD_otc", "PUT", 300, "loss")   # different dir + expiry bucket
+    rate, n = tmp_tracker.pair_rate("EURUSD_otc")
+    assert n == 3
+    assert rate == pytest.approx(2 / 3)
+    # A pair with no history → (0, 0)
+    assert tmp_tracker.pair_rate("GBPUSD_otc") == (0.0, 0)
+
+
 def test_mixed_outcomes(tmp_tracker):
     for _ in range(7):
         tmp_tracker.record("EURUSD_otc", "CALL", 60, "win")

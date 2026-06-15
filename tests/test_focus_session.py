@@ -222,8 +222,15 @@ async def test_session_marks_illiquid_on_no_bars(monkeypatch):
 
 # ── _pick_pair ────────────────────────────────────────────────────────────────
 
+def _clear_pair_filters(monkeypatch):
+    """Neutralise the .env pair-filter config so a test controls it explicitly."""
+    monkeypatch.setattr(fs_module.settings, "allowed_pair_regex", "")
+    monkeypatch.setattr(fs_module.settings, "allowed_pairs", [])
+
+
 @pytest.mark.asyncio
 async def test_pick_pair_returns_highest_payout(monkeypatch):
+    _clear_pair_filters(monkeypatch)
     active = [
         {"symbol": "EURUSD_otc", "payout": 94, "is_active": True},
         {"symbol": "AUDUSD_otc", "payout": 92, "is_active": True},
@@ -240,6 +247,7 @@ async def test_pick_pair_returns_highest_payout(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pick_pair_skips_below_floor(monkeypatch):
+    _clear_pair_filters(monkeypatch)
     active = [
         {"symbol": "EURUSD_otc", "payout": 85, "is_active": True},
     ]
@@ -253,7 +261,73 @@ async def test_pick_pair_skips_below_floor(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pick_pair_skips_illiquid():
+async def test_pick_pair_honors_allowlist(monkeypatch):
+    """When ALLOWED_PAIRS is set it is authoritative — only those symbols picked."""
+    _clear_pair_filters(monkeypatch)
+    active = [
+        {"symbol": "EURUSD_otc", "payout": 96, "is_active": True},   # highest, not allowed
+        {"symbol": "AUDUSD_otc", "payout": 92, "is_active": True},   # allowed
+        {"symbol": "GBPUSD_otc", "payout": 95, "is_active": True},   # not allowed
+    ]
+    api = _make_api(active_pairs=active)
+    api.get_active_pairs = AsyncMock(return_value=active)
+    mgr = _make_mgr()
+    fsm = FocusSessionManager(api, mgr)
+
+    monkeypatch.setattr(fs_module.settings, "allowed_pairs", ["AUDUSD_otc"])
+    result = await fsm._pick_pair()
+    assert result == "AUDUSD_otc"   # not EURUSD/GBPUSD despite higher payout
+
+
+@pytest.mark.asyncio
+async def test_pick_pair_honors_regex(monkeypatch):
+    """ALLOWED_PAIR_REGEX is authoritative and excludes GBP via lookahead."""
+    _clear_pair_filters(monkeypatch)
+    monkeypatch.setattr(fs_module.settings, "allowed_pair_regex",
+                        "^(?!.*GBP).*(USD|CNY|CNH|EUR)")
+    active = [
+        {"symbol": "GBPUSD_otc", "payout": 97, "is_active": True},   # highest but GBP → excluded
+        {"symbol": "CADCHF_otc", "payout": 96, "is_active": True},   # no USD/CNY/EUR → excluded
+        {"symbol": "EURUSD_otc", "payout": 93, "is_active": True},   # matches
+    ]
+    api = _make_api(active_pairs=active)
+    api.get_active_pairs = AsyncMock(return_value=active)
+    mgr = _make_mgr()
+    fsm = FocusSessionManager(api, mgr)
+
+    result = await fsm._pick_pair()
+    assert result == "EURUSD_otc"
+
+
+@pytest.mark.asyncio
+async def test_pick_pair_bumps_high_performers(monkeypatch, tmp_path):
+    """A proven high-WR pair outranks a higher-payout unproven pair."""
+    _clear_pair_filters(monkeypatch)
+    active = [
+        {"symbol": "EURUSD_otc", "payout": 96, "is_active": True},   # higher payout, no history
+        {"symbol": "AUDUSD_otc", "payout": 92, "is_active": True},   # lower payout, proven winner
+    ]
+    api = _make_api(active_pairs=active)
+    api.get_active_pairs = AsyncMock(return_value=active)
+
+    from strategy.win_rate import WinRateTracker
+    tr = WinRateTracker(json_path=tmp_path / "wr.json")
+    for _ in range(9):
+        tr.record("AUDUSD_otc", "CALL", 5, "win")
+    for _ in range(3):
+        tr.record("AUDUSD_otc", "CALL", 5, "loss")   # 9/12 = 75%, n=12 ≥ _RANK_MIN_SAMPLES
+    mgr = MagicMock()
+    mgr._place_flip_trade = AsyncMock(return_value=True)
+    mgr.tracker = tr
+    fsm = FocusSessionManager(api, mgr)
+
+    result = await fsm._pick_pair()
+    assert result == "AUDUSD_otc"   # proven winner bumped above higher-payout unproven
+
+
+@pytest.mark.asyncio
+async def test_pick_pair_skips_illiquid(monkeypatch):
+    _clear_pair_filters(monkeypatch)
     active = [
         {"symbol": "EURUSD_otc", "payout": 94, "is_active": True},
         {"symbol": "AUDUSD_otc", "payout": 96, "is_active": True},

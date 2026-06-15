@@ -40,6 +40,7 @@ _ILLIQUID_COOLDOWN = 300  # seconds to skip an illiquid pair before re-trying
 _TICK_CHECK_BARS = 10    # live bars threshold for illiquid detection
 _BAR_TIMEOUT = 15        # seconds between bars before considering pair illiquid
 _ILLIQUID_ELAPSED = 60   # seconds elapsed + <_TICK_CHECK_BARS bars → flag illiquid
+_RANK_MIN_SAMPLES = 10   # tracked trades before a pair's win-rate ranks it above unproven pairs
 
 # Crypto base-currency prefixes that appear as 6-char OTC symbols (e.g. BTCUSD).
 _CRYPTO_PREFIXES = {"BTC", "ETH", "BNB", "SOL", "ADA", "XRP", "LTC", "TRX",
@@ -166,18 +167,21 @@ class FocusSessionManager:
             log.debug("FocusSession._pick_pair error: {}", exc)
             return None
 
+        from strategy.pair_filter import is_pair_allowed
+
         floor = settings.focus_payout_floor
-        blocked = set(settings.blocked_pairs)
         now = asyncio.get_event_loop().time()
         cooling = {p for p, t in self._illiquid.items() if now - t < _ILLIQUID_COOLDOWN}
-        fx_only = settings.focus_fx_only
+        # FX-only still applies alongside a regex allowlist; only an exact
+        # allowed_pairs list bypasses it (deliberate user picks).
+        fx_only = settings.focus_fx_only and not settings.allowed_pairs
         # Skip pairs already covered by FlipStreamer to avoid subscription conflicts
         already_streamed = set(settings.streaming_pairs) if settings.streaming_enabled else set()
 
         candidates = [
             p for p in active
             if (p.get("payout") or 0) >= floor
-            and p.get("symbol") not in blocked
+            and is_pair_allowed(p.get("symbol", ""))
             and p.get("symbol") not in cooling
             and p.get("symbol") not in already_streamed
             and (not fx_only or _is_fx_pair(p.get("symbol", "")))
@@ -190,10 +194,34 @@ class FocusSessionManager:
                 )
             return None
 
-        best = max(candidates, key=lambda p: p.get("payout", 0))
+        # Bump high performers up: pairs with a proven win-rate (≥_RANK_MIN_SAMPLES
+        # tracked trades) outrank unproven pairs; among proven, higher WR wins;
+        # payout breaks ties. Unproven pairs fall back to pure payout ranking so
+        # new pairs still get sampled.
+        tracker = getattr(self._mgr, "tracker", None)
+
+        def _score(p: dict) -> tuple:
+            payout = p.get("payout", 0) or 0
+            if tracker is not None:
+                try:
+                    wr, n = tracker.pair_rate(p.get("symbol", ""))
+                    if isinstance(n, int) and n >= _RANK_MIN_SAMPLES:
+                        return (1, round(float(wr), 3), payout)
+                except Exception:  # noqa: BLE001 — any tracker shape issue → payout-only
+                    pass
+            return (0, 0.0, payout)
+
+        best = max(candidates, key=_score)
+        bwr, bn = None, 0
+        if tracker is not None:
+            try:
+                bwr, bn = tracker.pair_rate(best["symbol"])
+            except Exception:  # noqa: BLE001
+                bwr, bn = None, 0
         log.debug(
-            "FocusSession: {} candidates ≥{}% | picking {} at {}%",
+            "FocusSession: {} candidates ≥{}% | picking {} at {}% (hist WR {} n={})",
             len(candidates), floor, best["symbol"], best.get("payout"),
+            f"{bwr:.0%}" if isinstance(bwr, float) else "—", bn if isinstance(bn, int) else 0,
         )
         return best["symbol"]
 

@@ -205,24 +205,25 @@ class StrategyManagerV2:
             blocked_hour_shadow = True
 
         all_pairs = await self._api.get_active_pairs()  # is_active filtered, sorted payout desc
-        # When an allowlist is configured it is authoritative — trade only those
-        # symbols and ignore the blocklist for them (curated focus set). Each
-        # still honours the payout floor, so a sub-floor pair simply sits idle.
-        allow = set(settings.allowed_pairs)
+        # Pair eligibility (regex allowlist / exact allowlist / blocklist) is
+        # centralised in pair_filter.is_pair_allowed so the poll loop and
+        # FocusSession can never diverge. Each still honours the payout floor.
+        from strategy.pair_filter import is_pair_allowed
         # Pairs handled by the event-driven streamer or focus-session are excluded
         # from the poll scan so they aren't evaluated/traded twice.
         streamed = set(settings.streaming_pairs) if (settings.streaming_enabled and self._streamer) else set()
         if self._focus and self._focus.current_pair:
             streamed = streamed | {self._focus.current_pair}
-        # FX-only filter: applied when no explicit allowlist and focus_fx_only=True.
-        # Reuses _is_fx_pair() from focus_session (same logic, same setting).
-        if not allow and settings.focus_fx_only:
+        # FX-only filter still applies alongside a regex allowlist (so a USD regex
+        # doesn't pull in crypto/stock USD symbols). Only an EXACT allowed_pairs
+        # list bypasses it — those are symbols the user picked deliberately.
+        if settings.focus_fx_only and not settings.allowed_pairs:
             from strategy.focus_session import _is_fx_pair as _fx_check
         else:
             _fx_check = None
         candidates = [
             p for p in all_pairs
-            if ((p.get("symbol") in allow) if allow else (p.get("symbol") not in settings.blocked_pairs))
+            if is_pair_allowed(p.get("symbol", ""))
             and p.get("symbol") not in streamed
             and (settings.min_payout_pct == 0 or (p.get("payout") or 0) >= settings.min_payout_pct)
             and (_fx_check is None or _fx_check(p.get("symbol", "")))
@@ -230,11 +231,15 @@ class StrategyManagerV2:
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
 
+        if settings.allowed_pair_regex:
+            filt_label, filt_val = "regex", settings.allowed_pair_regex
+        elif settings.allowed_pairs:
+            filt_label, filt_val = "allow", len(settings.allowed_pairs)
+        else:
+            filt_label, filt_val = "blocked", len(settings.blocked_pairs)
         log.info("[{}] {} scan: {}/{} pairs ≥{}% payout  {}={} max_per_cycle={}",
                  cid, settings.strategy_mode, len(candidates), len(all_pairs),
-                 settings.min_payout_pct,
-                 "allow" if allow else "blocked",
-                 len(allow) if allow else len(settings.blocked_pairs),
+                 settings.min_payout_pct, filt_label, filt_val,
                  settings.max_pairs_per_cycle or "all")
 
         if not candidates:

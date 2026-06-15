@@ -33,6 +33,8 @@ _LEVER_KEYS = (
     # flip wait-and-confirm
     "flip_confirm_bars", "flip_gap_expansion_min",
     "flip_adx_dead_lo", "flip_adx_dead_hi",
+    # moderate-volatility regime gate
+    "bb_width_min", "bb_width_max",
 )
 
 _lock = threading.Lock()
@@ -56,6 +58,8 @@ def _defaults() -> dict:
         "flip_gap_expansion_min": 0.0,  # disabled by default (capture-only); tune via levers file
         "flip_adx_dead_lo": 0.0,     # disabled by default; tune via levers file
         "flip_adx_dead_hi": 0.0,
+        "bb_width_min": 0.0,         # disabled by default; tune via levers file
+        "bb_width_max": 0.0,
     }
 
 

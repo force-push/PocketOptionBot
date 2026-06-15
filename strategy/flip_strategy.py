@@ -56,6 +56,12 @@ class FlipParams:
     cont_rsi_min: float = 0.0       # continuation: RSI > this for CALL / < (100-this) for PUT (0=off)
     rsi_period: int = 14            # RSI period for continuation confirmation
     flip_window_bars: int = 3       # treat as fresh flip if trend started ≤ this many bars ago
+    # Moderate-volatility regime gate (applies to flip AND continuation). Skip
+    # when Bollinger band-width (bps) is outside [min, max]: too tight = chop,
+    # too wide = whipsaw. Data: bb_width 8-14 bps ~54% WR vs ~48% (chop) / ~39%
+    # (wide). 0 = that bound off.
+    bb_width_min: float = 0.0
+    bb_width_max: float = 0.0
     # ── flip wait-and-confirm (don't trade exactly at the SuperTrend turn) ──────
     # At the turn the MACD gap is ~0 — the reversal hasn't proven itself yet (data:
     # gap avg 0.56 at bars 1-3 vs 0.75 at bars 4-9). These gates make the flip
@@ -163,6 +169,14 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     # revert inside a 5s expiry (data: ADX 45+ ~17% WR vs 25-35 ~61%).
     if adx_now > params.adx_max:
         return FlipDecision(None, None, f"ADX {adx_now:.1f} > max {params.adx_max} exhausted ({diag})", metrics)
+
+    # Moderate-volatility regime gate: skip chop (band too tight) and whipsaw
+    # (band too wide). Applies to both entry kinds. Data: bb_width 8-14 bps best.
+    if bb_width_bps is not None:
+        if params.bb_width_min > 0 and bb_width_bps < params.bb_width_min:
+            return FlipDecision(None, None, f"bb_width {bb_width_bps}<{params.bb_width_min} chop ({diag})", metrics)
+        if params.bb_width_max > 0 and bb_width_bps > params.bb_width_max:
+            return FlipDecision(None, None, f"bb_width {bb_width_bps}>{params.bb_width_max} whipsaw ({diag})", metrics)
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)
     di_ok = (pdi > ndi) if direction == "CALL" else (ndi > pdi)

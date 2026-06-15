@@ -121,6 +121,11 @@ class BotSettings(BaseSettings):
         ],
         alias="ALLOWED_PAIRS",
     )
+    # Pattern-based allowlist — when set, a pair is tradable only if this regex
+    # matches its symbol (authoritative for both the poll loop and FocusSession,
+    # blocklist still applies). Looser than the exact allowed_pairs list: e.g.
+    # "(USD|CNY|CNH)" trades any USD/CNY/CNH cross. Empty = off.
+    allowed_pair_regex: str = Field(default="", alias="ALLOWED_PAIR_REGEX")
     # One open trade per pair: don't re-enter a pair until its trade resolves
     # (~5s). Paces trend-continuation entries instead of firing every cycle.
     one_open_trade_per_pair: bool = Field(default=True, alias="ONE_OPEN_TRADE_PER_PAIR")
