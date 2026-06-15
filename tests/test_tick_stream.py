@@ -1,10 +1,13 @@
-"""Offline tests for broker.tick_stream.TickAccumulator."""
+"""Offline tests for broker.tick_stream.TickAccumulator and RawTickStream."""
 from __future__ import annotations
+
+import asyncio
 
 import pandas as pd
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
-from broker.tick_stream import TickAccumulator, _EPOCH_OFFSET
+from broker.tick_stream import TickAccumulator, RawTickStream, _EPOCH_OFFSET
 
 PAIR = "EURUSD_otc"
 BASE_TS = 1_700_000_000  # arbitrary UTC epoch
@@ -175,3 +178,191 @@ def test_to_df_sorted_ascending():
     df = acc.to_df()
     assert df is not None
     assert list(df.index) == sorted(df.index)
+
+
+# ── RawTickStream (async) ─────────────────────────────────────────────────────
+
+
+def _make_handler(frames: list) -> MagicMock:
+    """Mock raw WS handler whose wait_next() returns frames then hangs."""
+    handler = MagicMock()
+    frame_iter = iter(frames)
+
+    async def _wait_next():
+        try:
+            return next(frame_iter)
+        except StopIteration:
+            # Block indefinitely (simulates a quiet stream); cancelled by stop()
+            await asyncio.sleep(3600)
+
+    handler.wait_next = _wait_next
+    return handler
+
+
+def _make_api(frames: list, pair: str = PAIR) -> MagicMock:
+    """Mock API client with raw handler + send_raw_message."""
+    api = MagicMock()
+    api.create_raw_handler = AsyncMock(return_value=_make_handler(frames))
+    api.send_raw_message = AsyncMock()
+    return api
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_sends_change_symbol():
+    api = _make_api([])
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+    await stream.stop()
+    api.send_raw_message.assert_awaited_once()
+    msg = api.send_raw_message.await_args[0][0]
+    assert f'"asset":"{PAIR}"' in msg
+    assert "changeSymbol" in msg
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_yields_bar_on_second_roll():
+    frames = [
+        _tick(PAIR, BASE_TS + 0.1, 1.1000),
+        _tick(PAIR, BASE_TS + 0.5, 1.1010),
+        _tick(PAIR, BASE_TS + 1.0, 1.1005),   # rolls first bar
+    ]
+    api = _make_api(frames)
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+
+    df = await asyncio.wait_for(stream.__anext__(), timeout=2.0)
+    assert df is not None
+    assert len(df) == 1
+    assert df.iloc[0]["o"] == pytest.approx(1.1000)
+    assert df.iloc[0]["h"] == pytest.approx(1.1010)
+    await stream.stop()
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_stop_unblocks_anext():
+    api = _make_api([])   # no frames — pump will sit waiting
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+
+    async def _stop_soon():
+        await asyncio.sleep(0.05)
+        await stream.stop()
+
+    task = asyncio.create_task(_stop_soon())
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(stream.__anext__(), timeout=2.0)
+    await task
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_seed_included_in_df():
+    idx = pd.date_range(
+        pd.Timestamp(BASE_TS - 5, unit="s", tz="UTC"),
+        periods=5, freq="s",
+    )
+    seed_df = pd.DataFrame({
+        "o": [1.1] * 5, "h": [1.15] * 5, "l": [1.05] * 5,
+        "c": [1.12] * 5, "v": [10.0] * 5,
+    }, index=idx)
+
+    frames = [
+        _tick(PAIR, BASE_TS + 0.1, 1.1020),
+        _tick(PAIR, BASE_TS + 1.0, 1.1030),   # rolls bar
+    ]
+    api = _make_api(frames)
+    stream = RawTickStream(api, PAIR)
+    stream.seed(seed_df)
+    await stream.start()
+
+    df = await asyncio.wait_for(stream.__anext__(), timeout=2.0)
+    await stream.stop()
+    # seed bars + live bar means df has > 1 row
+    assert df is not None and len(df) > 1
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_non_tick_frames_ignored():
+    """Non-tick frames (strings, deal updates) don't emit a bar."""
+    frames = [
+        '451-["updateHistoryNewFast",{"_placeholder":true}]',
+        {"not": "a tick"},
+        _tick(PAIR, BASE_TS + 0.1, 1.1000),   # real tick — no roll yet
+    ]
+    api = _make_api(frames)
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+
+    # Queue should stay empty — no roll happened
+    await asyncio.sleep(0.1)
+    assert stream._queue.empty()
+    await stream.stop()
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_wrong_pair_frames_ignored():
+    frames = [
+        _tick("AUDUSD_otc", BASE_TS + 0.1, 0.65),
+        _tick("AUDUSD_otc", BASE_TS + 1.0, 0.66),   # would roll if pair matched
+    ]
+    api = _make_api(frames)
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+
+    await asyncio.sleep(0.1)
+    assert stream._queue.empty()
+    await stream.stop()
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_multiple_bars_queued():
+    frames = [
+        _tick(PAIR, BASE_TS + 0.1, 1.1000),
+        _tick(PAIR, BASE_TS + 1.0, 1.1010),   # bar 1 rolls
+        _tick(PAIR, BASE_TS + 2.0, 1.1020),   # bar 2 rolls
+        _tick(PAIR, BASE_TS + 3.0, 1.1030),   # bar 3 rolls
+    ]
+    api = _make_api(frames)
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+
+    # Collect three bar emissions
+    bars = []
+    for _ in range(3):
+        df = await asyncio.wait_for(stream.__anext__(), timeout=2.0)
+        bars.append(df)
+    await stream.stop()
+
+    # Each emission accumulates: 1-bar, 2-bar, 3-bar DataFrames
+    assert len(bars[0]) == 1
+    assert len(bars[1]) == 2
+    assert len(bars[2]) == 3
+
+
+@pytest.mark.asyncio
+async def test_raw_tick_stream_handler_error_is_fail_soft():
+    """A transient handler exception doesn't crash the stream or the test."""
+    error_count = [0]
+    handler = MagicMock()
+
+    async def _wait_next():
+        await asyncio.sleep(0)  # yield so the event loop can process cancel signals
+        error_count[0] += 1
+        if error_count[0] <= 2:
+            raise RuntimeError("transient WS error")
+        # After failures, deliver a tick pair that rolls a bar
+        if error_count[0] == 3:
+            return _tick(PAIR, BASE_TS + 0.1, 1.1000)
+        return _tick(PAIR, BASE_TS + 1.0, 1.1010)   # rolls
+
+    handler.wait_next = _wait_next
+    api = MagicMock()
+    api.create_raw_handler = AsyncMock(return_value=handler)
+    api.send_raw_message = AsyncMock()
+
+    stream = RawTickStream(api, PAIR)
+    await stream.start()
+
+    df = await asyncio.wait_for(stream.__anext__(), timeout=5.0)
+    await stream.stop()
+    assert df is not None
+    assert error_count[0] >= 3   # errors occurred but didn't kill the pump

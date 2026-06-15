@@ -11,14 +11,22 @@ The format received from `api.create_raw_handler().wait_next()` is:
 returns a completed-bar DataFrame (o/h/l/c/v, DatetimeIndex UTC) the instant a
 second boundary rolls, so the caller can run evaluate_flip() with ~0-500ms lag
 vs the FlipStreamer's ~1-2s bar-close lag.
+
+`RawTickStream` is the async iterator wrapper — it owns a raw WS handler,
+subscribes a pair via changeSymbol, and yields completed-bar DataFrames.
+Use it as a drop-in replacement for api.create_timed_stream() with tighter
+bar-close timing.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import deque
 from typing import Any
 
 import pandas as pd
+
+from utils.logger import log
 
 _EPOCH_OFFSET = 7200  # server epoch = UTC + 7200 s
 
@@ -162,3 +170,118 @@ class TickAccumulator:
         df = pd.DataFrame(rows).set_index("date")
         df.index = pd.DatetimeIndex(df.index)
         return df
+
+
+class RawTickStream:
+    """Async iterator that yields completed 1s OHLC DataFrames from raw ticks.
+
+    Owns one raw WS handler and one TickAccumulator.  Each second boundary
+    emits a DataFrame via an asyncio.Queue so the consumer runs evaluate_flip()
+    with ~0-500ms lag instead of the ~1-2s bar-close callback lag of
+    create_timed_stream().
+
+    Usage::
+        stream = RawTickStream(api_client, "EURUSD_otc")
+        seed_df = await api_client.get_real_candles("EURUSD_otc", period=1)
+        stream.seed(candles_to_df(seed_df))
+        await stream.start()
+        async for df in stream:                 # yields on every 1s bar-close
+            result = evaluate_flip(df, params)
+        await stream.stop()
+
+    Fail-soft: handler errors are logged and retried; they never propagate to
+    the caller.  Call ``stop()`` to clean up — it cancels the pump task and
+    unblocks any pending ``__anext__`` call.
+    """
+
+    _ANEXT_TIMEOUT = 5.0   # seconds to wait for next bar before checking running flag
+
+    def __init__(self, api_client: Any, pair: str, history_bars: int = 200) -> None:
+        self._api = api_client
+        self._pair = pair
+        self._acc = TickAccumulator(pair, history_bars)
+        self._queue: asyncio.Queue[pd.DataFrame] = asyncio.Queue()
+        self._task: asyncio.Task | None = None
+        self._running = False
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        """Create a raw WS handler, subscribe the pair, and start the pump task."""
+        if self._running:
+            return
+        self._handler = await self._api.create_raw_handler()
+        # changeSymbol triggers the server to start pushing ticks + a history seed.
+        msg = f'42["changeSymbol",{{"asset":"{self._pair}","period":1}}]'
+        await self._api.send_raw_message(msg)
+        self._running = True
+        self._task = asyncio.create_task(
+            self._pump(), name=f"raw-tick-{self._pair}"
+        )
+
+    async def stop(self) -> None:
+        """Stop the pump task and unblock any pending __anext__."""
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._task = None
+        # Poison pill so a blocked __anext__ can see the stop signal.
+        await self._queue.put(None)  # type: ignore[arg-type]
+
+    # ── seeding ──────────────────────────────────────────────────────────────
+
+    def seed(self, df: pd.DataFrame) -> None:
+        """Pre-warm the accumulator from an existing o/h/l/c/v DataFrame."""
+        self._acc.seed_df(df)
+
+    # ── async iteration ───────────────────────────────────────────────────────
+
+    def __aiter__(self) -> "RawTickStream":
+        return self
+
+    async def __anext__(self) -> pd.DataFrame:
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    self._queue.get(), timeout=self._ANEXT_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                if not self._running:
+                    raise StopAsyncIteration
+                continue
+            if item is None:
+                raise StopAsyncIteration
+            return item
+
+    # ── internal pump ─────────────────────────────────────────────────────────
+
+    async def _pump(self) -> None:
+        """Background task: drain handler → accumulator → queue."""
+        consecutive_errors = 0
+        while self._running:
+            try:
+                raw = await asyncio.wait_for(self._handler.wait_next(), timeout=10.0)
+                consecutive_errors = 0
+                df = self._acc.process(raw)
+                if df is not None:
+                    await self._queue.put(df)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                consecutive_errors += 1
+                log.debug("RawTickStream {} pump error ({}): {}", self._pair, consecutive_errors, exc)
+                if consecutive_errors >= 10:
+                    log.warning(
+                        "RawTickStream {}: 10 consecutive handler errors — pausing 5s",
+                        self._pair,
+                    )
+                    await asyncio.sleep(5)
+                    consecutive_errors = 0
+                else:
+                    await asyncio.sleep(0.5)
