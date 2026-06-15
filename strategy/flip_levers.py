@@ -14,8 +14,12 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from config.settings import settings
+
+if TYPE_CHECKING:
+    from strategy.flip_strategy import FlipParams
 
 LEVERS_PATH = "data/flip_levers.json"
 
@@ -24,7 +28,8 @@ LEVERS_PATH = "data/flip_levers.json"
 _LEVER_KEYS = (
     "st_period", "st_multiplier", "flip_window_bars",
     "adx_flip_min", "adx_trend_min", "adx_max",
-    "require_adx_rising", "atr_distance_min", "cont_macd_gap_min",
+    "require_adx_rising", "atr_distance_min", "atr_distance_max",
+    "cont_macd_gap_min", "cont_rsi_min",
 )
 
 _lock = threading.Lock()
@@ -41,8 +46,22 @@ def _defaults() -> dict:
         "adx_max": settings.flip_adx_max,
         "require_adx_rising": settings.trend_require_adx_rising,
         "atr_distance_min": settings.trend_atr_distance_min,
+        "atr_distance_max": 999.0,   # no cap by default; tune via levers file
         "cont_macd_gap_min": settings.cont_macd_gap_min,
+        "cont_rsi_min": 0.0,         # disabled by default; tune via levers file
     }
+
+
+def build_flip_params(levers: dict) -> "FlipParams":
+    """Construct FlipParams from a levers dict.
+
+    Uses _LEVER_KEYS as the authoritative list of tunable fields so that adding
+    a new key to _LEVER_KEYS automatically wires it into FlipParams everywhere —
+    no call-site updates needed.  Non-tunable fields (macd_fast/slow/signal,
+    adx_period, rsi_period, bb_period, min_candles) keep their FlipParams defaults.
+    """
+    from strategy.flip_strategy import FlipParams  # local import avoids circular dep
+    return FlipParams(**{k: levers[k] for k in _LEVER_KEYS if k in levers})
 
 
 def load_levers(path: str | None = None) -> dict:

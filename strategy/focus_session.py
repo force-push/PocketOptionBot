@@ -65,17 +65,8 @@ def _is_fx_pair(symbol: str) -> bool:
 
 
 def _params(levers: dict) -> FlipParams:
-    return FlipParams(
-        st_period=levers["st_period"],
-        st_multiplier=levers["st_multiplier"],
-        adx_flip_min=levers["adx_flip_min"],
-        adx_trend_min=levers["adx_trend_min"],
-        adx_max=levers["adx_max"],
-        require_adx_rising=levers["require_adx_rising"],
-        atr_distance_min=levers["atr_distance_min"],
-        cont_macd_gap_min=levers["cont_macd_gap_min"],
-        flip_window_bars=levers["flip_window_bars"],
-    )
+    from strategy.flip_levers import build_flip_params
+    return build_flip_params(levers)
 
 
 async def _anext(aiter: Any) -> Any:

@@ -17,8 +17,8 @@ from broker.sentiment_collector import SentimentCollector
 from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide_signals, Decision
-from strategy.flip_strategy import evaluate_flip, FlipParams
-from strategy.flip_levers import load_levers
+from strategy.flip_strategy import evaluate_flip
+from strategy.flip_levers import load_levers, build_flip_params
 from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter
@@ -296,15 +296,7 @@ class StrategyManagerV2:
                 # Live-tunable levers (re-read each cycle from data/flip_levers.json
                 # without restart; recorded per trade below for historical review).
                 levers = load_levers()
-                fd = evaluate_flip(df, FlipParams(
-                    st_period=levers["st_period"], st_multiplier=levers["st_multiplier"],
-                    adx_flip_min=levers["adx_flip_min"], adx_trend_min=levers["adx_trend_min"],
-                    adx_max=levers["adx_max"],
-                    require_adx_rising=levers["require_adx_rising"],
-                    atr_distance_min=levers["atr_distance_min"],
-                    cont_macd_gap_min=levers["cont_macd_gap_min"],
-                    flip_window_bars=levers["flip_window_bars"],
-                ))
+                fd = evaluate_flip(df, build_flip_params(levers))
                 conf = ConfluenceResult(
                     direction=fd.direction,
                     score=1.0 if fd.direction else 0.0,

@@ -138,7 +138,7 @@ class BotSettings(BaseSettings):
     # Continuation MACD-momentum gate: require |MACD-signal|/ATR ≥ this for trend
     # continuation entries (the trend "runs off the MACD"; data: large-gap
     # continuations ~53% WR vs small-gap ~47%). 0 = off; tune via levers file.
-    cont_macd_gap_min: float = Field(default=0.0, alias="CONT_MACD_GAP_MIN", ge=0)
+    cont_macd_gap_min: float = Field(default=0.5, alias="CONT_MACD_GAP_MIN", ge=0)
     # Treat a flip as "fresh" if the SuperTrend trend started within this many of
     # the most recent 1s bars. >1 catches flips the ~cycle-cadence scan would
     # otherwise miss (the flip is a 1-bar event sampled every few seconds).

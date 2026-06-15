@@ -26,6 +26,14 @@ from signals.macd import compute_macd
 from signals.adx_dmi import compute_adx
 
 
+def _rsi(prices: pd.Series, period: int = 14) -> pd.Series:
+    delta = prices.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+
 @dataclass(frozen=True)
 class FlipParams:
     st_period: int = 10
@@ -39,7 +47,10 @@ class FlipParams:
     adx_max: float = 999.0          # skip entries above this ADX (over-extended/exhausted)
     require_adx_rising: bool = True  # continuation needs ADX rising
     atr_distance_min: float = 0.5   # continuation: price ≥ this×ATR from ST band
+    atr_distance_max: float = 999.0  # continuation: skip if price > this×ATR from band (over-extended)
     cont_macd_gap_min: float = 0.0  # continuation: require |MACD-signal|/ATR ≥ this (momentum)
+    cont_rsi_min: float = 0.0       # continuation: RSI > this for CALL / < (100-this) for PUT (0=off)
+    rsi_period: int = 14            # RSI period for continuation confirmation
     flip_window_bars: int = 3       # treat as fresh flip if trend started ≤ this many bars ago
     bb_period: int = 20             # Bollinger period for band-width volatility metric
     min_candles: int = 40
@@ -67,6 +78,8 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     )
     pos_di, neg_di, adx = compute_adx(df, params.adx_period)
     atr = _atr(df, params.st_period)
+    rsi_series = _rsi(df["c"], params.rsi_period)
+    rsi_val = rsi_series.iloc[-1]
 
     t = int(trend.iloc[-1])
     direction = "CALL" if t == 1 else "PUT"
@@ -107,15 +120,17 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     # is price-scale-dependent). This gates continuation entries — large gap =
     # real momentum (data: large-gap continuations ~53% WR vs small-gap ~47%).
     macd_gap_atr = round(abs(float(ml - sl)) / float(a), 3) if (np.isfinite(a) and a > 0) else 0.0
+    rsi_now = round(float(rsi_val), 1) if (not pd.isna(rsi_val)) else None
     diag = (f"ST={direction} adx={adx_now:.1f}{'↑' if adx_rising else '↓'} "
             f"+DI={pdi:.1f} -DI={ndi:.1f} macd_gap={ml - sl:.6f} gapATR={macd_gap_atr} "
-            f"dist={dist:.2f}ATR atr={atr_bps}bps bbw={bb_width_bps}bps")
+            f"dist={dist:.2f}ATR rsi={rsi_now} atr={atr_bps}bps bbw={bb_width_bps}bps")
     metrics = {
         "st_dir": direction, "flipped": bool(flipped), "bars_in_trend": bars_in_trend,
         "adx": round(float(adx_now), 2), "adx_rising": adx_rising,
         "plus_di": round(float(pdi), 2), "minus_di": round(float(ndi), 2),
         "dist_atr": round(float(dist), 3), "macd_gap": float(ml - sl),
-        "macd_gap_atr": macd_gap_atr, "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
+        "macd_gap_atr": macd_gap_atr, "rsi": rsi_now,
+        "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
     }
 
     # Over-extension cap: very high ADX = exhausted/climaxing move that tends to
@@ -139,16 +154,29 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
                                 {**metrics, "entry_kind": "flip"})
         return FlipDecision(None, None, f"flip but ADX<{params.adx_flip_min} ({diag})", metrics)
 
-    # Established trend → continuation. The edge here is MACD momentum (the trend
-    # "runs off the MACD"): require a large enough ATR-normalised gap, plus the
-    # basic ADX/distance floors.
+    # Established trend → continuation. Edge requires: ADX strength + rising, price
+    # within the 1–2 ATR "confirmed but not over-extended" zone, MACD momentum
+    # gap, and RSI direction confirmation (if cont_rsi_min > 0).
+    # Data (n=923): dist 1-2 ATR = 54-63% WR; dist >2 ATR = 47-49% (climaxing).
     rising_ok = adx_rising or not params.require_adx_rising
     macd_strong = macd_gap_atr >= params.cont_macd_gap_min
-    strong = (adx_now >= params.adx_trend_min and rising_ok
-              and dist >= params.atr_distance_min and macd_strong)
+    dist_in_zone = params.atr_distance_min <= dist <= params.atr_distance_max
+    strong = adx_now >= params.adx_trend_min and rising_ok and dist_in_zone and macd_strong
     if strong:
+        if params.cont_rsi_min > 0 and rsi_now is not None:
+            rsi_ok = (rsi_now > params.cont_rsi_min if direction == "CALL"
+                      else rsi_now < 100 - params.cont_rsi_min)
+            if not rsi_ok:
+                threshold = params.cont_rsi_min if direction == "CALL" else 100 - params.cont_rsi_min
+                op = ">" if direction == "CALL" else "<"
+                return FlipDecision(None, None,
+                                    f"RSI {rsi_now} doesn't confirm {direction} (need {op}{threshold:.0f}) ({diag})",
+                                    metrics)
         return FlipDecision(direction, "trend", f"TREND {direction} continuation ({diag})",
                             {**metrics, "entry_kind": "trend"})
+    if dist > params.atr_distance_max:
+        return FlipDecision(None, None,
+                            f"over-extended {dist:.2f}ATR > max {params.atr_distance_max} ({diag})", metrics)
     if not macd_strong:
         return FlipDecision(None, None, f"weak MACD gap {macd_gap_atr}<{params.cont_macd_gap_min} ({diag})", metrics)
     return FlipDecision(None, None, f"trend not strong enough ({diag})", metrics)
