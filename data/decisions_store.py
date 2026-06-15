@@ -304,6 +304,43 @@ def all_records(path: str | Path, *, clock: Optional[float] = None) -> list[dict
         return [cache.by_id[k] for k in sorted(cache.by_id)]
 
 
+def pair_ev_aggregates(path: str | Path) -> list[dict]:
+    """Per-pair win/loss/bot-WR/payout aggregates for resolved TRADE rows.
+
+    Computed entirely in SQL (``GROUP BY pair_api``) so callers never load the
+    full decision history into memory — a transient, small result set (one row
+    per pair) that is freed immediately. This is the memory-safe replacement for
+    ``all_records`` in the trading process's periodic EV-summary log.
+
+    Each dict: ``{pair, w, l, bot_wr, payout}`` where ``payout`` is the average
+    live payout% (falling back to back-calculated payout from win pnl/stake when
+    ``payout_pct`` wasn't stored). Matches the row filter used previously:
+    ``decision='TRADE'`` and ``outcome IN ('win','loss')``.
+    """
+    p = Path(path)
+    if not p.exists():
+        return []
+    with connect(p) as conn:
+        rows = conn.execute(
+            """
+            SELECT pair_api AS pair,
+                   SUM(CASE WHEN outcome = 'win'  THEN 1 ELSE 0 END) AS w,
+                   SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS l,
+                   AVG(json_extract(data, '$.bot_win_rate')) AS bot_wr,
+                   AVG(COALESCE(
+                       json_extract(data, '$.payout_pct'),
+                       CASE WHEN outcome = 'win' AND pnl IS NOT NULL
+                                 AND json_extract(data, '$.stake') > 0
+                            THEN pnl / json_extract(data, '$.stake') * 100
+                       END)) AS payout
+            FROM decisions
+            WHERE decision = 'TRADE' AND outcome IN ('win', 'loss')
+            GROUP BY pair_api
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def reset_cache(path: str | Path | None = None) -> None:
     """Drop the in-process cache (tests / after a bulk migration)."""
     with _caches_lock:
