@@ -10,6 +10,13 @@ Reads data/decisions.db and reports, for a recent window:
   3. Pair leaderboard (best/worst by P&L) — candidates for the regex/blocklist.
   4. Dimension scan (bb_width, ADX, dist, direction) — flags any band below
      break-even with a meaningful sample, i.e. a lever worth tuning.
+  5. WR trend (30m/2h/6h/24h) — regression radar; catches WR sliding before it
+     shows up in a single window.
+  6. OPTIMIZER recommendations — reads the live gate thresholds (flip_levers.json)
+     and finds BOTH leak types: bands we TRADE that lose (→ tighten) and bands we
+     EXCLUDE that win (→ loosen, the opportunity-cost leak). Guardrailed against
+     noise: only fires when a band has ≥ MIN_ACT_N trades and is ≥ MARGIN points
+     clear of break-even — so it optimises WR on signal, not small-sample swings.
 
 Pure stdlib, read-only. Run with the bot up or down:
     python3 tools/analyze_failures.py            # last 6h
@@ -19,13 +26,21 @@ Pure stdlib, read-only. Run with the bot up or down:
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 from pathlib import Path
 
 DB = Path(__file__).resolve().parent.parent / "data" / "decisions.db"
+LEVERS = Path(__file__).resolve().parent.parent / "data" / "flip_levers.json"
 BREAKEVEN = 52.08  # 1/(1+0.92) at 92% payout
 PAYOUT_FACTOR = 1.38   # $1.50 stake * 0.92
 LOSS = -1.50
+
+# Optimizer guardrails — act on signal, not noise (per the data-driven rule):
+#   only recommend a lever change when a band has >= MIN_ACT_N resolved trades AND
+#   its WR is clear of break-even by >= MARGIN points.
+MIN_ACT_N = 30
+MARGIN = 2.0
 
 
 def _wr(rows):
@@ -137,7 +152,87 @@ def main() -> None:
         w, k, p = _wr([r["outcome"] for r in rows if r["dir"] == d])
         if k:
             print(f"    {d:5}: {k:4}t  WR {w:.1f}%  ${p:+.2f}   {_verdict(w, k)}")
+
+    # 5. WR trend (regression radar) + 6. optimizer recommendations
+    _wr_trend(con)
+    _recommend(rows)
     print()
+
+
+# ── WR trend: catch regression early ─────────────────────────────────────────
+
+def _wr_trend(con) -> None:
+    print("\n--- WR trend (regression radar) ---")
+    spans = [("30m", 0.5), ("2h", 2), ("6h", 6), ("24h", 24)]
+    prev = None
+    for label, hrs in spans:
+        r = con.execute(
+            "SELECT outcome FROM decisions WHERE outcome IN ('win','loss') "
+            "AND replace(substr(ts,1,19),'T',' ') > datetime('now', ?)",
+            (f"-{hrs} hours",),
+        ).fetchall()
+        w, n, _ = _wr([x["outcome"] for x in r])
+        arrow = ""
+        if prev is not None and n >= MIN_ACT_N:
+            arrow = " ↑" if w > prev + 1 else " ↓" if w < prev - 1 else " ="
+        print(f"  {label:4}: {n:4}t  WR {w:.1f}%{arrow}   {_verdict(w, n)}")
+        prev = w
+
+
+# ── Optimizer: find BOTH leak types (tighten losers, loosen excluded winners) ──
+
+def _active_levers() -> dict:
+    try:
+        return json.loads(LEVERS.read_text())
+    except Exception:
+        return {}
+
+
+def _band_stats(rows, col, lo, hi):
+    return _wr([r["outcome"] for r in rows
+                if r[col] is not None and lo <= float(r[col]) < hi])
+
+
+def _recommend(rows) -> None:
+    print("\n--- OPTIMIZER recommendations (n≥{} & ≥{:.0f}pts off B/E) ---".format(MIN_ACT_N, MARGIN))
+    lv = _active_levers()
+    actions: list[str] = []
+
+    # bb_width: global gate [min,max]. Find excluded-but-profitable (loosen) and
+    # included-but-losing (tighten) fine bands.
+    bmin = float(lv.get("bb_width_min", 0) or 0)
+    bmax = float(lv.get("bb_width_max", 0) or 0)
+    fine = [(0, 3), (3, 4), (4, 6), (6, 8), (8, 14), (14, 18), (18, 25), (25, 1e9)]
+    for lo, hi in fine:
+        w, n, _ = _band_stats(rows, "bbw", lo, hi)
+        if n < MIN_ACT_N:
+            continue
+        included = (bmin == 0 or lo >= bmin) and (bmax == 0 or hi <= bmax)
+        if included and w <= BREAKEVEN - MARGIN:
+            actions.append(f"bb_width {lo}-{hi}: TRADED at {w:.1f}% (n={n}) — TIGHTEN to exclude")
+        elif not included and w >= BREAKEVEN + MARGIN:
+            actions.append(f"bb_width {lo}-{hi}: EXCLUDED but {w:.1f}% (n={n}) — LOOSEN to capture")
+
+    # direction skew → consider a direction-aware filter only on a big, clear sample.
+    for d in ("CALL", "PUT"):
+        w, n, _ = _wr([r["outcome"] for r in rows if r["dir"] == d])
+        if n >= MIN_ACT_N * 2 and w <= BREAKEVEN - MARGIN:
+            actions.append(f"direction {d}: {w:.1f}% (n={n}) — consider de-weighting/blocking {d}")
+
+    # bad pairs (big sample, clearly losing) → blocklist candidates.
+    by_pair: dict[str, list] = {}
+    for r in rows:
+        by_pair.setdefault(r["pair_api"], []).append(r["outcome"])
+    for pair, o in by_pair.items():
+        w, n, pnl = _wr(o)
+        if n >= MIN_ACT_N and w <= BREAKEVEN - MARGIN:
+            actions.append(f"pair {pair}: {w:.1f}% (n={n}, ${pnl:+.0f}) — blocklist candidate")
+
+    if actions:
+        for a in actions:
+            print(f"  → {a}")
+    else:
+        print("  → no high-confidence lever change (samples thin or bands near B/E) — hold")
 
 
 def _scan(rows, label, col, bands):
