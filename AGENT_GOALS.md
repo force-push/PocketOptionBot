@@ -20,18 +20,24 @@ Quantify before filtering: compute WR_with × volume_with vs WR_without × volum
 At 65% WR, $8 stake, 20 trades/hr: $0.88/min. At 70% WR, $8 stake, 25 trades/hr: $1.12/min.
 Path: prove 55%+ WR over 200+ trades → raise stake → $1/min becomes achievable at 20-30 trades/hr.
 
-Current state (2026-06-16): 3-6 real trades/hr at 53-70% WR. Volume is the primary bottleneck.
-Trend entries: 65% WR all-time (correct). Flip entries: 53% WR bars 1-7 (above break-even).
+Current state (2026-06-17): ~3 real trades/hr. Volume is the primary bottleneck.
+- flip_confirm_bars=1 (changed from 4 — 2026-06-16; bars 1-7 all at 53% WR, confirm=4 cut volume 63% for zero WR gain)
+- MIN_PAYOUT_PCT=88 (changed from 92 — 2026-06-17; only 8/132 pairs at 92%, EURUSD/AUDUSD sidelined)
+- FOCUS_PAYOUT_FLOOR=88 (aligned with poll loop)
+- DOGE_otc added to ALLOWED_PAIR_REGEX (54.9% WR, n=173, was excluded by USD/EUR match)
+- flip_atr_min/flip_atr_max are now separate params from atr_distance_min/max (code deployed)
+Trend entries: 65%+ WR all-time (correct). Flip entries: building sample under new config.
 
 ---
 
 ## Strategy Architecture
 
-- **Mode**: `STRATEGY_MODE=flip` — SuperTrend flip-and-continuation on 1s candles, 30s expiry.
+- **Mode**: `STRATEGY_MODE=flip` — SuperTrend flip-and-continuation on 1s candles, 5s expiry.
 - **Entry kinds**:
-  - `flip`: SuperTrend direction reversal, wait `flip_confirm_bars` (currently 4), then enter
-  - `trend`: Strong established trend — ADX≥30 + rising, price 1-2 ATR from the band
-- **Universe**: `ALLOWED_PAIR_REGEX = ^(?!.*GBP).*(USD|CNY|CNH|EUR)` — USD/CNY/CNH/EUR crosses, GBP excluded
+  - `flip`: SuperTrend direction reversal, wait `flip_confirm_bars=1`, then enter; flip_atr_min/max gates flip dist separately from trend
+  - `trend`: Strong established trend — ADX≥30 + rising, price 1-2 ATR from band (dist gates: atr_distance_min=1.0, atr_distance_max=2.0)
+- **Universe**: `ALLOWED_PAIR_REGEX = ^(?!.*GBP).*(USD|CNY|CNH|EUR)|^DOGE` — USD/CNY/CNH/EUR + DOGE, GBP excluded
+- **Payout floors**: `MIN_PAYOUT_PCT=88` (poll loop), `FOCUS_PAYOUT_FLOOR=88` (FocusSession)
 - **Shadow track**: `SHADOW_TF5S_ENABLED=true` — 5s candle shadow trades for research at 15s+30s expiry
 
 ---
@@ -82,19 +88,21 @@ Trend entries: 65% WR all-time (correct). Flip entries: 53% WR bars 1-7 (above b
 
 ## Active Levers (current, 2026-06-16)
 
-### `data/flip_levers.json` (1s candles, real trades)
+### `data/flip_levers.json` (1s candles, real trades) — as of 2026-06-17
 ```json
 {
-  "adx_flip_min": 25,       // flips need ADX≥25; dead zone 25-30 → effective floor is 30
-  "flip_adx_dead_lo": 25,
+  "adx_flip_min": 25,       // flips need ADX≥25; dead zone 25-30 → effective floor is ADX>30
+  "flip_adx_dead_lo": 25,   // dead zone blocks 25-30 (47% WR — below B/E)
   "flip_adx_dead_hi": 30,
-  "adx_trend_min": 30,
-  "flip_confirm_bars": 4,   // wait 4 bars after SuperTrend flip before entry
+  "adx_trend_min": 30,      // trend continuation needs ADX≥30 + rising
+  "flip_confirm_bars": 1,   // 2026-06-16: was 4; bars 1-7 all 53% WR → confirm=4 cut 63% volume for zero gain
   "flip_window_bars": 7,    // flip is "fresh" within 7 bars
-  "atr_distance_min": 1.0,  // trend floor (don't enter when price hasn't moved from band)
-  "atr_distance_max": 999,  // OFF for flips (flip best zone is dist3+; separate param needed)
-  "bb_width_min": 2,        // demo sample pass (low volatility Asian session)
-  "bb_width_max": 18,       // chop filter
+  "atr_distance_min": 1.0,  // TREND only: price must be ≥1 ATR from band
+  "atr_distance_max": 2.0,  // TREND only: dist>2 ATR = over-extended, 42% WR
+  "flip_atr_min": 0.0,      // FLIP: no lower cap (flip at any dist for now, data gathering)
+  "flip_atr_max": 999,      // FLIP: no upper cap (dist3+ exhaustion flips = 56% WR)
+  "bb_width_min": 2,        // skip extreme chop
+  "bb_width_max": 18,       // skip extreme whipsaw
   "cont_macd_gap_min": 0.5, // trend continuation momentum gate
   "cont_rsi_min": 50,       // trend: PUT needs RSI<50, CALL needs RSI>50
   "require_adx_rising": true
@@ -107,8 +115,11 @@ Trend entries: 65% WR all-time (correct). Flip entries: 53% WR bars 1-7 (above b
   "adx_flip_min": 25,
   "flip_confirm_bars": 5,   // bars 5-6 at 30s expiry = 62.5% WR (5s data)
   "flip_window_bars": 6,
-  "atr_distance_min": 2.0,  // 5s data: dist<2 flips bad
-  "atr_distance_max": 3.5,
+  "atr_distance_min": 1.0,
+  "atr_distance_max": 2.0,  // trend cap
+  "flip_atr_min": 2.0,      // 5s: dist<2 flips bad
+  "flip_atr_max": 999,
+  "bb_width_min": 6,
   "bb_width_max": 25        // blocks TNDUSD (avg bbw=26.9, 20% WR)
 }
 ```
@@ -158,14 +169,11 @@ Bot restart: kill <main_v2 PID> (supervisor restarts within 5s)
 
 ## Open Code Improvements (next iterations)
 
-### HIGH: Separate flip vs trend ATR dist params
-- Problem: `atr_distance_min/max` is shared between flip and trend paths
-- Flip optimal: dist 3+ ATR (exhaustion reversal)
-- Trend optimal: dist 1-2 ATR (confirmed direction)
-- Solution: add `flip_atr_min` / `flip_atr_max` to `FlipParams` dataclass
-- Use `flip_atr_min/max` in the flip code path; keep `atr_distance_min/max` for trend only
-- Then: `flip_atr_min=2.5, flip_atr_max=999` (allow exhaustion flips); `atr_distance_max=2.0` (trend cap)
-- Estimated WR lift: ~3-5 pts (removes 25% WR dist1-2 flip zone, keeps 56% dist3+ flip zone)
+### ~~HIGH: Separate flip vs trend ATR dist params~~ ✅ DONE (2026-06-16)
+- `flip_atr_min`/`flip_atr_max` added to `FlipParams` in `strategy/flip_strategy.py`
+- Trend path uses `atr_distance_min=1.0, atr_distance_max=2.0` (dist 1-2 ATR zone, 65-68% WR)
+- Flip path uses `flip_atr_min=0, flip_atr_max=999` (uncapped for now — gathering data on flip dist zones)
+- Next: once enough flip data by dist zone is accumulated, set `flip_atr_min=2.5` to gate out low-dist flips
 
 ### MEDIUM: flip_rsi_extreme gate
 - Data: rsi65+ + adx30+ + PUT = 58.7% WR (n=121) vs neutral RSI + PUT = 35-40% WR
@@ -177,10 +185,9 @@ Bot restart: kill <main_v2 PID> (supervisor restarts within 5s)
 - USDEGP/LTCUSD: 36-39% WR, blocklist candidates
 - Consider adding per-pair WR floor gate once n≥50 per pair
 
-### LOW: analyze_failures shadow filtering
-- Post-loss window analysis includes shadow trade losses as "last loss" reference
-- Shadow losses don't trigger cooldown, so the <30s bucket is inflated by shadow→real pairs
-- Fix: add `AND json_extract(data,'$.shadow')=0` to the post-loss query
+### ~~LOW: analyze_failures shadow filtering~~ ✅ DONE (2026-06-16)
+- Fixed: all analysis sections now use real_rows only (shadow=0 filter applied throughout)
+- The 15 post-loss violations that triggered the original flag were ALL shadow→shadow pairs (not real cooldown violations)
 
 ---
 
