@@ -915,50 +915,47 @@ class StrategyManagerV2:
             self._open_trade_count = max(0, self._open_trade_count - 1)
 
     def _log_ev_summary(self) -> None:
-        """Log a compact broker-calibration + EV table from the decision store."""
+        """Log a compact broker-calibration + EV table from the decision store.
+
+        Uses a SQL ``GROUP BY`` aggregate (``pair_ev_aggregates``) rather than
+        loading the full decision history into memory — this is a periodic,
+        log-only diagnostic and must not bloat the trading process. (Payout is an
+        average rather than a per-trade median; payouts cluster ~92% so the EV
+        figures shown are unchanged in practice. No effect on trading behaviour.)
+        """
         try:
-            from data.decisions_store import all_records
-            rows = all_records(settings.decisions_db_path)
-            trades = [r for r in rows if r.get("decision") == "TRADE" and r.get("outcome") in ("win", "loss")]
-            if len(trades) < 5:
+            from data.decisions_store import pair_ev_aggregates
+            aggs = [a for a in pair_ev_aggregates(settings.decisions_db_path)
+                    if ((a.get("w") or 0) + (a.get("l") or 0)) > 0]
+            total = sum((a["w"] or 0) + (a["l"] or 0) for a in aggs)
+            if total < 5:
                 return
 
-            pair_stats: dict[str, dict] = defaultdict(lambda: {"w": 0, "l": 0, "bot_wrs": [], "payouts": []})
-            for r in trades:
-                p = r["pair_api"]
-                pair_stats[p]["w" if r["outcome"] == "win" else "l"] += 1
-                pair_stats[p]["bot_wrs"].append(r["bot_win_rate"])
-                # Back-calc payout from win pnl if payout_pct not stored
-                pp = r.get("payout_pct")
-                if pp is None and r["outcome"] == "win" and r.get("pnl") and r.get("stake"):
-                    pp = r["pnl"] / r["stake"] * 100
-                if pp is not None:
-                    pair_stats[p]["payouts"].append(float(pp))
-
-            total = len(trades)
-            wins = sum(1 for r in trades if r["outcome"] == "win")
+            wins = sum(a["w"] or 0 for a in aggs)
             overall_wr = wins / total
-            all_payouts = [p for d in pair_stats.values() for p in d["payouts"]]
-            median_po = statistics.median(all_payouts) if all_payouts else 92.0
+            payouts = [a["payout"] for a in aggs if a["payout"] is not None]
+            median_po = statistics.median(payouts) if payouts else 92.0
             overall_ev = overall_wr * (median_po / 100) - (1 - overall_wr)
-            avg_pred = statistics.mean(r["bot_win_rate"] for r in trades)
+            # Trade-count-weighted mean of per-pair bot_win_rate == mean over all
+            # trades (matches the previous overall predicted figure).
+            avg_pred = sum((a["bot_wr"] or 0) * ((a["w"] or 0) + (a["l"] or 0))
+                           for a in aggs) / total
 
             log.info(
                 "── EV SUMMARY ({} trades) ──  actual={:.1%}  predicted={:.1%}  "
                 "delta={:+.1%}  median_payout={:.0f}%  EV={:+.4f}",
                 total, overall_wr, avg_pred, overall_wr - avg_pred, median_po, overall_ev,
             )
-            for pair in sorted(pair_stats, key=lambda p: -(pair_stats[p]["w"] + pair_stats[p]["l"])):
-                d = pair_stats[pair]
-                n = d["w"] + d["l"]
-                wr = d["w"] / n
-                pout = statistics.median(d["payouts"]) if d["payouts"] else median_po
+            for a in sorted(aggs, key=lambda a: -((a["w"] or 0) + (a["l"] or 0))):
+                n = (a["w"] or 0) + (a["l"] or 0)
+                wr = (a["w"] or 0) / n
+                pout = a["payout"] if a["payout"] is not None else median_po
                 ev = wr * (pout / 100) - (1 - wr)
-                bot_wr = statistics.mean(d["bot_wrs"])
+                bot_wr = a["bot_wr"] or 0.0
                 flag = "✓" if ev >= 0 else "✗"
                 log.info(
                     "  {:18s}  n={:3d}  act={:.1%}  bot={:.1%}  payout={:.0f}%  EV={:+.4f} {}",
-                    pair, n, wr, bot_wr, pout, ev, flag,
+                    a["pair"], n, wr, bot_wr, pout, ev, flag,
                 )
         except Exception as exc:
             log.debug("EV summary failed: {}", exc)
