@@ -34,6 +34,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# events.jsonl is an append-only dashboard feed; the dashboard only ever reads
+# lines appended after it started (byte-offset tail). Left unbounded it grew to
+# 200MB+. Cap it: when it exceeds the size limit, keep only the last N lines.
+# The dashboard's drain handles truncation (size < offset → resets to 0).
+_EVENTS_MAX_BYTES = 10 * 1024 * 1024   # 10 MB
+_EVENTS_KEEP_LINES = 5000
+_EVENTS_CHECK_EVERY = 200              # check size every N appends (cheap)
+
+
 class StateBridge:
     """Writes live_state.json + events.jsonl for the dashboard.
 
@@ -53,6 +62,7 @@ class StateBridge:
         self.enabled = bool(enabled)
         self._state_path = Path(state_path)
         self._events_path = Path(events_path)
+        self._append_count = 0
 
     # ── public API (all fail-closed) ─────────────────────────────────────────
 
@@ -123,6 +133,28 @@ class StateBridge:
         self._events_path.parent.mkdir(parents=True, exist_ok=True)
         with self._events_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event, default=str, ensure_ascii=False) + "\n")
+        self._append_count += 1
+        if self._append_count % _EVENTS_CHECK_EVERY == 0:
+            self._cap_events_file()
+
+    def _cap_events_file(self) -> None:
+        """Truncate events.jsonl to the last _EVENTS_KEEP_LINES when over the cap.
+
+        Append-only growth is unbounded otherwise. The dashboard reads only the
+        post-startup tail and handles truncation (resets its offset), so dropping
+        old lines is safe. Fail-soft: any error leaves the file untouched.
+        """
+        try:
+            if self._events_path.stat().st_size <= _EVENTS_MAX_BYTES:
+                return
+            with self._events_path.open("r", encoding="utf-8") as fh:
+                tail = fh.readlines()[-_EVENTS_KEEP_LINES:]
+            tmp = self._events_path.with_suffix(".jsonl.tmp")
+            with tmp.open("w", encoding="utf-8") as fh:
+                fh.writelines(tail)
+            tmp.replace(self._events_path)
+        except Exception as exc:  # never raise into the trading loop
+            self._debug("events cap failed: {}", exc)
 
     @staticmethod
     def _atomic_write_json(path: Path, obj: Any) -> None:
