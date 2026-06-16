@@ -1,5 +1,5 @@
 {
-  "_comment": "2026-06-16 adx_flip_min 15->25: ADX<25 flips=27.6% WR; ADX30-40=68.4%. Dead zone 25-30 => flips need ADX>=30. dist: trend best=1-2ATR (65% WR), flip best=dist3+ ADX30-40 (56% WR) — OPPOSITE zones; shared param can't gate both; atr_distance_max=999 (off for flips), atr_distance_min=1 (trend floor). Proper fix: add flip_atr_min/max params.",
+  "_comment": "2026-06-16 flip_confirm_bars 4->1: WR flat at 53% across bars 1-7 for ADX>=30 flips (n=374); bars 1-3=53% same as bars 4-7=53%. Confirm=4 cut volume 63% for zero WR gain. Objective: maximize wins/hour (WR x volume). adx_flip_min=25, dead zone 25-30, atr_distance_max=2 (trend), flip_atr=off.",
   "st_period": 10,
   "st_multiplier": 3.0,
   "flip_window_bars": 7,
@@ -13,7 +13,7 @@
   "flip_atr_max": 999,
   "cont_macd_gap_min": 0.5,
   "cont_rsi_min": 50,
-  "flip_confirm_bars": 4,
+  "flip_confirm_bars": 1,
   "flip_gap_expansion_min": 0.0,
   "flip_adx_dead_lo": 25,
   "flip_adx_dead_hi": 30,

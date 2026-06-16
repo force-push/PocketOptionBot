@@ -7,15 +7,21 @@
 
 ## Primary Goal
 
-**80%+ win rate on a curated entry set, then raise stake.**
+**Maximize winning trades per hour, then raise stake.**
 
-Break-even is 52.08% at 92% payout. Every lever tweak must ask one question:
-does this raise WR, even at the cost of trade count? Volume is the enemy until
-the edge is proven. Once WR is *reliably* above break-even over 200+ resolved
-trades, scale stake — not before.
+The objective function is `wins/hour = WR × trades/hour`, NOT WR in isolation.
+Break-even is 52.08% at 92% payout — that's the floor, not the target.
 
-Current state (2026-06-16): WR ~49% overall (all-time, 2283 flip-strategy real trades).
-Trend entries: 65% WR (correct). Flip entries: 25-50% WR (needs tightening).
+**Key constraint:** Only add/keep a filter if it produces a NET increase in wins/hour.
+If a filter cuts volume by 50% and only lifts WR by 5pts, it reduces wins/hour — reject it.
+Quantify before filtering: compute WR_with × volume_with vs WR_without × volume_without.
+
+**Income target:** $1/min = $60/hr. At 92% payout, 55% WR, $5 stake, 20 trades/hr: $0.55/min.
+At 65% WR, $8 stake, 20 trades/hr: $0.88/min. At 70% WR, $8 stake, 25 trades/hr: $1.12/min.
+Path: prove 55%+ WR over 200+ trades → raise stake → $1/min becomes achievable at 20-30 trades/hr.
+
+Current state (2026-06-16): 3-6 real trades/hr at 53-70% WR. Volume is the primary bottleneck.
+Trend entries: 65% WR all-time (correct). Flip entries: 53% WR bars 1-7 (above break-even).
 
 ---
 
@@ -132,7 +138,12 @@ Look for:
 - Blocklist candidates from optimizer section
 
 ### STEP 3 — Lever evaluation
-If a band has n≥30 and WR ≥ 5pts below B/E → candidate lever change.
+Objective: maximize `wins/hour = WR × trades/hour`. Before any change, compute:
+- Current: WR_current × volume_current
+- Proposed: WR_proposed × volume_proposed
+Only change if wins/hour INCREASES.
+
+Hard floor: WR must stay above 52.08% break-even (92% payout).
 Change ONE lever at a time. Log the reason in `_comment` field of the lever file.
 Lever changes take effect **immediately** (mtime-cached per cycle, no restart needed).
 
