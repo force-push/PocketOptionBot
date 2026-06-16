@@ -33,7 +33,14 @@ _LEVER_KEYS = (
     # flip-specific distance bounds (separate from continuation — opposite optimal zones:
     # trend best=dist1-2ATR, flip best=dist3+ATR exhaustion reversals; 0/999=off)
     "flip_atr_min", "flip_atr_max",
+    # flip-specific ADX cap: flip|adx40+ bad (23-45% WR); trend|adx40+|d<2 = 64% WR
+    # so global adx_max can't cap at 40 without hurting trend — separate param (999=off)
+    "flip_adx_max",
+    # ROC(N) direction gate for flip entries: 0=off; N bars of momentum must agree
+    "roc_period",
     "cont_macd_gap_min", "cont_rsi_min",
+    # MACD parameters — now tunable per lever file so 5s levers can use shorter window
+    "macd_fast", "macd_slow", "macd_signal",
     # flip wait-and-confirm
     "flip_confirm_bars", "flip_gap_expansion_min",
     "flip_adx_dead_lo", "flip_adx_dead_hi",
@@ -96,8 +103,8 @@ def build_flip_params(levers: dict) -> "FlipParams":
 
     Uses _LEVER_KEYS as the authoritative list of tunable fields so that adding
     a new key to _LEVER_KEYS automatically wires it into FlipParams everywhere —
-    no call-site updates needed.  Non-tunable fields (macd_fast/slow/signal,
-    adx_period, rsi_period, bb_period, min_candles) keep their FlipParams defaults.
+    no call-site updates needed.  Non-tunable fields (adx_period, rsi_period,
+    bb_period, min_candles) keep their FlipParams defaults.
     """
     from strategy.flip_strategy import FlipParams  # local import avoids circular dep
     return FlipParams(**{k: levers[k] for k in _LEVER_KEYS if k in levers})

@@ -77,6 +77,14 @@ class FlipParams:
     flip_gap_expansion_min: float = 0.0  # require MACD gap to have widened by ≥ this since the flip bar (0 = off, capture-only)
     flip_adx_dead_lo: float = 0.0   # skip flips when flip_adx_dead_lo < ADX < flip_adx_dead_hi (dead zone; lo≥hi = off)
     flip_adx_dead_hi: float = 0.0   #   data: ADX 25-30 flips ~42% WR vs both neighbours profitable
+    # Flip-specific ADX cap (separate from adx_max which applies to all entries).
+    # flip|adx40+ is bad across all dist zones (23-45% WR) while trend|adx40+|d<2
+    # is 64% WR — a global adx_max=40 would kill the good trend zone. 999=off.
+    flip_adx_max: float = 999.0
+    # Rate of change (N-bar) direction confirmation gate. 0=off. When enabled,
+    # ROC(N) must agree with the trade direction: CALL needs positive N-bar
+    # momentum, PUT needs negative. Useful for confirming a flip has real momentum.
+    roc_period: int = 0
     bb_period: int = 20             # Bollinger period for band-width volatility metric
     min_candles: int = 40
 
@@ -135,6 +143,13 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     adx_rising = bool(adx_now > adx_prev)
     # Volatility metrics for loss-vs-win analysis: ATR as bps of price, and
     # Bollinger Band Width (upper-lower)/mid as bps (regime: narrow=chop).
+    # Rate-of-change: N-bar directional momentum (0 = not computed / gate off).
+    roc_val = None
+    if params.roc_period > 0 and len(df) > params.roc_period:
+        prior = float(df["c"].iloc[-(params.roc_period + 1)])
+        if prior != 0:
+            roc_val = (float(df["c"].iloc[-1]) - prior) / prior * 100.0
+
     atr_bps = round(float(a) / price * 1e4, 3) if (np.isfinite(a) and price) else None
     close = df["c"]
     mid = close.rolling(params.bb_period).mean().iloc[-1]
@@ -197,6 +212,7 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         "macd_gap_std": macd_gap_std, "macd_gap_mean": macd_gap_mean,
         "macd_sign_consistency": macd_sign_consistency,
         "atr_bps": atr_bps, "bb_width_bps": bb_width_bps,
+        "roc": round(roc_val, 4) if roc_val is not None else None,
     }
 
     # Over-extension cap: very high ADX = exhausted/climaxing move that tends to
@@ -250,6 +266,18 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
                 return FlipDecision(None, None,
                                     f"flip gap not expanding "
                                     f"({gap_expansion}<{params.flip_gap_expansion_min}) ({diag})", metrics)
+        # Flip-specific ADX cap: high ADX = climaxing/exhausted move, bad for flips
+        # (flip|adx40+: 23-45% WR) while keeping trend|adx40+ valid (64% WR d<2).
+        if params.flip_adx_max < 999 and adx_now > params.flip_adx_max:
+            return FlipDecision(None, None,
+                                f"flip ADX {adx_now:.1f} > flip_adx_max {params.flip_adx_max} ({diag})", metrics)
+        # ROC(N) direction confirmation: price must be moving in the trade direction
+        # over the last N bars (CALL=positive momentum, PUT=negative). 0=off.
+        if params.roc_period > 0 and roc_val is not None:
+            roc_dir = "CALL" if roc_val > 0 else "PUT"
+            if roc_dir != direction:
+                return FlipDecision(None, None,
+                                    f"ROC({params.roc_period}) {roc_val:+.4f}% disagrees → {roc_dir} ({diag})", metrics)
         if adx_now >= params.adx_flip_min:
             return FlipDecision(direction, "flip", f"FLIP {direction} confirmed ({diag})",
                                 {**metrics, "entry_kind": "flip"})
