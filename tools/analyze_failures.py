@@ -77,30 +77,35 @@ def main() -> None:
         f"json_extract(data,'$.flip_metrics.dist_atr') dist, "
         f"json_extract(data,'$.flip_metrics.bb_width_bps') bbw, "
         f"json_extract(data,'$.flip_metrics.macd_gap_std') gapstd, "
-        f"json_extract(data,'$.flip_metrics.st_dir') dir "
+        f"json_extract(data,'$.flip_metrics.st_dir') dir, "
+        f"COALESCE(json_extract(data,'$.shadow'),0) shadow "
         f"FROM decisions WHERE {where} ORDER BY pair_api, ts"
     ).fetchall()
+    # Real trades only (shadow=0) for all analysis — shadow trades don't trigger
+    # cooldown and their autocorrelation stats contaminate the post-loss window.
+    real_rows = [r for r in rows if not r["shadow"]]
 
     scope = "ALL history" if args.all else f"last {args.hours:g}h"
     print(f"\n=== Flip failure analysis — {scope} — break-even {BREAKEVEN}% ===\n")
-    if not rows:
-        print("No resolved trades in window.")
+    if not real_rows:
+        print("No resolved real trades in window.")
         return
 
-    # 1. Headline
-    wr, n, pnl = _wr([r["outcome"] for r in rows])
+    # 1. Headline (real trades only — shadows are research-only)
+    wr, n, pnl = _wr([r["outcome"] for r in real_rows])
     print(f"OVERALL: {n} trades  WR {wr:.1f}%  P&L ${pnl:+.2f}   {_verdict(wr, n)}")
     for kind in ("flip", "trend"):
-        krows = [r["outcome"] for r in rows if r["kind"] == kind]
+        krows = [r["outcome"] for r in real_rows if r["kind"] == kind]
         if krows:
             w, k, p = _wr(krows)
             print(f"  {kind:5}: {k:4} trades  WR {w:.1f}%  P&L ${p:+.2f}   {_verdict(w, k)}")
 
-    # 2. Post-loss autocorrelation (per-pair, time since last loss)
-    print("\n--- Post-loss window (WR by seconds since last loss on same pair) ---")
+    # 2. Post-loss autocorrelation (real trades only — shadow losses don't trigger
+    # cooldown; including them inflates the <30s bucket with shadow→shadow pairs)
+    print("\n--- Post-loss window (real trades; WR by seconds since last loss on same pair) ---")
     buckets = {"<30s": [], "30-60s": [], "60-120s": [], "2-5m": [], "5m+": []}
     prev = {}  # pair -> (epoch, outcome)
-    for r in rows:
+    for r in real_rows:
         sec = _epoch(r["ts"])
         p = prev.get(r["pair_api"])
         if p and p[1] == "loss" and sec is not None and p[0] is not None:
@@ -121,10 +126,10 @@ def main() -> None:
         else:
             print("  → post-loss window looks clean (cooldown effective or recovered).")
 
-    # 3. Pair leaderboard
+    # 3. Pair leaderboard (real trades only)
     print("\n--- Pair leaderboard (by P&L) ---")
     by_pair = {}
-    for r in rows:
+    for r in real_rows:
         by_pair.setdefault(r["pair_api"], []).append(r["outcome"])
     ranked = sorted(((p, *_wr(o)) for p, o in by_pair.items()), key=lambda x: x[3])
     for p, w, k, pnl_ in ranked[:5]:
@@ -132,16 +137,16 @@ def main() -> None:
     for p, w, k, pnl_ in ranked[-5:][::-1]:
         print(f"  BEST  {p:14} {k:4}t  WR {w:.1f}%  ${pnl_:+.2f}")
 
-    # 4. Dimension scan
+    # 4. Dimension scan (real trades only)
     print("\n--- Dimension scan (bands below break-even = tune candidates) ---")
-    _scan(rows, "bb_width", "bbw", [(0, 4, "<4 chop"), (4, 8, "4-8"),
+    _scan(real_rows, "bb_width", "bbw", [(0, 4, "<4 chop"), (4, 8, "4-8"),
           (8, 14, "8-14 ✦"), (14, 25, "14-25"), (25, 1e9, "25+")])
-    _scan(rows, "ADX", "adx", [(0, 25, "<25"), (25, 30, "25-30 dead"),
+    _scan(real_rows, "ADX", "adx", [(0, 25, "<25"), (25, 30, "25-30 dead"),
           (30, 40, "30-40"), (40, 1e9, "40+")])
-    _scan(rows, "dist_atr", "dist", [(0, 2, "<2"), (2, 3, "2-3"), (3, 1e9, "3+")])
+    _scan(real_rows, "dist_atr", "dist", [(0, 2, "<2"), (2, 3, "2-3"), (3, 1e9, "3+")])
     # MACD-width consistency (continuation hypothesis): low gap-std = steadier
     # width. Restrict to continuations where the edge is claimed.
-    cont = [r for r in rows if r["kind"] == "trend"]
+    cont = [r for r in real_rows if r["kind"] == "trend"]
     if cont:
         print("  MACD gap-std (continuations only; low = consistent width):")
         _scan(cont, "  cont gapstd", "gapstd",
@@ -149,14 +154,14 @@ def main() -> None:
                (0.15, 0.3, "0.15-0.3"), (0.3, 1e9, "0.3+ erratic")])
     print("  direction:")
     for d in ("CALL", "PUT"):
-        w, k, p = _wr([r["outcome"] for r in rows if r["dir"] == d])
+        w, k, p = _wr([r["outcome"] for r in real_rows if r["dir"] == d])
         if k:
             print(f"    {d:5}: {k:4}t  WR {w:.1f}%  ${p:+.2f}   {_verdict(w, k)}")
 
     # 5. Per-config segmentation, 6. WR trend, 7. optimizer recommendations
     _by_config(con)
     _wr_trend(con)
-    _recommend(rows)
+    _recommend(real_rows)
     print()
 
 
