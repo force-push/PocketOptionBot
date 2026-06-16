@@ -229,6 +229,23 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             return FlipDecision(None, None,
                                 f"flip pending confirmation "
                                 f"({bars_in_trend}<{params.flip_confirm_bars} bars) ({diag})", metrics)
+        # Over-extension cap for flips: price too far from the band means the
+        # prior trend was exhausted before flipping — the reversal lacks room.
+        # Data (5s n=159): ADX25+ + dist>=2.5 = 30% WR; ADX25+ + dist<2.5 = 87.5%.
+        # atr_distance_max defaults to 999 (off) so existing configs are unaffected
+        # unless explicitly set in levers.
+        if params.atr_distance_max < 999 and dist > params.atr_distance_max:
+            return FlipDecision(None, None,
+                                f"flip over-extended {dist:.2f}ATR > max "
+                                f"{params.atr_distance_max} ({diag})", metrics)
+        # Under-confirmed flip: price still too close to the band — the reversal
+        # hasn't developed enough distance for a clean entry. Data: dist<2 ATR for
+        # flips = 39-42% WR (both directions); dist 2.0-2.5 = 62-87% WR.
+        # atr_distance_min defaults to 0 (off) so absent lever files keep old behaviour.
+        if params.atr_distance_min > 0 and dist < params.atr_distance_min:
+            return FlipDecision(None, None,
+                                f"flip under-confirmed {dist:.2f}ATR < min "
+                                f"{params.atr_distance_min} ({diag})", metrics)
         # Reversal strength = MACD gap expanding since the flip bar (off when 0).
         if params.flip_gap_expansion_min > 0:
             if gap_expansion is None or gap_expansion < params.flip_gap_expansion_min:
