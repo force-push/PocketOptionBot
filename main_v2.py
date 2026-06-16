@@ -23,9 +23,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
+from pathlib import Path
 
 from config.settings import settings, TradeMode
 from utils.logger import log, setup_logger
+
+# Liveness heartbeat: the main loop rewrites this at the end of every cycle, so
+# the supervisor can detect a genuine hang (cycles stop) even when background
+# tasks keep logging. See tools/run_supervised.sh.
+_HEARTBEAT_PATH = Path("data/heartbeat")
+
+
+def _touch_heartbeat() -> None:
+    try:
+        _HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _HEARTBEAT_PATH.write_text(str(time.time()))
+    except Exception:  # never let heartbeat I/O disrupt trading
+        pass
 
 # ── setup_logger must be called once before any use of `log` ─────────────────
 import pathlib
@@ -215,6 +230,10 @@ async def main(cycles: int = 0) -> None:
             raise
         except Exception as exc:
             log.opt(exception=True).error("run_once error (will retry): {}", exc)
+
+        # Heartbeat: mark the main loop alive at the end of every cycle so the
+        # supervisor's hang watchdog measures real cycle progress, not log churn.
+        _touch_heartbeat()
 
         count += 1
         if cycles and count >= cycles:

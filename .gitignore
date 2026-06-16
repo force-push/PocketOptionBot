@@ -17,6 +17,7 @@ data/live_state.json
 data/events.jsonl
 data/feed_stats.jsonl
 data/sentiment.jsonl
+data/heartbeat
 data/sentiment_probe.jsonl
 data/po_probe_report.json
 data/deep_history_stats.jsonl

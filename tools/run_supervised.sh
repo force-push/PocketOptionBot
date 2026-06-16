@@ -1,38 +1,80 @@
 #!/usr/bin/env bash
 # Watchdog supervisor for main_v2.py.
 #
-# Two failure modes, both handled:
-#   1. CRASH  — process exits → restart after 10s (stderr lands in runtime.log)
-#   2. HANG   — process alive but logs/bot.log untouched for STALE_SECS
-#               (WS hang: loop dead, background resolutions may still tick)
-#               → kill -9, loop restarts it with a fresh WS connection.
+# Failure modes handled:
+#   1. CRASH  — process exits → restart after 10s (stderr lands in runtime.log).
+#   2. HANG   — the main loop stops completing cycles (data/heartbeat stale for
+#               STALE_SECS) → kill -9, restart with a fresh WS connection. The
+#               heartbeat is rewritten at the END of every main-loop cycle, so a
+#               busy hot-loop that only spams logs no longer masks a hang (the
+#               old check used bot.log mtime, which background tasks kept fresh).
+#   3. BLOAT  — preventive restart every MAX_RUN_SECONDS to cap memory growth of
+#               the long-running process (and the Rust WS client's buffers).
+# Also keeps runtime.log bounded so it can't grow without limit.
+#
+# Tunables (env-overridable):
+#   STALE_SECS=300         hang threshold (s)
+#   MAX_RUN_SECONDS=21600  preventive restart interval (s, 6h; 0 disables)
+#   MAX_LOG_MB=100         runtime.log size cap (MB)
 #
 # Usage:  nohup tools/run_supervised.sh > /dev/null 2>&1 &
 cd "$(dirname "$0")/.." || exit 1
-STALE_SECS=300
+STALE_SECS=${STALE_SECS:-300}
+MAX_RUN_SECONDS=${MAX_RUN_SECONDS:-21600}
+MAX_LOG_MB=${MAX_LOG_MB:-100}
+HEARTBEAT=data/heartbeat
 LOG=logs/runtime.log
 
 note() { echo "[supervisor] $(date -u +%FT%TZ) $*" >> "$LOG"; }
 
-note "starting"
+_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+_size_mb() {
+  local b
+  b=$(stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null || echo 0)
+  echo $((b / 1048576))
+}
+
+rotate_log() {
+  # When runtime.log exceeds the cap, keep only the last ~2000 lines.
+  if [ -f "$LOG" ] && [ "$(_size_mb "$LOG")" -gt "$MAX_LOG_MB" ]; then
+    tail -n 2000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+    note "rotated runtime.log (exceeded ${MAX_LOG_MB}MB)"
+  fi
+}
+
+mkdir -p logs data
+note "starting (stale=${STALE_SECS}s max_run=${MAX_RUN_SECONDS}s log_cap=${MAX_LOG_MB}MB)"
 while true; do
+  rotate_log
+  # Fresh heartbeat so a stale file from a previous run can't trip the watchdog
+  # before the new bot writes its first one.
+  date +%s > "$HEARTBEAT" 2>/dev/null
   .venv/bin/python main_v2.py >> "$LOG" 2>&1 &
   BOT=$!
+  START=$(date +%s)
   note "bot started pid=$BOT"
   LAST_BACKUP=0
   while kill -0 "$BOT" 2>/dev/null; do
     sleep 30
-    # Hourly safety-net backup of the decisions log (kept: latest only)
     now=$(date +%s)
+    rotate_log
+    # Hourly safety-net backup of the decisions log (kept: latest only).
     if [ $((now - LAST_BACKUP)) -gt 3600 ] && [ -f data/decisions.jsonl ]; then
       cp data/decisions.jsonl data/decisions.jsonl.bak 2>/dev/null && LAST_BACKUP=$now
     fi
-    if [ -f logs/bot.log ]; then
-      now=$(date +%s)
-      mtime=$(stat -f %m logs/bot.log 2>/dev/null || stat -c %Y logs/bot.log)
-      age=$((now - mtime))
+    # BLOAT: preventive restart to cap memory growth (0 disables).
+    if [ "$MAX_RUN_SECONDS" -gt 0 ] && [ $((now - START)) -gt "$MAX_RUN_SECONDS" ]; then
+      note "preventive restart after $((now - START))s (cap ${MAX_RUN_SECONDS}s) — pid=$BOT"
+      kill "$BOT" 2>/dev/null; sleep 5; kill -9 "$BOT" 2>/dev/null
+      break
+    fi
+    # HANG: heartbeat stale (fall back to bot.log if the heartbeat file is absent,
+    # e.g. an older bot build that doesn't write one).
+    hb="$HEARTBEAT"; [ -f "$hb" ] || hb=logs/bot.log
+    if [ -f "$hb" ]; then
+      age=$((now - $(_mtime "$hb")))
       if [ "$age" -gt "$STALE_SECS" ]; then
-        note "STALE: bot.log untouched for ${age}s — killing hung bot pid=$BOT"
+        note "STALE: $hb untouched for ${age}s — killing hung bot pid=$BOT"
         kill -9 "$BOT" 2>/dev/null
         break
       fi
