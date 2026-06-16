@@ -295,6 +295,7 @@ class FocusSessionManager:
         bars_since_payout_check = 0
         total_bars = 0
         session_start = asyncio.get_event_loop().time()
+        last_trade_at = 0.0  # monotonic; prevents rapid-fire within same expiry window
 
         try:
             while not done.is_set() and self._running:
@@ -345,6 +346,13 @@ class FocusSessionManager:
                         )
                         return
 
+                # ── inter-trade guard: wait one full expiry window between entries ──
+                # Prevents duplicate entries on the same bar (tick-burst replay) and
+                # ensures the previous trade has had time to resolve before re-entering.
+                now = asyncio.get_event_loop().time()
+                if now - last_trade_at < settings.default_expiry_seconds:
+                    continue
+
                 # ── flip evaluation ───────────────────────────────────────────
                 levers = load_levers()
                 fd = evaluate_flip(df, _params(levers))
@@ -360,6 +368,7 @@ class FocusSessionManager:
                     payout_pct=payout,
                 )
                 if placed:
+                    last_trade_at = asyncio.get_event_loop().time()
                     self.session_trades += 1
                     self.total_trades += 1
                     remaining = settings.focus_session_trades - self.session_trades
