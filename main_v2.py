@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import resource
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,26 @@ def _touch_heartbeat() -> None:
 # ── setup_logger must be called once before any use of `log` ─────────────────
 import pathlib
 setup_logger(pathlib.Path(__file__).parent)
+
+# Memory instrumentation: log peak RSS every N cycles so memory growth is visible
+# in the logs (confirms the Tier 1-3 fixes hold). Peak RSS only climbs, so a
+# plateau across hours means no ongoing leak.
+_RSS_LOG_EVERY = 50
+
+
+def _peak_rss_mb() -> float:
+    """Peak resident set size in MB (cross-platform: darwin=bytes, linux=KB)."""
+    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return ru / (1024 * 1024) if sys.platform == "darwin" else ru / 1024
+
+
+def _log_rss(cycle: int) -> None:
+    if cycle <= 0 or cycle % _RSS_LOG_EVERY != 0:
+        return
+    try:
+        log.info("MEM: peak RSS {:.0f} MB  (cycle {})", _peak_rss_mb(), cycle)
+    except Exception:  # instrumentation must never disrupt trading
+        pass
 
 
 def _build_components():
@@ -236,6 +257,7 @@ async def main(cycles: int = 0) -> None:
         _touch_heartbeat()
 
         count += 1
+        _log_rss(count)
         if cycles and count >= cycles:
             log.info("Completed {} cycle(s) — exiting.", count)
             break
