@@ -45,6 +45,15 @@ def test_recommend_holds_on_thin_sample(monkeypatch, capsys):
     assert "no high-confidence lever change" in out
 
 
+def test_sig_match_numeric_and_none():
+    # JSON numbers vs python floats compare equal; None/strings fall back to ==.
+    assert af._sig_match((4, 18, 4), (4.0, 18.0, 4.0))
+    assert not af._sig_match((4, 18, 4), (6, 18, 4))
+    assert af._sig_match((None, "x"), (None, "x"))
+    assert not af._sig_match((None,), (0,))      # None != 0
+    assert not af._sig_match((4, 18), (4,))      # length mismatch
+
+
 def test_recommend_holds_near_breakeven(monkeypatch, capsys):
     # n is large but WR sits right at break-even (inside the margin) → hold.
     monkeypatch.setattr(af, "_active_levers", lambda: {"bb_width_min": 8, "bb_width_max": 18})
