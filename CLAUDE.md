@@ -53,6 +53,12 @@ pip3 install -r requirements.txt
 python3 main_v2.py               # run indefinitely
 python3 main_v2.py --cycles 5   # run exactly 5 cycles then exit
 nohup tools/run_supervised.sh > /dev/null 2>&1 &   # preferred: watchdog supervisor (auto-restart + hang kill)
+# Supervisor (2026-06-16): hang detection via data/heartbeat (main loop stamps it
+# each cycle — a log-spamming hot-loop no longer masks a dead loop); preventive
+# restart every MAX_RUN_SECONDS (6h) to cap memory; runtime.log kept < MAX_LOG_MB
+# (100). Env-overridable. NOTE: changing run_supervised.sh needs the SUPERVISOR
+# process restarted (kill it + relaunch) — a bot-only restart won't reload bash.
+# The bot logs `MEM: peak RSS …` every 50 cycles so growth is visible.
 
 # Dashboard (separate process; reads decisions.db + live_state.json)
 python3 -m dashboard.server      # http://127.0.0.1:8787 (requires fastapi, uvicorn)
@@ -259,6 +265,10 @@ main_v2.py loop (every ~2s, wrapped in 300s cycle timeout)
   `all_records` (incrementally cached full load — only re-fetches rows whose
   `id`/`updated_at` changed), `migrate_jsonl`. WAL mode → bot writer + dashboard
   reader run concurrently. Full row kept in a `data` JSON column (nothing lost).
+  **Memory note (2026-06-16):** the bot must NOT call `all_records` — it caches
+  every row's JSON dict forever (the long-run memory-bloat source). Use
+  `pair_ev_aggregates(path)` (SQL `GROUP BY`, small transient result) for
+  aggregate stats; `all_records`' in-process cache is for the dashboard process.
 
 - **`strategy/flip_strategy.py`** — `evaluate_flip(df, FlipParams) -> FlipDecision`.
   Pure rule: SuperTrend direction, entered on a **flip** (ADX ≥ flip_min) **or**
