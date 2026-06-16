@@ -167,6 +167,8 @@ async def test_session_places_trade_on_flip(monkeypatch):
 async def test_session_rotates_after_quota(monkeypatch):
     """Session exits once focus_session_trades trades are placed."""
     monkeypatch.setattr(fs_module, "load_levers", lambda: dict(_PERMISSIVE_LEVERS))
+    # Disable inter-trade delay so bars are processed immediately in the test.
+    monkeypatch.setattr(fs_module.settings, "default_expiry_seconds", 0)
 
     down = list(np.linspace(110, 95, 150))
     up = list(np.linspace(95, 120, 40))

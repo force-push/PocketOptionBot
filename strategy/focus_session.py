@@ -50,6 +50,7 @@ _RANK_MIN_SAMPLES = 10   # tracked trades before a pair's win-rate ranks it abov
 _FAST_FAIL_SECONDS = 5.0   # a session shorter than this with 0 trades = likely disconnect
 _BACKOFF_BASE = 2.0        # first backoff (s); doubles per consecutive fast-fail
 _BACKOFF_MAX = 60.0        # cap
+_DRY_ROTATE_BARS = 90      # consecutive signal-free bars → rotate (1.5min; pair in wrong regime)
 
 
 def _disconnect_backoff(consecutive: int) -> float:
@@ -87,6 +88,14 @@ def _params(levers: dict) -> FlipParams:
     return build_flip_params(levers)
 
 
+def _normalize_reject(reason: str) -> str:
+    """Collapse numeric values in rejection reasons for grouping/display."""
+    import re
+    r = (reason or "unknown").split(" (ST=")[0].strip()
+    r = re.sub(r"\b\d+\.?\d*\b", "N", r)
+    return r[:60]
+
+
 class FocusSessionManager:
     """Lock onto the best payout pair, trade N flips, rotate."""
 
@@ -97,6 +106,9 @@ class FocusSessionManager:
         self._running = False
         # pair → loop.time() when it was flagged illiquid; cleared after cooldown
         self._illiquid: dict[str, float] = {}
+        # Pairs that produced actual 1s bars in any previous session this run —
+        # used to score pair candidates above unproven exotics in _pick_pair.
+        self._liquid_pairs: set[str] = set()
         # Current focus pair — read by manager to exclude from poll scan
         self.current_pair: str | None = None
         self.session_trades: int = 0   # trades placed in the current pair session
@@ -233,22 +245,29 @@ class FocusSessionManager:
                 )
             return None
 
-        # Bump high performers up: pairs with a proven win-rate (≥_RANK_MIN_SAMPLES
-        # tracked trades) outrank unproven pairs; among proven, higher WR wins;
-        # payout breaks ties. Unproven pairs fall back to pure payout ranking so
-        # new pairs still get sampled.
+        # 3-tier pair ranking:
+        #   Tier 2 — liquid (produced bars this session run) + proven WR
+        #   Tier 1 — proven WR only (may be exotic/illiquid at current time)
+        #            OR liquid only (new pair that's actually ticking)
+        #   Tier 0 — unproven and not recently seen producing bars
+        # Within each tier: higher WR then higher payout breaks ties.
+        # This prevents the bot from burning time on illiquid exotics whose
+        # only qualification is a high payout that nobody can actually trade.
         tracker = getattr(self._mgr, "tracker", None)
 
         def _score(p: dict) -> tuple:
+            symbol = p.get("symbol", "")
             payout = p.get("payout", 0) or 0
+            liquid = symbol in self._liquid_pairs
             if tracker is not None:
                 try:
-                    wr, n = tracker.pair_rate(p.get("symbol", ""))
+                    wr, n = tracker.pair_rate(symbol)
                     if isinstance(n, int) and n >= _RANK_MIN_SAMPLES:
-                        return (1, round(float(wr), 3), payout)
-                except Exception:  # noqa: BLE001 — any tracker shape issue → payout-only
+                        tier = 2 if liquid else 1
+                        return (tier, round(float(wr), 3), payout)
+                except Exception:  # noqa: BLE001
                     pass
-            return (0, 0.0, payout)
+            return (1 if liquid else 0, 0.0, payout)
 
         best = max(candidates, key=_score)
         bwr, bn = None, 0
@@ -296,6 +315,8 @@ class FocusSessionManager:
         total_bars = 0
         session_start = asyncio.get_event_loop().time()
         last_trade_at = 0.0  # monotonic; prevents rapid-fire within same expiry window
+        consec_dry = 0          # consecutive bars where evaluate_flip returned no direction
+        reject_counts: dict[str, int] = {}  # rejection reason → count (for log/rotate)
 
         try:
             while not done.is_set() and self._running:
@@ -321,6 +342,10 @@ class FocusSessionManager:
                     return
 
                 total_bars += 1
+                # Mark this pair as liquid (real bars arriving) so future rotation
+                # sessions prefer it over untested exotics.
+                if total_bars == 1:
+                    self._liquid_pairs.add(pair)
 
                 if df.empty or len(df) < _WARMUP_BARS:
                     continue
@@ -357,7 +382,24 @@ class FocusSessionManager:
                 levers = load_levers()
                 fd = evaluate_flip(df, _params(levers))
                 if not fd.direction:
+                    consec_dry += 1
+                    key = _normalize_reject(fd.reason)
+                    reject_counts[key] = reject_counts.get(key, 0) + 1
+                    if consec_dry % 30 == 0:
+                        top = max(reject_counts, key=reject_counts.get)
+                        log.debug(
+                            "FocusSession: {} dry {}bars — top block: {} ({}x)",
+                            pair, consec_dry, top, reject_counts[top],
+                        )
+                    if consec_dry >= _DRY_ROTATE_BARS:
+                        top = max(reject_counts, key=reject_counts.get)
+                        log.info(
+                            "FocusSession: {} signal-dry {}s — rotating ({})",
+                            pair, consec_dry, top,
+                        )
+                        return
                     continue
+                consec_dry = 0
 
                 payout = await self._api.get_payout(pair)
                 placed = await self._mgr._place_flip_trade(
