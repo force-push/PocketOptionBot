@@ -23,6 +23,7 @@ data/po_probe_report.json
 data/deep_history_stats.jsonl
 data/models/
 data/flip_levers.json
+data/flip_levers_5s.json
 *.session
 *.session-journal
 htmlcov/

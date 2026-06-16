@@ -141,6 +141,18 @@ Key settings groups:
   `^(?!.*GBP).*(USD|CNY|CNH|EUR)` — USD/CNY/CNH/EUR crosses, GBP excluded via
   lookahead (GBPUSD/GBPAUD/EURGBP all heavy losers). Centralised in
   `strategy/pair_filter.py::is_pair_allowed` so the two loops can't diverge.
+- **5s timeframe shadow track (`SHADOW_TF5S_ENABLED`, default off):** for each
+  pair per cycle, fetches 5s candles alongside the 1s candles, evaluates them
+  with 5s-calibrated levers (`data/flip_levers_5s.json`), and places
+  `shadow_kind="tf5s"` shadow trades at each expiry in
+  `SHADOW_TF5S_EXPIRY_SECONDS` (default `[15, 30]`). **HARD GUARD: silently
+  ignored when `TRADE_MODE=LIVE`** — research/shadow only. Shadow outcomes feed
+  the decision store for WR analysis but never the production win-rate tracker
+  or risk stats. Enable with `SHADOW_TF5S_ENABLED=true` in `.env`.
+  5s-calibrated defaults (from tick-resample analysis 2026-06-16): `bb_width_min=10`,
+  `bb_width_max=40`, `flip_confirm_bars=2`, `cont_macd_gap_min=0.3`,
+  `atr_distance_min=0.8` — all overridable via `data/flip_levers_5s.json` (live,
+  no restart). See `strategy/flip_levers.py::load_levers_5s`.
 - **Event-driven flip streamer (`STREAMING_ENABLED`, default off):** subscribes
   to live 1s candle streams for `STREAMING_PAIRS` (≤4, subscription cap) and
   places **fresh flips at the turn (~1s)** instead of the ~6s poll cadence —

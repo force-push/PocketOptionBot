@@ -18,7 +18,7 @@ from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide_signals, Decision
 from strategy.flip_strategy import evaluate_flip
-from strategy.flip_levers import load_levers, build_flip_params
+from strategy.flip_levers import load_levers, load_levers_5s, build_flip_params
 from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter
@@ -271,6 +271,11 @@ class StrategyManagerV2:
         # is evaluated more often (catches 1s flips the slow sequential fetch
         # missed). The cap avoids the WS-hang seen with unbounded concurrency.
         prefetched = await self._prefetch_candles(cid, candidates, candle_period)
+        # 5s timeframe shadow track: second prefetch pass for 5s candles.
+        # Sequential (not parallel) to avoid doubling WS pressure in one burst.
+        prefetched_5s: dict = {}
+        if settings.shadow_tf5s_enabled and settings.trade_mode != TradeMode.LIVE:
+            prefetched_5s = await self._prefetch_candles(cid, candidates, 5)
 
         for pair_info in candidates:
             pair_api = pair_info["symbol"]
@@ -429,6 +434,30 @@ class StrategyManagerV2:
                             shadow_kind="adx_regime",
                             would_skip_reason=f"adx_conf_{adx_conf:.2f}",
                         ))
+
+            # 5s timeframe shadow: evaluate 5s candles independently of the 1s
+            # decision. Fires for every pair (even 1s skips) to collect signal data.
+            # Uses flip_levers_5s.json (5s-calibrated bb_width, confirm_bars, etc.).
+            if prefetched_5s and settings.trade_mode != TradeMode.LIVE:
+                df_5s = prefetched_5s.get(pair_api)
+                if df_5s is not None and not df_5s.empty and len(df_5s) >= 40:
+                    levers_5s = load_levers_5s()
+                    fd_5s = evaluate_flip(df_5s, build_flip_params(levers_5s))
+                    if fd_5s.direction is not None:
+                        base_5s = replace(row, flip_metrics=fd_5s.metrics, flip_levers=levers_5s)
+                        for exp in (settings.shadow_tf5s_expiry_seconds or [15, 30]):
+                            asyncio.create_task(self._place_single_shadow(
+                                pair_api=pair_api,
+                                direction=fd_5s.direction,
+                                base_row=base_5s,
+                                log_path=log_path,
+                                shadow_kind="tf5s",
+                                would_skip_reason=f"tf5s_{fd_5s.entry_kind}_{exp}s",
+                                expiry_override=exp,
+                            ))
+                        log.info("[{}] SHADOW-5S {} [{}] ({}) exp={}s",
+                                 cid, fd_5s.direction, fd_5s.entry_kind,
+                                 pair_api, settings.shadow_tf5s_expiry_seconds)
 
             if not d.trade:
                 write_decision(log_path, row)
@@ -762,21 +791,25 @@ class StrategyManagerV2:
 
     async def _place_single_shadow(
         self, *, pair_api, direction, base_row, log_path,
-        shadow_kind, would_skip_reason,
+        shadow_kind, would_skip_reason, expiry_override=None,
     ) -> None:
         """Place one shadow trade flagged with the given shadow_kind.
 
         Used for research data collection on setups the real strategy doesn't
-        trade — e.g. majority-blocked signal minorities ("majority_blocked")
-        and blocked-hour scans ("time_of_day"). Shadows never feed the
-        production tracker/risk stats and never consume the real concurrency
-        budget. HARD GUARD: research only — skipped in LIVE mode.
+        trade — e.g. majority-blocked signal minorities ("majority_blocked"),
+        blocked-hour scans ("time_of_day"), and 5s timeframe shadows ("tf5s").
+        Shadows never feed the production tracker/risk stats and never consume
+        the real concurrency budget. HARD GUARD: research only — skipped in LIVE.
+        expiry_override: when set, bypasses select_expiry and uses this value
+        directly (e.g. for tf5s shadows that need a specific expiry like 15s/30s).
         """
         if settings.trade_mode == TradeMode.LIVE:
             return
         try:
             bal = await self._api.balance()
-            expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
+            expiry = (expiry_override
+                      if expiry_override is not None
+                      else select_expiry(settings.default_expiry_seconds, settings.allowed_expiries))
             api_call = self._api.buy if direction == "CALL" else self._api.sell
             trade = await api_call(pair_api, settings.stake_amount, expiry)
             tid = getattr(trade, "trade_id", None)

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from strategy.flip_strategy import FlipParams
 
 LEVERS_PATH = "data/flip_levers.json"
+LEVERS_5S_PATH = "data/flip_levers_5s.json"
 
 # The tunable surface. Keys map 1:1 onto FlipParams fields (+ are recorded per
 # trade). Defaults come from settings so an absent file = current behaviour.
@@ -39,9 +40,11 @@ _LEVER_KEYS = (
 
 _lock = threading.Lock()
 _cache: dict = {"sig": None, "overrides": {}}
+_cache_5s: dict = {"sig": None, "overrides": {}}
 
 
 def _defaults() -> dict:
+    """Settings-sourced defaults for 1s candle evaluation."""
     return {
         "st_period": settings.st_period,
         "st_multiplier": settings.st_multiplier,
@@ -63,6 +66,28 @@ def _defaults() -> dict:
     }
 
 
+def _defaults_5s() -> dict:
+    """Default levers calibrated for 5s candles.
+
+    5s candles have ~2.4× wider Bollinger bands and ~10× fewer SuperTrend flips
+    than 1s candles on the same pair (from tick-resample analysis 2026-06-16).
+    Key differences vs 1s defaults:
+      bb_width: 10–40 bps (vs 6–18 on 1s)
+      flip_confirm_bars: 2 (vs 4 on 1s; 2 bars = 10s of post-flip confirmation)
+      cont_macd_gap_min: 0.3 (5s MACD is smoother; lower threshold still meaningful)
+      atr_distance_min: 0.8 (5s bars cover more distance from the ST band)
+    """
+    base = _defaults()
+    base.update({
+        "bb_width_min": 10.0,
+        "bb_width_max": 40.0,
+        "flip_confirm_bars": 2,
+        "cont_macd_gap_min": 0.3,
+        "atr_distance_min": 0.8,
+    })
+    return base
+
+
 def build_flip_params(levers: dict) -> "FlipParams":
     """Construct FlipParams from a levers dict.
 
@@ -75,29 +100,43 @@ def build_flip_params(levers: dict) -> "FlipParams":
     return FlipParams(**{k: levers[k] for k in _LEVER_KEYS if k in levers})
 
 
-def load_levers(path: str | None = None) -> dict:
-    """Return the active levers = settings defaults overlaid with the JSON file.
-
-    Cached by (mtime, size); re-reads only when the file changes. Unknown or
-    null keys in the file are ignored. Never raises — bad file → defaults.
-    """
-    p = Path(path or LEVERS_PATH)
-    levers = _defaults()
-    if not p.exists():
+def _load_from_path(path: Path, defaults_fn, cache: dict) -> dict:
+    """Shared mtime-cached JSON loader for any levers file."""
+    levers = defaults_fn()
+    if not path.exists():
         return levers
     try:
-        st = p.stat()
+        st = path.stat()
         sig = (st.st_mtime, st.st_size)
         with _lock:
-            if _cache["sig"] != sig:
-                raw = json.loads(p.read_text(encoding="utf-8"))
-                _cache["overrides"] = {
+            if cache["sig"] != sig:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                cache["overrides"] = {
                     k: raw[k] for k in _LEVER_KEYS
                     if isinstance(raw, dict) and raw.get(k) is not None
                 }
-                _cache["sig"] = sig
-            overrides = dict(_cache["overrides"])
+                cache["sig"] = sig
+            overrides = dict(cache["overrides"])
     except Exception:
         return levers
     levers.update(overrides)
     return levers
+
+
+def load_levers(path: str | None = None) -> dict:
+    """Return the active 1s levers = settings defaults overlaid with the JSON file.
+
+    Cached by (mtime, size); re-reads only when the file changes. Unknown or
+    null keys in the file are ignored. Never raises — bad file → defaults.
+    """
+    return _load_from_path(Path(path or LEVERS_PATH), _defaults, _cache)
+
+
+def load_levers_5s(path: str | None = None) -> dict:
+    """Return the 5s-calibrated levers overlaid with data/flip_levers_5s.json.
+
+    Uses 5s-appropriate defaults (wider bb_width, fewer confirm_bars, lower
+    cont_macd_gap_min) so that an absent file produces a reasonable starting
+    point — not the 1s settings defaults which are mis-calibrated for 5s.
+    """
+    return _load_from_path(Path(path or LEVERS_5S_PATH), _defaults_5s, _cache_5s)

@@ -246,6 +246,93 @@ async def test_signals_loop_places_shadow_expiry_trades(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tf5s_shadow_fires_when_enabled(tmp_path, monkeypatch):
+    """When SHADOW_TF5S_ENABLED, a 5s flip signal places tf5s shadow rows at each expiry."""
+    from strategy.flip_strategy import FlipDecision
+
+    api = MagicMock()
+    api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
+    api.get_candles = AsyncMock(return_value=_make_candles(60))
+    api.get_real_candles = AsyncMock(return_value=_make_candles(60))
+    api.balance = AsyncMock(return_value=1000.0)
+    # DRY_RUN-style mock: trade_id=None prevents resolution background tasks
+    # (which would sleep for the expiry duration and slow the test to 30+ s).
+    def _dry_trade(*a, **k):
+        t = MagicMock(); t.status = "DRY_RUN"; t.trade_id = None
+        return t
+    api.buy = AsyncMock(side_effect=_dry_trade)
+    api.sell = AsyncMock(side_effect=_dry_trade)
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "strategy_mode", "flip")
+    monkeypatch.setattr(settings, "shadow_tf5s_enabled", True)
+    monkeypatch.setattr(settings, "shadow_tf5s_expiry_seconds", [15, 30])
+    monkeypatch.setattr(settings, "trade_mode", TradeMode.DEMO)
+    monkeypatch.setattr(settings, "allowed_pairs", [])
+    monkeypatch.setattr(settings, "allowed_pair_regex", "")
+    monkeypatch.setattr(settings, "trade_stagger_seconds", 0)
+
+    fake_fd = FlipDecision(
+        direction="CALL", entry_kind="flip", reason="test-flip",
+        metrics={"entry_kind": "flip", "adx": 20.0, "bb_width_bps": 12.0},
+    )
+    monkeypatch.setattr("strategy.manager_v2.evaluate_flip", lambda df, params: fake_fd)
+
+    await mgr.run_once()
+    # Yield several times so the shadow placement tasks (2×_place_single_shadow)
+    # can complete. Each does ~2 awaits (balance + buy) then write_decision().
+    # We avoid asyncio.gather(*all_tasks) because that also catches resolution
+    # tasks that sleep for the full expiry duration (30+ s).
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    rows = _read_decisions(tmp_path)
+    tf5s = [r for r in rows if r.get("shadow_kind") == "tf5s"]
+    assert len(tf5s) == 2, f"expected 2 tf5s rows (15s + 30s), got {len(tf5s)}"
+    assert sorted(r["expiry_seconds"] for r in tf5s) == [15, 30]
+    assert all(r["our_direction"] == "CALL" for r in tf5s)
+    assert all(r.get("shadow") for r in tf5s)
+
+
+@pytest.mark.asyncio
+async def test_tf5s_shadow_disabled_by_default(tmp_path, monkeypatch):
+    """No tf5s shadow rows when SHADOW_TF5S_ENABLED=false (default)."""
+    from strategy.flip_strategy import FlipDecision
+
+    api = MagicMock()
+    api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
+    api.get_candles = AsyncMock(return_value=_make_candles(60))
+    api.get_real_candles = AsyncMock(return_value=_make_candles(60))
+    api.balance = AsyncMock(return_value=1000.0)
+    def _dry_trade(*a, **k):
+        t = MagicMock(); t.status = "DRY_RUN"; t.trade_id = None
+        return t
+    api.buy = AsyncMock(side_effect=_dry_trade)
+    api.sell = AsyncMock(side_effect=_dry_trade)
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "strategy_mode", "flip")
+    monkeypatch.setattr(settings, "shadow_tf5s_enabled", False)
+    monkeypatch.setattr(settings, "trade_mode", TradeMode.DEMO)
+    monkeypatch.setattr(settings, "allowed_pairs", [])
+    monkeypatch.setattr(settings, "allowed_pair_regex", "")
+
+    fake_fd = FlipDecision(
+        direction="CALL", entry_kind="flip", reason="test-flip",
+        metrics={"entry_kind": "flip", "adx": 20.0, "bb_width_bps": 12.0},
+    )
+    monkeypatch.setattr("strategy.manager_v2.evaluate_flip", lambda df, params: fake_fd)
+
+    await mgr.run_once()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    rows = _read_decisions(tmp_path)
+    tf5s = [r for r in rows if r.get("shadow_kind") == "tf5s"]
+    assert len(tf5s) == 0
+
+
+@pytest.mark.asyncio
 async def test_shadow_expiry_disabled_when_empty(tmp_path, monkeypatch):
     """No shadow expiry trades when SHADOW_EXPIRY_SECONDS is empty."""
     from config.settings import settings, TradeMode

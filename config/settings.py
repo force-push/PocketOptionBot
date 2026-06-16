@@ -209,6 +209,15 @@ class BotSettings(BaseSettings):
     # HARD GUARD: ignored in LIVE — research only, demo balance only.
     shadow_expiry_seconds: list[int] = Field(default=[], alias="SHADOW_EXPIRY_SECONDS")
 
+    # 5s timeframe shadow track: evaluate SuperTrend flips on 5s candles alongside
+    # the 1s live strategy. When a 5s signal fires, place shadow trades at each
+    # expiry in shadow_tf5s_expiry_seconds (shadow_kind="tf5s"). Levers read from
+    # data/flip_levers_5s.json (mtime-cached, same mechanic as flip_levers.json).
+    # 5s candles are fetched in a second prefetch pass after the 1s pass.
+    # HARD GUARD: ignored in LIVE — research/shadow only.
+    shadow_tf5s_enabled: bool = Field(default=False, alias="SHADOW_TF5S_ENABLED")
+    shadow_tf5s_expiry_seconds: list[int] = Field(default=[15, 30], alias="SHADOW_TF5S_EXPIRY_SECONDS")
+
     # Time-of-day hour gating (signals loop only). DISABLED by default since
     # 2026-06-11: the static hour table was curve-fit to one day's noise —
     # hour win rates did not replicate across days (SHADOW_TRADE_ANALYSIS.md
