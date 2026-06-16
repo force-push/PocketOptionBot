@@ -30,6 +30,9 @@ _LEVER_KEYS = (
     "st_period", "st_multiplier", "flip_window_bars",
     "adx_flip_min", "adx_trend_min", "adx_max",
     "require_adx_rising", "atr_distance_min", "atr_distance_max",
+    # flip-specific distance bounds (separate from continuation — opposite optimal zones:
+    # trend best=dist1-2ATR, flip best=dist3+ATR exhaustion reversals; 0/999=off)
+    "flip_atr_min", "flip_atr_max",
     "cont_macd_gap_min", "cont_rsi_min",
     # flip wait-and-confirm
     "flip_confirm_bars", "flip_gap_expansion_min",

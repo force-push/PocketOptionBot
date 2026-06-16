@@ -1,0 +1,22 @@
+{
+  "_comment": "2026-06-16 iteration 5. adx_flip_min 15->25: ADX<25 flips = 27.6% WR. Combined dead zone 25-30 + new min=25 → flips require ADX>=30. atr_distance_min 0.8->2.0 (enforced for flips). confirm_bars=5. flip_window_bars=6. bb_width_max=25 (blocks TNDUSD).",
+  "st_period": 10,
+  "st_multiplier": 3.0,
+  "flip_window_bars": 6,
+  "adx_flip_min": 25,
+  "adx_trend_min": 30,
+  "adx_max": 999,
+  "require_adx_rising": true,
+  "atr_distance_min": 1.0,
+  "atr_distance_max": 2.0,
+  "flip_atr_min": 2.0,
+  "flip_atr_max": 999,
+  "cont_macd_gap_min": 0.3,
+  "cont_rsi_min": 50,
+  "flip_confirm_bars": 5,
+  "flip_gap_expansion_min": 0.0,
+  "flip_adx_dead_lo": 25,
+  "flip_adx_dead_hi": 30,
+  "bb_width_min": 6,
+  "bb_width_max": 25
+}
