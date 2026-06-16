@@ -153,10 +153,70 @@ def main() -> None:
         if k:
             print(f"    {d:5}: {k:4}t  WR {w:.1f}%  ${p:+.2f}   {_verdict(w, k)}")
 
-    # 5. WR trend (regression radar) + 6. optimizer recommendations
+    # 5. Per-config segmentation, 6. WR trend, 7. optimizer recommendations
+    _by_config(con)
     _wr_trend(con)
     _recommend(rows)
     print()
+
+
+# ── Per-config segmentation: clean analysis under "tweaks on the way" ──────────
+
+# The lever subset that defines a "config epoch". Two trades with the same values
+# here ran under the same strategy → their outcomes are comparable. Changing any
+# of these starts a new epoch, so we never blend regimes into one meaningless WR.
+_CONFIG_KEYS = (
+    "bb_width_min", "bb_width_max", "flip_confirm_bars", "adx_flip_min",
+    "adx_trend_min", "flip_adx_dead_lo", "flip_adx_dead_hi",
+    "atr_distance_min", "atr_distance_max", "cont_rsi_min", "cont_macd_gap_min",
+)
+_MATURE_N = 100   # trades before a config's WR is statistically worth acting on
+
+
+def _by_config(con) -> None:
+    print("\n--- Per-config WR (24h; same lever-set = comparable) ---")
+    sel = ", ".join(
+        f"json_extract(data,'$.flip_levers.{k}')" for k in _CONFIG_KEYS
+    )
+    rows = con.execute(
+        f"SELECT {sel}, outcome FROM decisions WHERE outcome IN ('win','loss') "
+        f"AND replace(substr(ts,1,19),'T',' ') > datetime('now','-24 hours')"
+    ).fetchall()
+    groups: dict[tuple, list] = {}
+    for r in rows:
+        sig = tuple(r[i] for i in range(len(_CONFIG_KEYS)))
+        groups.setdefault(sig, []).append(r["outcome"])
+    cur = _active_levers()
+    cur_sig = tuple(cur.get(k) for k in _CONFIG_KEYS)
+    ranked = sorted(groups.items(), key=lambda kv: -len(kv[1]))
+    for sig, outs in ranked[:6]:
+        w, n, p = _wr(outs)
+        is_cur = " ←CURRENT" if _sig_match(sig, cur_sig) else ""
+        mature = "" if n >= _MATURE_N else f" (immature: {n}/{_MATURE_N})"
+        label = f"bb{sig[0]}-{sig[1]} cfm{sig[2]} dead{sig[5]}-{sig[6]}"
+        print(f"  {label:30} n={n:4} WR {w:.1f}% ${p:+.0f}{is_cur}{mature}")
+    # Maturity verdict for the current config — drives whether tuning is even valid.
+    cur_outs = groups.get(next((s for s in groups if _sig_match(s, cur_sig)), None), [])
+    cw, cn, _ = _wr(cur_outs)
+    if cn >= _MATURE_N:
+        print(f"  → current config MATURE (n={cn}, WR {cw:.1f}%) — analysis is viable.")
+    else:
+        print(f"  → current config IMMATURE (n={cn}/{_MATURE_N}) — HOLD levers to let "
+              f"the sample build; tuning now would just chase noise.")
+
+
+def _sig_match(a, b) -> bool:
+    # JSON numbers vs python: compare as floats where possible, else equal.
+    if len(a) != len(b):
+        return False
+    for x, y in zip(a, b):
+        try:
+            if float(x) != float(y):
+                return False
+        except (TypeError, ValueError):
+            if x != y:
+                return False
+    return True
 
 
 # ── WR trend: catch regression early ─────────────────────────────────────────
