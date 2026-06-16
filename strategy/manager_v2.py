@@ -438,7 +438,9 @@ class StrategyManagerV2:
             # 5s timeframe shadow: evaluate 5s candles independently of the 1s
             # decision. Fires for every pair (even 1s skips) to collect signal data.
             # Uses flip_levers_5s.json (5s-calibrated bb_width, confirm_bars, etc.).
-            if prefetched_5s and settings.trade_mode != TradeMode.LIVE:
+            # Restricted to 92%+ payout pairs — shadow data should reflect the pairs
+            # we'd actually promote to live trading.
+            if prefetched_5s and settings.trade_mode != TradeMode.LIVE and payout_pct >= 85:
                 df_5s = prefetched_5s.get(pair_api)
                 if df_5s is not None and not df_5s.empty and len(df_5s) >= 40:
                     levers_5s = load_levers_5s()
@@ -509,6 +511,16 @@ class StrategyManagerV2:
                         cid, pair_api, ev, tracked_rate, n_tracked, payout_pct,
                     )
                     continue
+
+            # Cooldown re-check: a loss from a prior cycle may have resolved
+            # (and called record_loss) while we were fetching candles for this
+            # cycle. The candidate-filter check at cycle start doesn't catch that
+            # race — this second check does.
+            if self._pair_cooldown.is_cooling(pair_api):
+                row.decision = "SKIP"; row.skip_reason = "post_loss_cooldown_recheck"
+                write_decision(log_path, row)
+                log.info("[{}] SKIP {}  reason=post_loss_cooldown_recheck", cid, pair_api)
+                continue
 
             # Risk gate — session-wide block, stop scanning all pairs
             if not self._risk.is_allowed(balance_before):

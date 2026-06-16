@@ -161,10 +161,11 @@ async def test_signals_loop_respects_max_pairs_per_cycle(tmp_path, monkeypatch):
 
     mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
     monkeypatch.setattr(settings, "max_pairs_per_cycle", 2)
+    monkeypatch.setattr(settings, "shadow_tf5s_enabled", False)  # isolate: testing pair cap only
 
     await mgr.run_once()
 
-    # Only 2 pairs should have been evaluated (get_candles called twice)
+    # Only 2 pairs should have been evaluated (get_real_candles called once per pair for 1s)
     assert api.get_real_candles.await_count <= 2
 
 
