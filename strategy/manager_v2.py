@@ -499,6 +499,19 @@ class StrategyManagerV2:
                         shadow_kind="majority_blocked",
                         would_skip_reason="majority_blocked",
                     ))
+                # Flip-skip shadow: fire in the raw SuperTrend direction so we can
+                # measure gate-filtered outcomes. Answers: "was the skip correct?"
+                if (settings.shadow_flip_skip_enabled
+                        and flip_metrics and flip_metrics.get("st_dir")
+                        and settings.trade_mode != TradeMode.LIVE):
+                    asyncio.create_task(self._place_single_shadow(
+                        pair_api=pair_api,
+                        direction=flip_metrics["st_dir"],
+                        base_row=row,
+                        log_path=log_path,
+                        shadow_kind="flip_skip",
+                        would_skip_reason=d.skip_reason or "flip_skip",
+                    ))
                 continue
 
             # Blocked-hour shadow mode: the signal gates passed, but this hour is

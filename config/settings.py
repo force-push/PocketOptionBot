@@ -260,6 +260,12 @@ class BotSettings(BaseSettings):
         default=0.6, alias="SHADOW_ADX_REGIME_MIN_CONF", ge=0.0, le=1.0
     )
 
+    # Flip-skip shadow: when the flip strategy rejects a signal (MACD disagrees,
+    # ADX dead zone, bb_width gate, etc.), place a shadow trade in the raw
+    # SuperTrend direction to measure what would have happened without the gate.
+    # Builds the dataset for validating/relaxing over-filtering gates.
+    shadow_flip_skip_enabled: bool = Field(default=False, alias="SHADOW_FLIP_SKIP_ENABLED")
+
     # Real-OHLC feature flag (PO_DATA_SURFACE.md Step 2).
     # True  → use history() for genuine wicks (HeikinAshi/ATR/Supertrend benefit).
     # False → use the proven-stable get_candles() flat-snapshot path (default).
