@@ -46,6 +46,8 @@ _LEVER_KEYS = (
     "flip_adx_dead_lo", "flip_adx_dead_hi",
     # moderate-volatility regime gate
     "bb_width_min", "bb_width_max",
+    # RSI extreme override: bypass bb_width gate when RSI<threshold (CALL) or RSI>100-threshold (PUT)
+    "rsi_extreme_override",
 )
 
 _lock = threading.Lock()

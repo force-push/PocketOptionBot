@@ -69,6 +69,11 @@ class FlipParams:
     # (wide). 0 = that bound off.
     bb_width_min: float = 0.0
     bb_width_max: float = 0.0
+    # RSI extreme override: bypass bb_width chop/whipsaw gate when RSI is deeply
+    # oversold (CALL) or overbought (PUT). Data: RSI<30 → 55% WR in chop, 69% in
+    # whipsaw — reversal-confirmed flips work regardless of volatility regime.
+    # 0 = off. Typical value: 30 (CALL: RSI<30, PUT: RSI>70).
+    rsi_extreme_override: float = 0.0
     # ── flip wait-and-confirm (don't trade exactly at the SuperTrend turn) ──────
     # At the turn the MACD gap is ~0 — the reversal hasn't proven itself yet (data:
     # gap avg 0.56 at bars 1-3 vs 0.75 at bars 4-9). These gates make the flip
@@ -222,7 +227,18 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
 
     # Moderate-volatility regime gate: skip chop (band too tight) and whipsaw
     # (band too wide). Applies to both entry kinds. Data: bb_width 8-14 bps best.
-    if bb_width_bps is not None:
+    # RSI extreme override: deeply oversold CALL (RSI < threshold) or overbought
+    # PUT (RSI > 100-threshold) bypasses both bounds — reversal-confirmed flips
+    # work even in chop/whipsaw (55% WR chop, 69% whipsaw at RSI<30).
+    _rsi_extreme = (
+        params.rsi_extreme_override > 0
+        and rsi_now is not None
+        and (
+            (direction == "CALL" and rsi_now < params.rsi_extreme_override)
+            or (direction == "PUT"  and rsi_now > 100 - params.rsi_extreme_override)
+        )
+    )
+    if bb_width_bps is not None and not _rsi_extreme:
         if params.bb_width_min > 0 and bb_width_bps < params.bb_width_min:
             return FlipDecision(None, None, f"bb_width {bb_width_bps}<{params.bb_width_min} chop ({diag})", metrics)
         if params.bb_width_max > 0 and bb_width_bps > params.bb_width_max and macd_gap_atr < 1.0:

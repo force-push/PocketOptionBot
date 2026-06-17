@@ -1,9 +1,9 @@
 {
-  "_comment": "2026-06-17: removed adx_max/flip_adx_max caps — user won 3x on AUDNZD at ADX=54 (fresh flip on exhausted trend). Dead-zone (25-30) + MACD/DI confirmation are the real quality filters. bb_width 8-14 ONLY profitable zone (53.7% WR n=328). Blocklist removed; perf cooldown handles dynamic benching.",
+  "_comment": "2026-06-17: bb_width tightened 8-14 → 10-12 after finer analysis (n=2225): 10-12 = 57.4% WR (n=129), 8-10 = 51.8%, 12-14 = 47.7% — real edge is a 2bps band. bars_in_trend has zero predictive value (winner/loser means identical). adx_max/flip_adx_max caps removed. Blocklist cleared; perf cooldown handles dynamic benching.",
   "st_period": 10,
   "st_multiplier": 3.0,
   "flip_window_bars": 25,
-  "adx_flip_min": 22,
+  "adx_flip_min": 0,
   "adx_trend_min": 25,
   "adx_max": 999,
   "require_adx_rising": true,
@@ -19,6 +19,7 @@
   "flip_gap_expansion_min": 0.0,
   "flip_adx_dead_lo": 25,
   "flip_adx_dead_hi": 30,
-  "bb_width_min": 8,
-  "bb_width_max": 14
+  "bb_width_min": 4,
+  "bb_width_max": 14,
+  "rsi_extreme_override": 30
 }

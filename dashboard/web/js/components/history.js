@@ -125,6 +125,51 @@ export function initHistory(rootSel, countSel) {
   store.subscribe('history', render);
 }
 
+// ── Skip reason formatter ────────────────────────────────────────────────────
+// Converts raw diagnostic reason strings into a short human-readable label.
+// The full metrics are already in the Flip Strategy Signals table below.
+
+function formatSkipReason(reason) {
+  if (!reason) return null;
+  // Strip the trailing parenthetical diagnostic block "(ST=CALL adx=... etc)"
+  const short = reason.replace(/\s*\(ST=.*\)\s*$/, '').trim();
+  const r = short.toLowerCase();
+
+  if (r.startsWith('bb_width') && r.includes('chop')) {
+    const m = short.match(/([\d.]+)<([\d.]+)/);
+    return m
+      ? `Low volatility — bb_width ${m[1]} bps (min ${m[2]} bps)`
+      : 'Low volatility (chop)';
+  }
+  if (r.startsWith('bb_width') && r.includes('whipsaw')) {
+    const m = short.match(/([\d.]+)>([\d.]+)/);
+    return m
+      ? `High volatility — bb_width ${m[1]} bps (max ${m[2]} bps)`
+      : 'High volatility (whipsaw)';
+  }
+  if (r.startsWith('weak macd gap')) {
+    const m = short.match(/([\d.]+)<([\d.]+)/);
+    return m
+      ? `Weak MACD momentum — gap/ATR ${m[1]} (min ${m[2]})`
+      : 'Weak MACD momentum';
+  }
+  if (r.startsWith('macd disagrees'))   return 'MACD direction disagrees with SuperTrend';
+  if (r.startsWith('di disagrees'))     return 'DI direction disagrees with SuperTrend';
+  if (r.startsWith('flip in adx dead')) {
+    const m = short.match(/\[([\d.]+),([\d.]+)\)/);
+    return m ? `ADX in dead zone [${m[1]}–${m[2]}]` : 'ADX dead zone';
+  }
+  if (r.startsWith('flip but adx')) {
+    const m = short.match(/ADX<([\d.]+)/i);
+    return m ? `ADX too low for flip (min ${m[1]})` : 'ADX too low';
+  }
+  if (r.startsWith('cont')) {
+    return `Continuation gate: ${short.replace(/^cont[^ ]* /i, '')}`;
+  }
+  // Fallback: already-stripped short string
+  return short;
+}
+
 // ── Detail HTML builder ──────────────────────────────────────────────────────
 
 function detailHtml(d) {
@@ -141,11 +186,13 @@ function detailHtml(d) {
 
   // ── Header ────────────────────────────────────────────────────────────────
   const skipReason = d.would_skip_reason || (isSkip ? d.skip_reason : null);
+  const skipLabel  = formatSkipReason(skipReason);
+  const isShadow   = d.shadow && d.shadow_kind === 'flip_skip';
   const header = `
     <div class="md-header">
       <div class="md-pair-col">
         <span class="md-pair">${pairLabel}</span>
-        ${skipReason ? `<span class="md-skip-reason">${escHtml(skipReason)}</span>` : ''}
+        ${skipLabel ? `<span class="md-skip-badge${isShadow ? ' md-skip-shadow' : ''}" title="${escHtml(skipReason)}">⊘ ${escHtml(skipLabel)}</span>` : ''}
       </div>
       ${dir ? `<span class="pill ${dirCls}">${fmt.dirSym(dir)} ${dir}</span>` : ''}
       <span class="pill ${resCls}" style="border-color:transparent;background:var(--${isWin?'up-dim':isLoss?'down-dim':'bg-3'})">
