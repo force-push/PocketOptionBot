@@ -225,7 +225,7 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     if bb_width_bps is not None:
         if params.bb_width_min > 0 and bb_width_bps < params.bb_width_min:
             return FlipDecision(None, None, f"bb_width {bb_width_bps}<{params.bb_width_min} chop ({diag})", metrics)
-        if params.bb_width_max > 0 and bb_width_bps > params.bb_width_max:
+        if params.bb_width_max > 0 and bb_width_bps > params.bb_width_max and macd_gap_atr < 1.0:
             return FlipDecision(None, None, f"bb_width {bb_width_bps}>{params.bb_width_max} whipsaw ({diag})", metrics)
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)
