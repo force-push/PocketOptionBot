@@ -252,7 +252,7 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         # Flip-specific distance gates (separate params from continuation — they
         # have opposite optimal zones: trend best=1-2 ATR, flip best=dist3+ ATR).
         # Both default to off (0 / 999) so existing lever files are unaffected.
-        if params.flip_atr_min > 0 and dist < params.flip_atr_min:
+        if params.flip_atr_min > 0 and round(dist, 2) < params.flip_atr_min:
             return FlipDecision(None, None,
                                 f"flip under-confirmed {dist:.2f}ATR < min "
                                 f"{params.flip_atr_min} ({diag})", metrics)

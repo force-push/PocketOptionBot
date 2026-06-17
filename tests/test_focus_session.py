@@ -282,6 +282,7 @@ def _clear_pair_filters(monkeypatch):
     """Neutralise the .env pair-filter config so a test controls it explicitly."""
     monkeypatch.setattr(fs_module.settings, "allowed_pair_regex", "")
     monkeypatch.setattr(fs_module.settings, "allowed_pairs", [])
+    monkeypatch.setattr(fs_module.settings, "blocked_pairs", [])
 
 
 @pytest.mark.asyncio
