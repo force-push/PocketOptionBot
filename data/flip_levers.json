@@ -22,5 +22,5 @@
   "bb_width_min": 4,
   "bb_width_max": 0,
   "rsi_extreme_override": 30,
-  "di_spread_override": 20
+  "di_spread_override": 30
 }
