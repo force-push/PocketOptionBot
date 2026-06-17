@@ -56,3 +56,80 @@ def test_empty_pair_is_noop():
     pc = PairCooldown(seconds=60)
     pc.record_loss("", now=100.0)
     assert not pc.is_cooling("", now=100.0)
+
+
+# ── performance-based 12h cooldown ───────────────────────────────────────────
+# In test mode (seconds provided) perf_cfg() returns: min=5, max_wr=0.40,
+# window=3h, cooldown=12h.
+
+def test_perf_no_trigger_before_min_trades():
+    pc = PairCooldown(seconds=60)
+    t = 1000.0
+    for _ in range(2):   # 2 losses — one short of threshold (min=3)
+        pc.record_outcome("EURHUF_otc", is_win=False, now=t)
+        t += 10
+    assert not pc.is_cooling("EURHUF_otc", now=t)   # perf gate not triggered yet
+
+
+def test_perf_triggers_on_third_loss():
+    pc = PairCooldown(seconds=60)
+    t = 1000.0
+    triggered = False
+    for _ in range(3):
+        triggered = pc.record_outcome("EURHUF_otc", is_win=False, now=t)
+        t += 10
+    assert triggered
+    assert pc.is_cooling("EURHUF_otc", now=t)        # 12h cooldown active
+
+
+def test_perf_no_trigger_above_wr_threshold():
+    pc = PairCooldown(seconds=60)
+    t = 1000.0
+    # 3 wins, 2 losses → WR 60% > 40% threshold
+    for is_win in [True, False, True, False, True]:
+        pc.record_outcome("EURHUF_otc", is_win=is_win, now=t)
+        t += 10
+    assert not pc.is_cooling("EURHUF_otc", now=t)
+
+
+def test_perf_cooldown_expires():
+    pc = PairCooldown(seconds=60)
+    t = 1000.0
+    for _ in range(5):
+        pc.record_outcome("EURHUF_otc", is_win=False, now=t)
+        t += 10
+    # 12h = 43200s; should be active at t and expired at t+43201
+    assert pc.is_cooling("EURHUF_otc", now=t)
+    assert not pc.is_cooling("EURHUF_otc", now=t + 43201)
+
+
+def test_perf_cooldown_reason():
+    pc = PairCooldown(seconds=60)
+    t = 1000.0
+    for _ in range(5):
+        pc.record_outcome("PAIR_otc", is_win=False, now=t)
+        t += 10
+    reason = pc.cooling_reason("PAIR_otc", now=t)
+    assert reason is not None and "perf-cooldown" in reason
+
+
+def test_perf_window_prunes_old_outcomes():
+    pc = PairCooldown(seconds=60)
+    # 4 losses in the window, then they age out (3h = 10800s), then 1 fresh loss
+    t = 1000.0
+    for _ in range(4):
+        pc.record_outcome("PAIR_otc", is_win=False, now=t)
+        t += 10
+    # Jump forward past the 3h window
+    t += 11000
+    triggered = pc.record_outcome("PAIR_otc", is_win=False, now=t)
+    assert not triggered   # old 4 losses pruned; only 1 fresh loss in window
+
+
+def test_perf_cooling_set_includes_perf_pairs():
+    pc = PairCooldown(seconds=60)
+    t = 1000.0
+    for _ in range(5):
+        pc.record_outcome("BAD_otc", is_win=False, now=t)
+        t += 10
+    assert "BAD_otc" in pc.cooling(now=t)

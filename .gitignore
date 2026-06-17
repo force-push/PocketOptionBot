@@ -24,6 +24,8 @@ data/deep_history_stats.jsonl
 data/models/
 data/flip_levers.json
 data/flip_levers_5s.json
+data/pair_cooldown.json
+data/pair_perf_cooldown.json
 *.session
 *.session-journal
 htmlcov/

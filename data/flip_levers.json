@@ -1,17 +1,17 @@
 {
-  "_comment": "2026-06-17 analyze_failures 48h: dist_atr <2 = 53.3% ✅, 2-3 = 48% ❌, 3+ = 47.5% ❌ → hard cap ATR at 2.0 for both flip and continuation. bb_width 14-25 = 55.4% WR (better than 8-14 at 52.5%) → expand max to 25. flip_atr_min 1.0 correct (near-band entries best). ADX dead zone 25-30 confirmed 33.3% WR → keep excluded. Per-config current (bb8-14) at n=54, immature — widen to bb_width 8-25 to capture the better 14-25 zone.",
+  "_comment": "2026-06-17: removed adx_max/flip_adx_max caps — user won 3x on AUDNZD at ADX=54 (fresh flip on exhausted trend). Dead-zone (25-30) + MACD/DI confirmation are the real quality filters. bb_width 8-14 ONLY profitable zone (53.7% WR n=328). Blocklist removed; perf cooldown handles dynamic benching.",
   "st_period": 10,
   "st_multiplier": 3.0,
   "flip_window_bars": 25,
-  "adx_flip_min": 15,
-  "adx_trend_min": 20,
+  "adx_flip_min": 22,
+  "adx_trend_min": 25,
   "adx_max": 999,
   "require_adx_rising": true,
   "atr_distance_min": 0.5,
   "atr_distance_max": 999,
   "flip_atr_min": 0.5,
   "flip_atr_max": 999,
-  "flip_adx_max": 40,
+  "flip_adx_max": 999,
   "roc_period": 0,
   "cont_macd_gap_min": 0.2,
   "cont_rsi_min": 45,
@@ -19,6 +19,6 @@
   "flip_gap_expansion_min": 0.0,
   "flip_adx_dead_lo": 25,
   "flip_adx_dead_hi": 30,
-  "bb_width_min": 0,
-  "bb_width_max": 25
+  "bb_width_min": 8,
+  "bb_width_max": 14
 }

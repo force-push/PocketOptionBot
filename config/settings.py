@@ -58,6 +58,13 @@ class BotSettings(BaseSettings):
     # meantime — no idle time). Data: trades <60s after a loss on a pair ~42% WR.
     # 0 disables. Distinct from cooldown_after_loss_seconds (a global pause).
     post_loss_pair_cooldown_seconds: int = Field(default=60, alias="POST_LOSS_PAIR_COOLDOWN_SECONDS", ge=0)
+    # Performance-based long cooldown: bench a pair for perf_cooldown_hours if its
+    # rolling WR over the last perf_cooldown_window_hours falls below perf_cooldown_max_wr
+    # after at least perf_cooldown_min_trades. Replaces permanent blocklist additions.
+    perf_cooldown_min_trades: int = Field(default=3, alias="PERF_COOLDOWN_MIN_TRADES", ge=1)
+    perf_cooldown_max_wr: float = Field(default=0.40, alias="PERF_COOLDOWN_MAX_WR", ge=0.0, le=1.0)
+    perf_cooldown_window_hours: float = Field(default=3.0, alias="PERF_COOLDOWN_WINDOW_HOURS", gt=0)
+    perf_cooldown_hours: float = Field(default=12.0, alias="PERF_COOLDOWN_HOURS", gt=0)
 
     # ── Per-signal parameters (wired into signal constructors in main_v2.py) ──
     # Expose here so they can be tuned via .env or dashboard without code changes.

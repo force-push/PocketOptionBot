@@ -931,10 +931,19 @@ class StrategyManagerV2:
                 self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
                 risk_result = {"win": "WIN", "loss": "LOSS", "draw": "PENDING"}.get(outcome.lower(), "PENDING")
                 self._risk.record_trade(row.bot_direction, row.stake, risk_result)
-                # Start the per-pair post-loss cooldown so neither the poll loop
-                # nor FocusSession re-enters this pair during its weak window.
+                # Short post-loss cooldown (always on loss).
                 if outcome.lower() == "loss":
                     self._pair_cooldown.record_loss(row.pair_api)
+                # Performance cooldown: track rolling WR; bench for 12h if it drops
+                # below the threshold over perf_cooldown_window_hours.
+                if outcome.lower() in ("win", "loss"):
+                    is_win = outcome.lower() == "win"
+                    triggered = self._pair_cooldown.record_outcome(row.pair_api, is_win)
+                    if triggered:
+                        log.warning(
+                            "PERF-COOLDOWN triggered for {} — benched 12h (rolling WR below threshold)",
+                            row.pair_api,
+                        )
 
             # Notify dashboard with complete resolved data
             if self._bridge:
