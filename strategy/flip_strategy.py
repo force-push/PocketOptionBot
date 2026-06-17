@@ -74,6 +74,12 @@ class FlipParams:
     # whipsaw — reversal-confirmed flips work regardless of volatility regime.
     # 0 = off. Typical value: 30 (CALL: RSI<30, PUT: RSI>70).
     rsi_extreme_override: float = 0.0
+    # DI spread override: bypass bb_width chop/whipsaw gate when +DI−−DI exceeds
+    # this threshold in the trade direction (CALL: +DI−−DI > threshold,
+    # PUT: −DI−+DI > threshold). Strong directional conviction in the ADX/DI system
+    # implies the move has real momentum even in a tight volatility regime.
+    # 0 = off. Typical value: 20 (spread > 20 = clear directional dominance).
+    di_spread_override: float = 0.0
     # ── flip wait-and-confirm (don't trade exactly at the SuperTrend turn) ──────
     # At the turn the MACD gap is ~0 — the reversal hasn't proven itself yet (data:
     # gap avg 0.56 at bars 1-3 vs 0.75 at bars 4-9). These gates make the flip
@@ -227,9 +233,10 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
 
     # Moderate-volatility regime gate: skip chop (band too tight) and whipsaw
     # (band too wide). Applies to both entry kinds. Data: bb_width 8-14 bps best.
-    # RSI extreme override: deeply oversold CALL (RSI < threshold) or overbought
-    # PUT (RSI > 100-threshold) bypasses both bounds — reversal-confirmed flips
-    # work even in chop/whipsaw (55% WR chop, 69% whipsaw at RSI<30).
+    # Two overrides bypass both bounds — either is sufficient:
+    #   RSI extreme: deeply oversold CALL or overbought PUT (55% WR chop, 69% whipsaw).
+    #   DI spread:   +DI−−DI > threshold in trade direction = real directional momentum
+    #                even in a tight volatility regime.
     _rsi_extreme = (
         params.rsi_extreme_override > 0
         and rsi_now is not None
@@ -238,7 +245,14 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             or (direction == "PUT"  and rsi_now > 100 - params.rsi_extreme_override)
         )
     )
-    if bb_width_bps is not None and not _rsi_extreme:
+    _di_spread = (
+        params.di_spread_override > 0
+        and (
+            (direction == "CALL" and (pdi - ndi) > params.di_spread_override)
+            or (direction == "PUT"  and (ndi - pdi) > params.di_spread_override)
+        )
+    )
+    if bb_width_bps is not None and not _rsi_extreme and not _di_spread:
         if params.bb_width_min > 0 and bb_width_bps < params.bb_width_min:
             return FlipDecision(None, None, f"bb_width {bb_width_bps}<{params.bb_width_min} chop ({diag})", metrics)
         if params.bb_width_max > 0 and bb_width_bps > params.bb_width_max and macd_gap_atr < 1.0:
@@ -305,7 +319,16 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
     # within the 1–2 ATR "confirmed but not over-extended" zone, MACD momentum
     # gap, and RSI direction confirmation (if cont_rsi_min > 0).
     # Data (n=923): dist 1-2 ATR = 54-63% WR; dist >2 ATR = 47-49% (climaxing).
-    rising_ok = adx_rising or not params.require_adx_rising
+    # DI spread override: massive directional dominance (e.g. +DI 70 / -DI 7) means
+    # the trend is still very much alive even if ADX is ticking down from its peak.
+    _di_spread_strong = (
+        params.di_spread_override > 0
+        and (
+            (direction == "CALL" and (pdi - ndi) > params.di_spread_override)
+            or (direction == "PUT"  and (ndi - pdi) > params.di_spread_override)
+        )
+    )
+    rising_ok = adx_rising or not params.require_adx_rising or _di_spread_strong
     macd_strong = macd_gap_atr >= params.cont_macd_gap_min
     dist_in_zone = params.atr_distance_min <= dist <= params.atr_distance_max
     strong = adx_now >= params.adx_trend_min and rising_ok and dist_in_zone and macd_strong

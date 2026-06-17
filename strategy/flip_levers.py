@@ -48,6 +48,8 @@ _LEVER_KEYS = (
     "bb_width_min", "bb_width_max",
     # RSI extreme override: bypass bb_width gate when RSI<threshold (CALL) or RSI>100-threshold (PUT)
     "rsi_extreme_override",
+    # DI spread override: bypass bb_width gate when +DI−−DI > threshold in trade direction (0=off)
+    "di_spread_override",
 )
 
 _lock = threading.Lock()
