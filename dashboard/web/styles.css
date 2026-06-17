@@ -464,7 +464,9 @@ input[type=range]::-moz-range-thumb{ width:14px; height:14px; border:0; border-r
 
 /* modal sections */
 .md-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+.md-pair-col { display: flex; flex-direction: column; gap: 2px; }
 .md-pair { font-size: 18px; font-weight: 600; }
+.md-skip-reason { font-size: 11px; color: var(--tx-2); font-family: var(--mono); }
 .md-time { color: var(--tx-2); font-family: var(--mono); font-size: 12px; margin-left: auto; }
 
 .md-section { margin-bottom: 18px; }

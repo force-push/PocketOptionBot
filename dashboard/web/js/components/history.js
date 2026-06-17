@@ -140,9 +140,13 @@ function detailHtml(d) {
   const resLabel = isSkip ? 'SKIP' : (result || 'PENDING').toUpperCase();
 
   // ── Header ────────────────────────────────────────────────────────────────
+  const skipReason = d.would_skip_reason || (isSkip ? d.skip_reason : null);
   const header = `
     <div class="md-header">
-      <span class="md-pair">${pairLabel}</span>
+      <div class="md-pair-col">
+        <span class="md-pair">${pairLabel}</span>
+        ${skipReason ? `<span class="md-skip-reason">${escHtml(skipReason)}</span>` : ''}
+      </div>
       ${dir ? `<span class="pill ${dirCls}">${fmt.dirSym(dir)} ${dir}</span>` : ''}
       <span class="pill ${resCls}" style="border-color:transparent;background:var(--${isWin?'up-dim':isLoss?'down-dim':'bg-3'})">
         ${isWin ? '▲' : isLoss ? '▼' : '○'} ${resLabel}
