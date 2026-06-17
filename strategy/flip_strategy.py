@@ -276,12 +276,14 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             return FlipDecision(None, None,
                                 f"flip over-extended {dist:.2f}ATR > max "
                                 f"{params.flip_atr_max} ({diag})", metrics)
-        # Reversal strength = MACD gap expanding since the flip bar (off when 0).
+        # Dead zone gate: gap stagnant (0 to flip_gap_expansion_min) = worst bucket.
+        # Contracting (negative) wins at 56.1% — pass those through.
+        # Only block 0 ≤ gap_expansion < flip_gap_expansion_min (off when 0).
         if params.flip_gap_expansion_min > 0:
-            if gap_expansion is None or gap_expansion < params.flip_gap_expansion_min:
+            if gap_expansion is not None and 0 <= gap_expansion < params.flip_gap_expansion_min:
                 return FlipDecision(None, None,
-                                    f"flip gap not expanding "
-                                    f"({gap_expansion}<{params.flip_gap_expansion_min}) ({diag})", metrics)
+                                    f"gap stagnant {gap_expansion} in "
+                                    f"[0,{params.flip_gap_expansion_min}) ({diag})", metrics)
         # Flip-specific ADX cap: high ADX = climaxing/exhausted move, bad for flips
         # (flip|adx40+: 23-45% WR) while keeping trend|adx40+ valid (64% WR d<2).
         if params.flip_adx_max < 999 and adx_now > params.flip_adx_max:

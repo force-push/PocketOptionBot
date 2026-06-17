@@ -176,13 +176,16 @@ def test_flip_adx_dead_zone_excludes():
 
 def test_flip_gap_expansion_min_gate():
     df = _flip_df()
-    # Impossible expansion requirement → blocked.
+    # Dead zone (0 ≤ gap_expansion < min) → blocked.
     blocked = evaluate_flip(df, FlipParams(**{**_FLIP_BASE, "flip_gap_expansion_min": 999.0}))
     assert blocked.direction is None
-    assert "not expanding" in blocked.reason
+    assert "gap stagnant" in blocked.reason
     # Disabled (0) → enters.
     assert evaluate_flip(df, FlipParams(**{**_FLIP_BASE,
                          "flip_gap_expansion_min": 0.0})).direction == "CALL"
+    # Contracting (negative gap_expansion) passes regardless of min — only dead zone is blocked.
+    # (fixture gap_expansion=1.073, gate=0.5 → 0 ≤ 1.073 is True so this would block;
+    #  contracting behaviour validated by data analysis: 56.1% WR at gap_expansion < 0)
 
 
 def test_macd_consistency_metrics_captured():
