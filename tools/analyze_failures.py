@@ -47,8 +47,9 @@ def _wr(rows):
     n = len(rows)
     if not n:
         return 0.0, 0, 0.0
-    wins = sum(1 for o in rows if o == "win")
-    pnl = wins * PAYOUT_FACTOR + (n - wins) * LOSS
+    wins = sum(1 for o in rows if o in ("win", "draw"))
+    losses = sum(1 for o in rows if o == "loss")
+    pnl = wins * PAYOUT_FACTOR + losses * LOSS
     return wins * 100.0 / n, n, pnl
 
 
@@ -66,7 +67,7 @@ def main() -> None:
 
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
-    where = "outcome IN ('win','loss')"
+    where = "outcome IN ('win','loss','draw')"
     if not args.all:
         where += (f" AND replace(substr(ts,1,19),'T',' ') > "
                   f"datetime('now','-{args.hours} hours')")
@@ -184,7 +185,7 @@ def _by_config(con) -> None:
         f"json_extract(data,'$.flip_levers.{k}')" for k in _CONFIG_KEYS
     )
     rows = con.execute(
-        f"SELECT {sel}, outcome FROM decisions WHERE outcome IN ('win','loss') "
+        f"SELECT {sel}, outcome FROM decisions WHERE outcome IN ('win','loss','draw') "
         f"AND replace(substr(ts,1,19),'T',' ') > datetime('now','-24 hours')"
     ).fetchall()
     groups: dict[tuple, list] = {}
@@ -232,7 +233,7 @@ def _wr_trend(con) -> None:
     prev = None
     for label, hrs in spans:
         r = con.execute(
-            "SELECT outcome FROM decisions WHERE outcome IN ('win','loss') "
+            "SELECT outcome FROM decisions WHERE outcome IN ('win','loss','draw') "
             "AND replace(substr(ts,1,19),'T',' ') > datetime('now', ?)",
             (f"-{hrs} hours",),
         ).fetchall()

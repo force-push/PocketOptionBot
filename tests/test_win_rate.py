@@ -60,12 +60,12 @@ def test_mixed_outcomes(tmp_tracker):
     assert n == 10
 
 
-def test_draw_does_not_count(tmp_tracker):
+def test_draw_counts_as_win(tmp_tracker):
     tmp_tracker.record("EURUSD_otc", "CALL", 60, "win")
     tmp_tracker.record("EURUSD_otc", "CALL", 60, "draw")
     rate, n = tmp_tracker.rate("EURUSD_otc", "CALL", 60)
-    # Draw not counted — n should be 1
-    assert n == 1
+    # Draw counts as win — n=2, rate=1.0
+    assert n == 2
     assert rate == pytest.approx(1.0)
 
 

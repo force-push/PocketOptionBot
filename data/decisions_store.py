@@ -324,7 +324,7 @@ def pair_ev_aggregates(path: str | Path) -> list[dict]:
         rows = conn.execute(
             """
             SELECT pair_api AS pair,
-                   SUM(CASE WHEN outcome = 'win'  THEN 1 ELSE 0 END) AS w,
+                   SUM(CASE WHEN outcome IN ('win','draw') THEN 1 ELSE 0 END) AS w,
                    SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS l,
                    AVG(json_extract(data, '$.bot_win_rate')) AS bot_wr,
                    AVG(COALESCE(
@@ -334,7 +334,7 @@ def pair_ev_aggregates(path: str | Path) -> list[dict]:
                             THEN pnl / json_extract(data, '$.stake') * 100
                        END)) AS payout
             FROM decisions
-            WHERE decision = 'TRADE' AND outcome IN ('win', 'loss')
+            WHERE decision = 'TRADE' AND outcome IN ('win', 'loss', 'draw')
             GROUP BY pair_api
             """
         ).fetchall()

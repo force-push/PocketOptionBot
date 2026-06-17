@@ -163,17 +163,18 @@ class WinRateTracker:
     def rate(self, pair: str, direction: str, expiry_seconds: int) -> Tuple[float, int]:
         """Return (win_rate, n) for the given key.
 
-        win_rate is 0.0–1.0; n is the number of wins + losses (draws excluded).
+        win_rate is 0.0–1.0; n includes wins + losses + draws (draws count as wins).
         Returns (0.0, 0) if no data exists.
         """
         key = self._key_str(pair, direction, expiry_seconds)
         entry = self._data.get(key, {})
         wins = int(entry.get("wins", 0))
         losses = int(entry.get("losses", 0))
-        n = wins + losses
+        draws = int(entry.get("draws", 0))
+        n = wins + losses + draws
         if n == 0:
             return 0.0, 0
-        return wins / n, n
+        return (wins + draws) / n, n
 
     def pair_rate(self, pair: str) -> Tuple[float, int]:
         """Return (win_rate, n) aggregated across ALL of a pair's keys.
@@ -183,15 +184,16 @@ class WinRateTracker:
         performance (direction/expiry-agnostic). Returns (0.0, 0) if no data.
         """
         prefix = f"{pair}|"
-        wins = losses = 0
+        wins = losses = draws = 0
         for key, entry in self._data.items():
             if key.startswith(prefix):
                 wins += int(entry.get("wins", 0))
                 losses += int(entry.get("losses", 0))
-        n = wins + losses
+                draws += int(entry.get("draws", 0))
+        n = wins + losses + draws
         if n == 0:
             return 0.0, 0
-        return wins / n, n
+        return (wins + draws) / n, n
 
     def passes(
         self,
