@@ -260,7 +260,7 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)
     di_ok = (pdi > ndi) if direction == "CALL" else (ndi > pdi)
-    if not macd_ok:
+    if not macd_ok and not _di_spread:
         return FlipDecision(None, None, f"MACD disagrees ({diag})", metrics)
     if not di_ok:
         return FlipDecision(None, None, f"DI disagrees ({diag})", metrics)
