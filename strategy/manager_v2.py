@@ -129,7 +129,9 @@ class StrategyManagerV2:
             try:
                 from strategy.flip_streamer import FlipStreamer
                 self._streamer = FlipStreamer(self._api, self)
-                await self._streamer.start(settings.streaming_pairs)
+                # Initial pair list is empty — rotate() fills it once we have
+                # live payout data in _run_once_signals().
+                log.info("FlipStreamer initialised (pairs assigned dynamically each cycle)")
             except Exception as exc:
                 log.warning("FlipStreamer start failed (continuing with poll loop): {}", exc)
         # Start the focus-session manager once, if enabled.
@@ -215,9 +217,24 @@ class StrategyManagerV2:
         # centralised in pair_filter.is_pair_allowed so the poll loop and
         # FocusSession can never diverge. Each still honours the payout floor.
         from strategy.pair_filter import is_pair_allowed
+        # Dynamic streamer rotation: pick top-N eligible pairs by payout, excluding
+        # any pair currently in cooldown (the cooldown IS the rotation signal).
+        # A pair that's winning stays; one that hits losses gets benched by cooldown
+        # and dropped from the stream automatically next cycle.
+        if self._streamer is not None:
+            try:
+                best_streaming = [
+                    p["symbol"] for p in all_pairs
+                    if is_pair_allowed(p["symbol"])
+                    and not self._pair_cooldown.is_cooling(p["symbol"])
+                    and p.get("payout", 0) >= settings.focus_payout_floor
+                ][:4]
+                await self._streamer.rotate(best_streaming)
+            except Exception as exc:
+                log.warning("FlipStreamer rotate failed: {}", exc)
         # Pairs handled by the event-driven streamer or focus-session are excluded
         # from the poll scan so they aren't evaluated/traded twice.
-        streamed = set(settings.streaming_pairs) if (settings.streaming_enabled and self._streamer) else set()
+        streamed = set(self._streamer.pairs) if (self._streamer is not None) else set()
         if self._focus and self._focus.current_pair:
             streamed = streamed | {self._focus.current_pair}
         # FX-only filter still applies alongside a regex allowlist (so a USD regex

@@ -36,31 +36,61 @@ class FlipStreamer:
     def __init__(self, api_client: Any, manager: Any) -> None:
         self._api = api_client
         self._mgr = manager
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: dict[str, asyncio.Task] = {}   # pair → task
         self._running = False
-        self.pairs: list[str] = []
+
+    @property
+    def pairs(self) -> list[str]:
+        return list(self._tasks)
 
     async def start(self, pairs: list[str]) -> None:
-        await self.stop()
-        self.pairs = list(pairs)[:_SUBSCRIPTION_CAP]
-        if not self.pairs:
-            return
+        """Initial start — delegates to rotate()."""
+        await self.rotate(pairs)
+
+    async def rotate(self, new_pairs: list[str]) -> None:
+        """Swap active streams to match new_pairs (diff-based, no unnecessary restarts).
+
+        Stops streams for pairs no longer wanted (dropped below payout floor or
+        entered cooldown), starts streams for newly eligible pairs. Pairs already
+        streaming and still in new_pairs are left untouched — no disruption to
+        an ongoing winning run.
+        """
         self._running = True
-        for p in self.pairs:
-            self._tasks.append(asyncio.create_task(self._consume(p), name=f"flipstream-{p}"))
-        log.info("FlipStreamer started on {} pair(s): {}", len(self.pairs), self.pairs)
+        wanted = set(list(new_pairs)[:_SUBSCRIPTION_CAP])
+        current = set(self._tasks)
+
+        to_stop = current - wanted
+        to_start = wanted - current
+
+        for pair in to_stop:
+            await self._stop_pair(pair)
+
+        for pair in to_start:
+            self._start_pair(pair)
+
+        if to_stop or to_start:
+            log.info(
+                "FlipStreamer rotated — added: {} removed: {} active: {}",
+                sorted(to_start), sorted(to_stop), sorted(self._tasks),
+            )
 
     async def stop(self) -> None:
         self._running = False
-        for t in self._tasks:
-            if not t.done():
-                t.cancel()
-        for t in self._tasks:
+        for pair in list(self._tasks):
+            await self._stop_pair(pair)
+
+    def _start_pair(self, pair: str) -> None:
+        task = asyncio.create_task(self._consume(pair), name=f"flipstream-{pair}")
+        self._tasks[pair] = task
+
+    async def _stop_pair(self, pair: str) -> None:
+        task = self._tasks.pop(pair, None)
+        if task and not task.done():
+            task.cancel()
             try:
-                await t
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
-        self._tasks = []
 
     @staticmethod
     def _params(levers: dict) -> FlipParams:
