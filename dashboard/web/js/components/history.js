@@ -62,7 +62,8 @@ export function initHistory(rootSel, countSel) {
 
   function render(list) {
     rows = Array.isArray(list) ? list : [];
-    const traded = rows.filter(r => r.decision !== 'SKIP');
+    // Preserve the original rows index so the click handler looks up the right record.
+    const traded = rows.map((h, i) => ({ h, i })).filter(({ h }) => h.decision !== 'SKIP');
     if (countEl) {
       countEl.textContent = `resolved · ${traded.length}`;
     }
@@ -70,7 +71,7 @@ export function initHistory(rootSel, countSel) {
       tbody.innerHTML = `<tr class="empty-row"><td colspan="3"><div class="empty">No trades yet</div></td></tr>`;
       return;
     }
-    tbody.innerHTML = traded.map((h, i) => rowHtml(h, i)).join('');
+    tbody.innerHTML = traded.map(({ h, i }) => rowHtml(h, i)).join('');
 
     const fresh = rows.filter(r => r._new);
     if (fresh.length) setTimeout(() => { fresh.forEach(r => { delete r._new; }); }, 1600);
