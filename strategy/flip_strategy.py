@@ -329,7 +329,7 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
         )
     )
     rising_ok = adx_rising or not params.require_adx_rising or _di_spread_strong
-    macd_strong = macd_gap_atr >= params.cont_macd_gap_min
+    macd_strong = macd_gap_atr >= params.cont_macd_gap_min or _di_spread_strong
     dist_in_zone = params.atr_distance_min <= dist <= params.atr_distance_max
     strong = adx_now >= params.adx_trend_min and rising_ok and dist_in_zone and macd_strong
     if strong:
