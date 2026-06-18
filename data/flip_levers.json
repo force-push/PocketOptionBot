@@ -19,7 +19,7 @@
   "flip_gap_expansion_min": 0.1,
   "flip_adx_dead_lo": 0,
   "flip_adx_dead_hi": 0,
-  "bb_width_min": 4,
+  "bb_width_min": 2,
   "bb_width_max": 0,
   "rsi_extreme_override": 30,
   "di_spread_override": 30

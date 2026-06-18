@@ -259,11 +259,11 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             return FlipDecision(None, None, f"bb_width {bb_width_bps}>{params.bb_width_max} whipsaw ({diag})", metrics)
 
     macd_ok = (ml > sl) if direction == "CALL" else (ml < sl)
-    di_ok = (pdi > ndi) if direction == "CALL" else (ndi > pdi)
     if not macd_ok and not _di_spread:
         return FlipDecision(None, None, f"MACD disagrees ({diag})", metrics)
-    if not di_ok:
-        return FlipDecision(None, None, f"DI disagrees ({diag})", metrics)
+    # DI disagrees gate removed: shadow data shows DI-disagrees trades win 64.4%
+    # (fresh flips where DI lags the ST turn). Directional conviction lives in
+    # DI spread and MACD; bare DI direction vs ST is not a reliable filter.
 
     if flipped:
         # ADX dead-zone exclusion: the 25-30 band resists the flip without being
