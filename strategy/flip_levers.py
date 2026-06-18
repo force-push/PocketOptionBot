@@ -50,6 +50,8 @@ _LEVER_KEYS = (
     "rsi_extreme_override",
     # DI spread override: bypass bb_width gate when +DI−−DI > threshold in trade direction (0=off)
     "di_spread_override",
+    # Strong-confirm override: bypass bb_width gate when DI + gap_expansion + sign_consistency all agree (0=off)
+    "strong_confirm_override",
 )
 
 _lock = threading.Lock()

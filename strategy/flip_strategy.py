@@ -80,6 +80,13 @@ class FlipParams:
     # implies the move has real momentum even in a tight volatility regime.
     # 0 = off. Typical value: 20 (spread > 20 = clear directional dominance).
     di_spread_override: float = 0.0
+    # Strong-confirm override: bypass bb_width chop/whipsaw gate when ST, DI,
+    # gap expansion, and MACD sign consistency all agree. Requires:
+    #   • DI agrees with ST direction (+DI>−DI for CALL, vice versa)
+    #   • gap_expansion > 0 (MACD gap growing since the flip)
+    #   • macd_sign_consistency ≥ this threshold (MACD consistently on-side)
+    # 0 = off. Typical value: 0.8 (80% of recent bars same-side as trade direction).
+    strong_confirm_override: float = 0.0
     # ── flip wait-and-confirm (don't trade exactly at the SuperTrend turn) ──────
     # At the turn the MACD gap is ~0 — the reversal hasn't proven itself yet (data:
     # gap avg 0.56 at bars 1-3 vs 0.75 at bars 4-9). These gates make the flip
@@ -252,7 +259,15 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             or (direction == "PUT"  and (ndi - pdi) > params.di_spread_override)
         )
     )
-    if bb_width_bps is not None and not _rsi_extreme and not _di_spread:
+    _di_agrees = (pdi > ndi) if direction == "CALL" else (ndi > pdi)
+    _strong_confirm = (
+        params.strong_confirm_override > 0
+        and _di_agrees
+        and gap_expansion is not None and gap_expansion > 0
+        and macd_sign_consistency is not None
+        and macd_sign_consistency >= params.strong_confirm_override
+    )
+    if bb_width_bps is not None and not _rsi_extreme and not _di_spread and not _strong_confirm:
         if params.bb_width_min > 0 and bb_width_bps < params.bb_width_min:
             return FlipDecision(None, None, f"bb_width {bb_width_bps}<{params.bb_width_min} chop ({diag})", metrics)
         if params.bb_width_max > 0 and bb_width_bps > params.bb_width_max and macd_gap_atr < 1.0:
