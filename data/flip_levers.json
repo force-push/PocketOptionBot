@@ -1,5 +1,5 @@
 {
-  "_comment": "2026-06-17: bb_width tightened 8-14 → 10-12 after finer analysis (n=2225): 10-12 = 57.4% WR (n=129), 8-10 = 51.8%, 12-14 = 47.7% — real edge is a 2bps band. bars_in_trend has zero predictive value (winner/loser means identical). adx_max/flip_adx_max caps removed. Blocklist cleared; perf cooldown handles dynamic benching.",
+  "_comment": "2026-06-17: ADX gates relaxed to 0 (adx_flip_min=0, dead zone off); bb_width_min=4 (low floor). rsi_extreme_override=30 + di_spread_override=20 added as smart bypass gates (RSI extreme / strong DI divergence override bb_width/adx/MACD gates). flip_window_bars=25 wide net. Prior analysis: bb_width 10-12=57.4% WR (n=129) vs 8-10=51.8%, 12-14=47.7%; ADX dead zone 25-30=47% WR. These gates are now bypass-able via rsi/di_spread overrides.",
   "st_period": 10,
   "st_multiplier": 3.0,
   "flip_window_bars": 25,
