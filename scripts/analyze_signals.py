@@ -20,18 +20,53 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_DATA = _PROJECT_ROOT / "data" / "decisions.jsonl"
+_DEFAULT_DB = _PROJECT_ROOT / "data" / "decisions.db"
+_DEFAULT_JSONL = _PROJECT_ROOT / "data" / "decisions.jsonl"
+_DEFAULT_DATA = _DEFAULT_DB if _DEFAULT_DB.exists() else _DEFAULT_JSONL
 
 WIN, LOSS, DRAW = "win", "loss", "draw"
 
 
 def load_rows(path: Path) -> list[dict]:
+    """Load trade decisions from SQLite .db or JSONL.
+
+    If path is a .db file, queries decisions table and deserializes the JSON 'data' column.
+    If path is a .jsonl file, reads line-delimited JSON records.
+    """
     if not path.exists():
         raise SystemExit(f"no data file at {path}")
+
+    if str(path).endswith(".db"):
+        return _load_rows_db(path)
+    else:
+        return _load_rows_jsonl(path)
+
+
+def _load_rows_db(path: Path) -> list[dict]:
+    """Load decisions from SQLite database."""
+    out = []
+    try:
+        conn = sqlite3.connect(path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT data FROM decisions WHERE outcome IS NOT NULL ORDER BY ts")
+        for (data_json,) in cursor.fetchall():
+            try:
+                out.append(json.loads(data_json))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        conn.close()
+    except sqlite3.Error as e:
+        raise SystemExit(f"error reading {path}: {e}")
+    return out
+
+
+def _load_rows_jsonl(path: Path) -> list[dict]:
+    """Load decisions from JSONL file."""
     out = []
     for ln in path.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
