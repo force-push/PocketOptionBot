@@ -284,6 +284,15 @@ def create_app() -> FastAPI:
             await broadcaster.unregister(ws)
 
     # ── static files ──────────────────────────────────────────────────────────
+
+    # Serve index.html explicitly at root to bypass FastAPI route precedence
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def serve_root() -> str:
+        index = _WEB_DIR / "index.html"
+        if index.exists():
+            return index.read_text(encoding="utf-8")
+        return _PLACEHOLDER_HTML
+
     _mount_web(app)
 
     return app
