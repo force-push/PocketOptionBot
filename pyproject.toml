@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "pocketoption-bot"
+name = "argus-sentinel"
 version = "0.1.0"
-description = "PocketOption trading bot with CDP automation"
+description = "ArgusSentinel — autonomous binary options trading bot"
 authors = ["Kym McInerney <kym@example.com>"]
 readme = "README.md"
 

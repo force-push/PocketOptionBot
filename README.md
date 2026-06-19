@@ -1,4 +1,4 @@
-# PocketOptionBot v2
+# ArgusSentinel
 
 > **⚠️ TELEGRAM INTEGRATION REMOVED (2026-06-12).** The Telethon/`po_broker_bot`
 > integration described below has been deleted from the codebase (`telegram_feed/`,

@@ -1,4 +1,4 @@
-"""Pydantic-based configuration for the PocketOption trading bot."""
+"""Pydantic-based configuration for ArgusSentinel."""
 
 from enum import StrEnum
 from pathlib import Path
