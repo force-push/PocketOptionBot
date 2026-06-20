@@ -22,6 +22,7 @@ from strategy.flip_levers import load_levers, load_levers_5s, build_flip_params
 from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter
+from strategy.martingale import MartingaleTracker
 from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
 from utils.logger import log
@@ -55,6 +56,13 @@ class StrategyManagerV2:
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
+        # Martingale stake manager — doubles stake after consecutive losses on a pair,
+        # resets on win. Off by default (MARTINGALE_ENABLED=false).
+        self._martingale = MartingaleTracker(
+            max_level=settings.martingale_max_level,
+            min_pair_wr=settings.martingale_min_pair_wr,
+            min_wr_samples=settings.martingale_min_wr_samples,
+        )
         # Sentiment collector — live crowd-positioning (0-100) per pair.
         # Attached to the WS connection after connect(); stamps every DecisionRow.
         self._sentiment = SentimentCollector()
@@ -81,6 +89,16 @@ class StrategyManagerV2:
         global _cycle_counter
         _cycle_counter += 1
         return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{_cycle_counter:04d}"
+
+    def _martingale_stake(self, pair: str, balance: float) -> float:
+        """Return Martingale-adjusted stake for this pair, or base stake if disabled/gated."""
+        if not settings.martingale_enabled:
+            return settings.stake_amount
+        pair_wr, n_wr = self._tracker.pair_rate(pair)
+        return self._martingale.get_stake(
+            pair, settings.stake_amount, pair_wr, n_wr,
+            balance, settings.min_balance_multiplier,
+        )
 
     def _next_profitable_hour(self) -> tuple[int, int, float]:
         """Calculate next profitable trading hour, minutes until it arrives, and its WR.
@@ -578,8 +596,11 @@ class StrategyManagerV2:
             balance_at_placement = await self._api.balance()
             row.balance_before = balance_at_placement
 
+            actual_stake = self._martingale_stake(pair_api, balance_at_placement or 0)
+            row.stake = actual_stake
+
             api_call = self._api.buy if conf.direction == "CALL" else self._api.sell
-            trade = await api_call(pair_api, settings.stake_amount, expiry)
+            trade = await api_call(pair_api, actual_stake, expiry)
             row.trade_id = getattr(trade, "trade_id", None)
             row.status = getattr(trade, "status", "PENDING")
 
@@ -591,7 +612,7 @@ class StrategyManagerV2:
                 _now = datetime.now(timezone.utc)
                 self._bridge.trade_opened({
                     "trade_id": row.trade_id, "pair_raw": pair_api, "pair_api": pair_api,
-                    "dir": conf.direction, "stake": settings.stake_amount,
+                    "dir": conf.direction, "stake": actual_stake,
                     "entry": getattr(trade, "entry", None),
                     "opened_at": _now.isoformat(),
                     "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
@@ -601,7 +622,7 @@ class StrategyManagerV2:
                 })
             log.info(
                 "[{}] TRADE {}  {}  @{:.2f}  exp={}s  payout={}%  prob={:.2f}  id={}",
-                cid, conf.direction, pair_api, settings.stake_amount,
+                cid, conf.direction, pair_api, actual_stake,
                 expiry, payout_pct, d.combined_probability, row.trade_id,
             )
             trades_placed += 1
@@ -787,6 +808,7 @@ class StrategyManagerV2:
                 if ev < settings.min_expected_value:
                     self._open_trade_count = max(0, self._open_trade_count - 1)
                     return False
+            actual_stake = self._martingale_stake(pair_api, balance or 0)
             row = DecisionRow(
                 cycle_id=cid, pair_raw=pair_api, pair_api=pair_api,
                 bot_win_rate=tracked_rate, bot_is_top_pick=False,
@@ -795,25 +817,25 @@ class StrategyManagerV2:
                 our_signal_breakdown={}, agreement=True,
                 combined_probability=tracked_rate, expiry_seconds=expiry,
                 decision="TRADE", skip_reason=None,
-                stake=settings.stake_amount, balance_before=balance,
+                stake=actual_stake, balance_before=balance,
                 payout_pct=payout_pct, sentiment=None,
                 flip_metrics=flip_metrics, flip_levers=flip_levers,
             )
             api_call = self._api.buy if direction == "CALL" else self._api.sell
-            trade = await api_call(pair_api, settings.stake_amount, expiry)
+            trade = await api_call(pair_api, actual_stake, expiry)
             row.trade_id = getattr(trade, "trade_id", None)
             row.status = getattr(trade, "status", "PENDING")
             if row.status in ("ERROR", "DRY_RUN") or not row.trade_id:
                 self._open_trade_count = max(0, self._open_trade_count - 1)
             write_decision(log_path, row)
             log.info("[{}] STREAM-FLIP {}  {}  @{:.2f}  exp={}s  payout={}%  id={}",
-                     cid, direction, pair_api, settings.stake_amount, expiry, payout_pct, row.trade_id)
+                     cid, direction, pair_api, actual_stake, expiry, payout_pct, row.trade_id)
             if row.trade_id and row.status not in ("ERROR", "DRY_RUN"):
                 if self._bridge:
                     _now = datetime.now(timezone.utc)
                     self._bridge.trade_opened({
                         "trade_id": row.trade_id, "pair_raw": pair_api, "pair_api": pair_api,
-                        "dir": direction, "stake": settings.stake_amount,
+                        "dir": direction, "stake": actual_stake,
                         "opened_at": _now.isoformat(),
                         "expiry_at": (_now + timedelta(seconds=expiry)).isoformat(),
                         "expiry_seconds": expiry,
@@ -974,6 +996,9 @@ class StrategyManagerV2:
                             "PERF-COOLDOWN triggered for {} — benched 12h (rolling WR below threshold)",
                             row.pair_api,
                         )
+                    # Martingale streak update (real trades only, never shadows)
+                    if settings.martingale_enabled:
+                        self._martingale.record_outcome(row.pair_api, is_win)
 
             # Notify dashboard with complete resolved data
             if self._bridge:
