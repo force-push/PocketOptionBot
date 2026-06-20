@@ -180,6 +180,18 @@ FIELDS: list[_F] = [
        "Min WR Samples", "number",
        hint="Require this many resolved trades on a pair before scaling applies",
        step=1, min=1, max=100),
+    _F("MARTINGALE_MIN_SESSION_TRADES", "martingale_min_session_trades", "Martingale", "int", False, False,
+       "Min Session Trades", "number",
+       hint="Require this many resolved trades on a pair this session before doubling (0 = off). Prevents Martingale on freshly-seen pairs.",
+       step=1, min=0, max=50),
+    _F("MARTINGALE_FAST_WR_WINDOW_HOURS", "martingale_fast_wr_window_hours", "Martingale", "float", False, False,
+       "Fast WR Window (h)", "number",
+       hint="Recent pair WR lookback used for Martingale gating; set 0 to disable this window",
+       step=0.25, min=0.0, max=24.0),
+    _F("MARTINGALE_SLOW_WR_WINDOW_HOURS", "martingale_slow_wr_window_hours", "Martingale", "float", False, False,
+       "Slow WR Window (h)", "number",
+       hint="Broader pair WR lookback used with the fast window; Martingale uses the weaker WR",
+       step=0.5, min=0.0, max=168.0),
 ]
 
 _BY_ENV = {f.env: f for f in FIELDS}

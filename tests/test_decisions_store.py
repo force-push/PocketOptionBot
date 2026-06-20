@@ -127,6 +127,26 @@ def test_records_since(db):
     assert [r["trade_id"] for r in recs] == ["new"]
 
 
+def test_rolling_pair_rate_filters_pair_window_and_shadow(db):
+    store.insert_decision(db, _row(trade_id="old", outcome="win", ts="2026-06-13T08:00:00+00:00"), clock=1.0)
+    store.insert_decision(db, _row(trade_id="w", outcome="win", ts="2026-06-13T10:00:00+00:00"), clock=2.0)
+    store.insert_decision(db, _row(trade_id="l", outcome="loss", ts="2026-06-13T10:01:00+00:00"), clock=3.0)
+    store.insert_decision(db, _row(trade_id="d", outcome="draw", ts="2026-06-13T10:02:00+00:00"), clock=4.0)
+    store.insert_decision(db, _row(trade_id="s", outcome="win", shadow=True, ts="2026-06-13T10:03:00+00:00"), clock=5.0)
+    store.insert_decision(db, _row(trade_id="other", pair_api="AUDUSD_otc", outcome="loss", ts="2026-06-13T10:04:00+00:00"), clock=6.0)
+    store.insert_decision(db, _row(trade_id="pending", outcome=None, ts="2026-06-13T10:05:00+00:00"), clock=7.0)
+
+    wr, n = store.rolling_pair_rate(
+        db,
+        "EURUSD_otc",
+        since_iso="2026-06-13T09:00:00+00:00",
+        before_iso="2026-06-13T11:00:00+00:00",
+    )
+
+    assert n == 3
+    assert wr == pytest.approx(2 / 3)
+
+
 def test_incremental_cache_picks_up_inserts(db):
     store.insert_decision(db, _row(trade_id="T0"), clock=1.0)
     assert len(store.all_records(db, clock=2.0)) == 1

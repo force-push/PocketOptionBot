@@ -58,6 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_decisions_trade     ON decisions(trade_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_shadow_ts ON decisions(shadow, ts);
 CREATE INDEX IF NOT EXISTS idx_decisions_cycle     ON decisions(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_updated   ON decisions(updated_at);
+CREATE INDEX IF NOT EXISTS idx_decisions_pair_ts   ON decisions(pair_api, ts);
 """
 
 
@@ -236,6 +237,41 @@ def find_by_cycle_id(path: str | Path, cycle_id: str) -> Optional[dict]:
             (cycle_id,),
         ).fetchone()
     return json.loads(r["data"]) if r else None
+
+
+def rolling_pair_rate(
+    path: str | Path,
+    pair: str,
+    *,
+    since_iso: str,
+    before_iso: str,
+) -> tuple[float, int]:
+    """Return recent non-shadow pair WR over ``[since_iso, before_iso)``.
+
+    Draws count as non-losses, matching WinRateTracker.rate/pair_rate semantics.
+    Pending trades, skips, and shadow rows are excluded.
+    """
+    if not pair or not Path(path).exists():
+        return 0.0, 0
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN outcome IN ('win', 'draw') THEN 1 ELSE 0 END) AS non_losses
+            FROM decisions
+            WHERE pair_api = ?
+              AND shadow = 0
+              AND outcome IN ('win', 'loss', 'draw')
+              AND ts >= ?
+              AND ts < ?
+            """,
+            (pair, since_iso, before_iso),
+        ).fetchone()
+    n = int(row["n"] or 0) if row else 0
+    if n == 0:
+        return 0.0, 0
+    return float(row["non_losses"] or 0) / n, n
 
 
 # ── full load (incremental in-process cache) ─────────────────────────────────

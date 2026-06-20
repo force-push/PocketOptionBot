@@ -28,7 +28,8 @@ class MartingaleTracker:
     """
 
     def __init__(self) -> None:
-        self._streak: dict[str, int] = {}  # pair → consecutive loss count
+        self._streak: dict[str, int] = {}         # pair → consecutive loss count
+        self._session_trades: dict[str, int] = {}  # pair → resolved trades this session
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ class MartingaleTracker:
         max_level: int = 2,
         min_pair_wr: float = 0.521,
         min_wr_samples: int = 10,
+        min_session_trades: int = 3,
     ) -> float:
         """Return the stake for this pair's next trade.
 
@@ -53,6 +55,15 @@ class MartingaleTracker:
         """
         level = min(self._streak.get(pair, 0), max_level)
         if level == 0:
+            return base_stake
+
+        # Gate: pair must have enough resolved trades this session before doubling
+        session_n = self._session_trades.get(pair, 0)
+        if session_n < min_session_trades:
+            log.debug(
+                "Martingale {}: level={} but session gate failed ({}/{} trades) — using base",
+                pair, level, session_n, min_session_trades,
+            )
             return base_stake
 
         # Gate: only scale on confirmed positive-EV pairs
@@ -82,7 +93,8 @@ class MartingaleTracker:
         return scaled
 
     def record_outcome(self, pair: str, is_win: bool, *, max_level: int = 2, multiplier: float = 2.0) -> None:
-        """Update the streak for this pair after a resolved trade."""
+        """Update the streak and session trade count for this pair after a resolved trade."""
+        self._session_trades[pair] = self._session_trades.get(pair, 0) + 1
         if is_win:
             if pair in self._streak:
                 log.info("Martingale {}: WIN — streak reset (was level {})", pair, self._streak[pair])

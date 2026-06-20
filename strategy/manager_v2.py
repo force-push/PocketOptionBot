@@ -92,7 +92,7 @@ class StrategyManagerV2:
         so dashboard edits hot-reload without a bot restart."""
         if not settings.martingale_enabled:
             return settings.stake_amount
-        pair_wr, n_wr = self._tracker.pair_rate(pair)
+        pair_wr, n_wr = self._martingale_pair_rate(pair)
         return self._martingale.get_stake(
             pair, settings.stake_amount, pair_wr, n_wr,
             balance, settings.min_balance_multiplier,
@@ -100,7 +100,51 @@ class StrategyManagerV2:
             max_level=settings.martingale_max_level,
             min_pair_wr=settings.martingale_min_pair_wr,
             min_wr_samples=settings.martingale_min_wr_samples,
+            min_session_trades=settings.martingale_min_session_trades,
         )
+
+    def _martingale_pair_rate(self, pair: str) -> tuple[float, int]:
+        """Recent pair WR for Martingale gating.
+
+        Uses DB-backed rolling windows because the in-memory/JSON tracker is
+        lifetime-ish state and can stay optimistic after a pair turns cold.
+        When both windows are enabled, use the weaker WR and weaker sample count.
+        """
+        windows = [
+            float(getattr(settings, "martingale_fast_wr_window_hours", 0.0) or 0.0),
+            float(getattr(settings, "martingale_slow_wr_window_hours", 0.0) or 0.0),
+        ]
+        windows = [w for w in windows if w > 0]
+        if not windows:
+            return self._tracker.pair_rate(pair)
+
+        now = datetime.now(timezone.utc)
+        rates: list[tuple[float, int, float]] = []
+        try:
+            from data.decisions_store import rolling_pair_rate
+            for hours in windows:
+                since = (now - timedelta(hours=hours)).isoformat()
+                wr, n = rolling_pair_rate(
+                    settings.decisions_db_path,
+                    pair,
+                    since_iso=since,
+                    before_iso=now.isoformat(),
+                )
+                rates.append((wr, n, hours))
+        except Exception as exc:
+            log.warning("Martingale {}: rolling WR lookup failed: {} — using tracker fallback", pair, exc)
+            return self._tracker.pair_rate(pair)
+
+        if not rates:
+            return self._tracker.pair_rate(pair)
+        pair_wr = min(wr for wr, _, _ in rates)
+        n_wr = min(n for _, n, _ in rates)
+        log.debug(
+            "Martingale {} rolling WR gate: {}",
+            pair,
+            ", ".join(f"{hours:g}h={wr:.1%}/n={n}" for wr, n, hours in rates),
+        )
+        return pair_wr, n_wr
 
     def _next_profitable_hour(self) -> tuple[int, int, float]:
         """Calculate next profitable trading hour, minutes until it arrives, and its WR.

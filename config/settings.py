@@ -111,6 +111,9 @@ class BotSettings(BaseSettings):
     martingale_max_level: int = Field(default=2, alias="MARTINGALE_MAX_LEVEL", ge=1, le=6)
     martingale_min_pair_wr: float = Field(default=0.521, alias="MARTINGALE_MIN_PAIR_WR", ge=0.0, le=1.0)
     martingale_min_wr_samples: int = Field(default=10, alias="MARTINGALE_MIN_WR_SAMPLES", ge=1)
+    martingale_min_session_trades: int = Field(default=3, alias="MARTINGALE_MIN_SESSION_TRADES", ge=0)
+    martingale_fast_wr_window_hours: float = Field(default=1.0, alias="MARTINGALE_FAST_WR_WINDOW_HOURS", ge=0.0)
+    martingale_slow_wr_window_hours: float = Field(default=6.0, alias="MARTINGALE_SLOW_WR_WINDOW_HOURS", ge=0.0)
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
     # SQLite decision store — the live data path (fast INSERT/UPDATE, indexed
     # reads). Replaces append-and-rewrite of decisions.jsonl, which became O(N²)

@@ -3,8 +3,9 @@
 import pytest
 from strategy.martingale import MartingaleTracker
 
-# Default call-time params matching .env defaults
-_DEFAULTS = dict(multiplier=2.0, max_level=2, min_pair_wr=0.521, min_wr_samples=10)
+# Default call-time params matching .env defaults; min_session_trades=0 disables
+# the session gate so pre-existing tests remain unaffected by the new gate.
+_DEFAULTS = dict(multiplier=2.0, max_level=2, min_pair_wr=0.521, min_wr_samples=10, min_session_trades=0)
 # Subset for record_outcome (only takes max_level + multiplier)
 _RO = dict(max_level=2, multiplier=2.0)
 
@@ -161,3 +162,51 @@ def test_state_after_reset(tracker):
     tracker.record_outcome("PAIR", False, **_RO)
     tracker.record_outcome("PAIR", True, **_RO)
     assert tracker.state() == {}
+
+
+# ── session trades gate ───────────────────────────────────────────────────────
+
+def _stake_sess(t, pair, base=1.0, wr=0.60, n=50, bal=1000, mult=5, **kw):
+    """Helper with session gate enabled (min_session_trades=3)."""
+    params = {**_DEFAULTS, "min_session_trades": 3, **kw}
+    return t.get_stake(pair, base, wr, n, bal, mult, **params)
+
+
+def test_session_gate_blocks_before_threshold(tracker):
+    # 2 resolved trades on PAIR but min=3 — should return base
+    tracker.record_outcome("PAIR", False, **_RO)
+    tracker.record_outcome("PAIR", True, **_RO)
+    assert _stake_sess(tracker, "PAIR") == 1.0
+
+
+def test_session_gate_allows_at_threshold(tracker):
+    # 3 resolved trades + a loss streak → should scale
+    tracker.record_outcome("PAIR", True, **_RO)
+    tracker.record_outcome("PAIR", True, **_RO)
+    tracker.record_outcome("PAIR", False, **_RO)  # 3rd trade, also a loss → streak=1
+    assert _stake_sess(tracker, "PAIR", min_pair_wr=0.0) == 2.0
+
+
+def test_session_gate_zero_disables(tracker):
+    # min_session_trades=0 means always allowed (backward compat)
+    tracker.record_outcome("PAIR", False, **_RO)  # only 1 trade
+    result = _stake_sess(tracker, "PAIR", min_session_trades=0, min_pair_wr=0.0)
+    assert result == 2.0
+
+
+def test_session_trades_count_wins_and_losses(tracker):
+    # Wins count toward session total even though they reset the streak
+    tracker.record_outcome("PAIR", True, **_RO)
+    tracker.record_outcome("PAIR", True, **_RO)
+    tracker.record_outcome("PAIR", False, **_RO)  # 3 total, streak=1
+    assert _stake_sess(tracker, "PAIR", min_pair_wr=0.0) == 2.0
+
+
+def test_session_gate_independent_per_pair(tracker):
+    # Pair A has 3 session trades, Pair B has 1 — only A should double
+    tracker.record_outcome("A", True, **_RO)
+    tracker.record_outcome("A", True, **_RO)
+    tracker.record_outcome("A", False, **_RO)  # streak=1
+    tracker.record_outcome("B", False, **_RO)  # only 1 session trade
+    assert _stake_sess(tracker, "A", min_pair_wr=0.0) == 2.0
+    assert _stake_sess(tracker, "B", min_pair_wr=0.0) == 1.0
