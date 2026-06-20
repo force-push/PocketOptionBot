@@ -39,12 +39,12 @@ else
 fi
 
 echo "▸ installing dashboard dependencies …"
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements-dashboard.txt
+"$PYTHON" -m pip install --quiet --upgrade pip
+"$PYTHON" -m pip install --quiet -r requirements-dashboard.txt
 
 if [ "${1:-}" != "--no-seed" ]; then
   echo "▸ seeding synthetic demo data (data/decisions.jsonl, data/live_state.json) …"
-  python tools/dashboard_demo.py
+  "$PYTHON" tools/dashboard_demo.py
 fi
 
 PORT="${DASHBOARD_PORT:-8787}"

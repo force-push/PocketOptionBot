@@ -92,19 +92,22 @@ SELECTORS = {
             return el ? { exists: true, clickable: !el.disabled, text: el.textContent.trim() } : null;
         })()"""
     },
-    # Demo mode indicator
+    # Demo mode indicator — only check account-type UI elements, not all DOM text
     "demo_mode": {
         "css": "[class*='demo'], [class*='practice'], [data-testid='demo-mode']",
         "js": """(() => {
-            // Check for demo mode indicators
-            const demoEl = document.querySelector('[class*="demo"], [class*="practice"]')
-                            || document.querySelector('[data-testid="demo-mode"]');
-            if (demoEl) return true;
-            // Check for "Demo" text in the balance/account area
+            // Only check specific account-type indicators, never full DOM text scan
+            if (document.querySelector('[data-testid="demo-mode"]')) return true;
+            // Balance block with explicit "Demo" label (not just any text containing "demo")
             const balanceBlock = document.querySelector('.balance-info-block');
-            if (balanceBlock && balanceBlock.textContent.toLowerCase().includes('demo')) return true;
-            const texts = Array.from(document.querySelectorAll('*')).map(el => el.textContent).filter(Boolean);
-            return texts.some(t => t.toLowerCase().includes('demo'));
+            if (balanceBlock) {
+                const label = balanceBlock.querySelector('.balance-info-block__title, [class*="label"], [class*="type"]');
+                if (label && /^demo$/i.test(label.textContent.trim())) return true;
+            }
+            // Account switcher / header badge
+            const accountType = document.querySelector('[class*="account-type"], [class*="account__type"], [class*="badge--demo"]');
+            if (accountType && /demo|practice/i.test(accountType.textContent)) return true;
+            return false;
         })()"""
     },
 }
@@ -129,17 +132,31 @@ _BALANCE_RE = re.compile(r"[\d,.]+(?:\s*[A-Z]{3})?")
 def _extract_float(text: str) -> float | None:
     if not text:
         return None
-    # Remove currency symbols, spaces
-    cleaned = re.sub(r"[^\d.,-]", "", text.replace(" ", "").replace(",", "."))
+    cleaned = re.sub(r"[^\d.,-]", "", text.replace(" ", ""))
     if not cleaned:
         return None
     try:
+        # European format: 1.234,56 → last comma is decimal separator
+        if "," in cleaned and "." in cleaned:
+            if cleaned.rindex(",") > cleaned.rindex("."):
+                # comma is decimal: 1.234,56
+                cleaned = cleaned.replace(".", "").replace(",", ".")
+            else:
+                # dot is decimal: 1,234.56
+                cleaned = cleaned.replace(",", "")
+        elif "," in cleaned:
+            # ambiguous: treat as decimal separator (European)
+            cleaned = cleaned.replace(",", ".")
         return float(cleaned)
     except ValueError:
         return None
 
 
 def _extract_int(text: str) -> int | None:
+    # Handle MM:SS or M:SS timer format → convert to total seconds
+    m = re.search(r"(\d+):(\d+)", text)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
     match = re.search(r"\d+", text)
     if match:
         return int(match.group())
