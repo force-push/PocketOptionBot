@@ -52,4 +52,4 @@ echo ""
 echo "  ✔ dashboard ready → http://127.0.0.1:${PORT}"
 echo "    (Ctrl-C to stop)"
 echo ""
-exec python -m dashboard.server
+exec "$PYTHON" -m dashboard.server
