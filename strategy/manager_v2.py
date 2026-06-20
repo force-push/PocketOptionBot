@@ -56,13 +56,10 @@ class StrategyManagerV2:
         # Calibrated win-probability model. Loads the saved model if present;
         # otherwise predict() falls back to the heuristic mean (never raises).
         self._calibrator = ProbabilityCalibrator.load()
-        # Martingale stake manager — doubles stake after consecutive losses on a pair,
+        # Martingale stake manager — scales stake after consecutive losses on a pair,
         # resets on win. Off by default (MARTINGALE_ENABLED=false).
-        self._martingale = MartingaleTracker(
-            max_level=settings.martingale_max_level,
-            min_pair_wr=settings.martingale_min_pair_wr,
-            min_wr_samples=settings.martingale_min_wr_samples,
-        )
+        # Params are read from settings at call-time so dashboard edits hot-reload.
+        self._martingale = MartingaleTracker()
         # Sentiment collector — live crowd-positioning (0-100) per pair.
         # Attached to the WS connection after connect(); stamps every DecisionRow.
         self._sentiment = SentimentCollector()
@@ -91,13 +88,18 @@ class StrategyManagerV2:
         return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{_cycle_counter:04d}"
 
     def _martingale_stake(self, pair: str, balance: float) -> float:
-        """Return Martingale-adjusted stake for this pair, or base stake if disabled/gated."""
+        """Return Martingale-adjusted stake. All params read from current settings
+        so dashboard edits hot-reload without a bot restart."""
         if not settings.martingale_enabled:
             return settings.stake_amount
         pair_wr, n_wr = self._tracker.pair_rate(pair)
         return self._martingale.get_stake(
             pair, settings.stake_amount, pair_wr, n_wr,
             balance, settings.min_balance_multiplier,
+            multiplier=settings.martingale_multiplier,
+            max_level=settings.martingale_max_level,
+            min_pair_wr=settings.martingale_min_pair_wr,
+            min_wr_samples=settings.martingale_min_wr_samples,
         )
 
     def _next_profitable_hour(self) -> tuple[int, int, float]:
@@ -998,7 +1000,11 @@ class StrategyManagerV2:
                         )
                     # Martingale streak update (real trades only, never shadows)
                     if settings.martingale_enabled:
-                        self._martingale.record_outcome(row.pair_api, is_win)
+                        self._martingale.record_outcome(
+                            row.pair_api, is_win,
+                            max_level=settings.martingale_max_level,
+                            multiplier=settings.martingale_multiplier,
+                        )
 
             # Notify dashboard with complete resolved data
             if self._bridge:

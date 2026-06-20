@@ -27,7 +27,7 @@ import sys
 import time
 from pathlib import Path
 
-from config.settings import settings, TradeMode
+from config.settings import settings, reload_settings, TradeMode
 from utils.logger import log, setup_logger
 
 # Liveness heartbeat: the main loop rewrites this at the end of every cycle, so
@@ -42,6 +42,40 @@ def _touch_heartbeat() -> None:
         _HEARTBEAT_PATH.write_text(str(time.time()))
     except Exception:  # never let heartbeat I/O disrupt trading
         pass
+
+
+_ENV_PATH = Path(".env")
+_env_mtime: float = 0.0
+
+
+async def _watch_env(interval: float = 10.0) -> None:
+    """Background task: reload settings when .env changes on disk.
+
+    Runs forever alongside the main bot loop. Detects dashboard edits and
+    applies them in-place without a restart. Interval default is 10s —
+    low enough to feel responsive, high enough to be invisible overhead.
+    """
+    global _env_mtime
+    try:
+        _env_mtime = _ENV_PATH.stat().st_mtime
+    except FileNotFoundError:
+        pass
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            mtime = _ENV_PATH.stat().st_mtime
+            if mtime != _env_mtime:
+                _env_mtime = mtime
+                reload_settings()
+                log.info("⚙  .env changed — settings reloaded (martingale: enabled={} "
+                         "multiplier={} max_level={})",
+                         settings.martingale_enabled,
+                         settings.martingale_multiplier,
+                         settings.martingale_max_level)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            log.warning("env watcher error (ignored): {}", exc)
 
 # ── setup_logger must be called once before any use of `log` ─────────────────
 import pathlib
@@ -226,6 +260,9 @@ async def main(cycles: int = 0) -> None:
         asyncio.ensure_future(_seed_win_rates())
     else:
         log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
+
+    # Settings hot-reload: watch .env for changes (dashboard edits) every 10s
+    asyncio.ensure_future(_watch_env())
 
     count = 0
     consecutive_timeouts = 0

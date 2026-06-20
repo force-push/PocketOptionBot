@@ -101,12 +101,14 @@ class BotSettings(BaseSettings):
     # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
     min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
-    # Martingale: after N consecutive losses on a pair, double the stake for the
-    # next trade on that pair. Resets to base_stake on a win. Gated on the pair's
+    # Martingale: after N consecutive losses on a pair, scale the stake on the
+    # next trade for that pair. Resets to base_stake on a win. Gated on the pair's
     # live WR being above break-even so we only chase recoverable sequences.
+    # All params are hot-reloadable — dashboard edits take effect immediately.
     # Default off — enable only after validating base strategy in demo.
     martingale_enabled: bool = Field(default=False, alias="MARTINGALE_ENABLED")
-    martingale_max_level: int = Field(default=3, alias="MARTINGALE_MAX_LEVEL", ge=1, le=6)
+    martingale_multiplier: float = Field(default=2.0, alias="MARTINGALE_MULTIPLIER", ge=1.1, le=4.0)
+    martingale_max_level: int = Field(default=2, alias="MARTINGALE_MAX_LEVEL", ge=1, le=6)
     martingale_min_pair_wr: float = Field(default=0.521, alias="MARTINGALE_MIN_PAIR_WR", ge=0.0, le=1.0)
     martingale_min_wr_samples: int = Field(default=10, alias="MARTINGALE_MIN_WR_SAMPLES", ge=1)
     decisions_log_path: str = Field(default="data/decisions.jsonl", alias="DECISIONS_LOG_PATH")
@@ -340,3 +342,19 @@ class BotSettings(BaseSettings):
 
 # Global singleton for convenience (import once)
 settings = BotSettings()
+
+
+def reload_settings() -> None:
+    """Re-read .env and mutate the singleton in-place.
+
+    All code that reads ``settings.<attr>`` at call-time (not at import-time)
+    will see the updated values immediately — no restart needed.
+    Called by the background env-watcher when .env mtime changes.
+    """
+    try:
+        fresh = BotSettings()
+        for field_name in BotSettings.model_fields:
+            object.__setattr__(settings, field_name, getattr(fresh, field_name))
+    except Exception as exc:  # never crash the bot on a bad .env edit
+        from utils.logger import log
+        log.warning("settings reload failed (keeping current values): {}", exc)

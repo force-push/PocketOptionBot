@@ -68,8 +68,10 @@ GROUP_META: dict[str, dict] = {
                     "subtitle": "Payout floor · EV gate · cold-start bypass", "order": 3},
     "Risk": {"id": "risk", "title": "Risk Manager", "icon": "⚖️",
              "subtitle": "Hard limits & cooldowns", "order": 4},
+    "Martingale": {"id": "martingale", "title": "Martingale", "icon": "🎲",
+                   "subtitle": "Stake scaling on loss streaks — all fields hot-reload without restart", "order": 5},
     "PocketOption WS": {"id": "pocketoption", "title": "PocketOption WS", "icon": "📡",
-                        "subtitle": "Trading-terminal auth frame", "order": 5},
+                        "subtitle": "Trading-terminal auth frame", "order": 6},
 }
 
 
@@ -158,6 +160,26 @@ FIELDS: list[_F] = [
        "Post-Loss Cooldown (s)", "number", step=5),
     _F("MIN_BALANCE_MULTIPLIER", "min_balance_multiplier", "Risk", "float", False, True,
        "Min Balance Multiplier", "number", step=1),
+    # Martingale — all hot-reload (requires_restart=False); bot picks up changes within 10s
+    _F("MARTINGALE_ENABLED", "martingale_enabled", "Martingale", "bool", False, False,
+       "Enabled", "toggle",
+       hint="Scale stake after consecutive losses on a pair; resets on any win"),
+    _F("MARTINGALE_MULTIPLIER", "martingale_multiplier", "Martingale", "float", False, False,
+       "Multiplier", "number",
+       hint="Stake multiplier per loss level (e.g. 2.0 = double, 2.2 = 2.2× each level)",
+       step=0.1, min=1.1, max=4.0),
+    _F("MARTINGALE_MAX_LEVEL", "martingale_max_level", "Martingale", "int", False, False,
+       "Max Level", "number",
+       hint="Maximum doublings before stake is capped (e.g. level 2 at 2× = 4× base)",
+       step=1, min=1, max=6),
+    _F("MARTINGALE_MIN_PAIR_WR", "martingale_min_pair_wr", "Martingale", "float", False, False,
+       "Min Pair WR", "number",
+       hint="Only scale on pairs whose live WR exceeds this (0.521 = break-even at 92% payout)",
+       step=0.01, min=0.0, max=1.0),
+    _F("MARTINGALE_MIN_WR_SAMPLES", "martingale_min_wr_samples", "Martingale", "int", False, False,
+       "Min WR Samples", "number",
+       hint="Require this many resolved trades on a pair before scaling applies",
+       step=1, min=1, max=100),
 ]
 
 _BY_ENV = {f.env: f for f in FIELDS}
