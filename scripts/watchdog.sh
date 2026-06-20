@@ -23,6 +23,7 @@ BOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$BOT_DIR/logs"
 WATCHDOG_LOG="$LOG_DIR/watchdog.log"
 PID_FILE="$LOG_DIR/watchdog.pid"
+BOT_PID_FILE="$LOG_DIR/bot.pid"
 PYTHON="$BOT_DIR/.venv/bin/python3"
 ENTRY="$BOT_DIR/main_v2.py"
 
@@ -39,38 +40,68 @@ log() {
     echo "[$ts] $*" | tee -a "$WATCHDOG_LOG"
 }
 
+# Kill a process and wait up to TIMEOUT seconds for it to die
+kill_and_wait() {
+    local pid="$1" timeout="${2:-10}" label="${3:-process}"
+    [[ -z "$pid" ]] && return 0
+    kill "$pid" 2>/dev/null || return 0
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        (( i++ >= timeout )) && { log "WARN: $label PID $pid still alive after ${timeout}s, sending SIGKILL"; kill -9 "$pid" 2>/dev/null || true; break; }
+        sleep 1
+    done
+}
+
 cleanup() {
-    log "Watchdog stopping (signal received). Killing bot PID ${BOT_PID:-none}."
-    [[ -n "${BOT_PID:-}" ]] && kill "$BOT_PID" 2>/dev/null || true
-    rm -f "$PID_FILE"
+    log "Watchdog stopping (signal received). Killing bot PID ${PYTHON_PID:-none}."
+    kill_and_wait "${PYTHON_PID:-}" 10 "bot"
+    rm -f "$PID_FILE" "$BOT_PID_FILE"
     exit 0
 }
 trap cleanup INT TERM
 
+# Kill any stale bot instances from prior watchdog sessions
 log "=== Watchdog started (PID $$, bot: $ENTRY) ==="
+stale=$(pgrep -f "python.*main_v2\.py" 2>/dev/null || true)
+if [[ -n "$stale" ]]; then
+    log "Killing stale bot instance(s): $stale"
+    echo "$stale" | xargs kill 2>/dev/null || true
+    sleep 3
+fi
 
 backoff=10
 crash_window_start=0
 crashes_in_window=0
-BOT_PID=""
+PYTHON_PID=""
+TEE_PID=""
 
 while true; do
     start_ts=$(date +%s)
     log "Starting bot…"
 
-    # Run bot; tee output so it still goes to the normal bot log path
-    "$PYTHON" "$ENTRY" 2>&1 | tee -a "$LOG_DIR/bot.log" &
-    BOT_PID=$!
-    wait "$BOT_PID" || true
+    # Run bot; capture Python PID separately from tee
+    "$PYTHON" "$ENTRY" > >(tee -a "$LOG_DIR/bot.log") 2>&1 &
+    PYTHON_PID=$!
+    echo "$PYTHON_PID" > "$BOT_PID_FILE"
+    wait "$PYTHON_PID" || true
     exit_code=$?
-    BOT_PID=""
+    rm -f "$BOT_PID_FILE"
+    PYTHON_PID=""
 
     end_ts=$(date +%s)
     run_secs=$(( end_ts - start_ts ))
 
     log "Bot exited (code=$exit_code, ran ${run_secs}s)."
 
-    [[ "$ONCE" == "--once" ]] && { log "--once flag set, exiting."; rm -f "$PID_FILE"; exit 0; }
+    # Ensure no orphaned bot processes remain before restarting
+    orphans=$(pgrep -f "python.*main_v2\.py" 2>/dev/null || true)
+    if [[ -n "$orphans" ]]; then
+        log "Killing orphaned bot process(es): $orphans"
+        echo "$orphans" | xargs kill 2>/dev/null || true
+        sleep 2
+    fi
+
+    [[ "$ONCE" == "--once" ]] && { log "--once flag set, exiting."; rm -f "$PID_FILE" "$BOT_PID_FILE"; exit 0; }
 
     # Reset backoff if bot ran cleanly for a while
     if (( run_secs >= BACKOFF_RESET_SECS )); then
