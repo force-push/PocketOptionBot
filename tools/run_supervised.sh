@@ -22,6 +22,12 @@ cd "$(dirname "$0")/.." || exit 1
 STALE_SECS=${STALE_SECS:-300}
 MAX_RUN_SECONDS=${MAX_RUN_SECONDS:-21600}
 MAX_LOG_MB=${MAX_LOG_MB:-100}
+
+# Cap the tokio (Rust async runtime) worker thread pool.  Default is
+# num_cpus * 2 which on a 4-core Mac is 8, but observed crashes showed
+# 37 tokio threads due to thread-pool exhaustion from concurrent WS
+# connections.  4 is enough for all async I/O BinaryOptionsToolsV2 needs.
+export TOKIO_WORKER_THREADS=${TOKIO_WORKER_THREADS:-4}
 HEARTBEAT=data/heartbeat
 LOG=logs/runtime.log
 
