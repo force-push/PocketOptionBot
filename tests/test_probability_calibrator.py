@@ -52,6 +52,29 @@ def test_featurize_accepts_jsonl_schema():
     assert v[FEATURES.index("payout_pct")] == 0.85
 
 
+def test_featurize_accepts_signal_assessment_features():
+    rec = _rec(bot=0.564, conf=1.0)
+    rec["signal_assessment"] = {
+        "pair_recent_wr": 0.51,
+        "direction_wr": 0.564,
+        "rsi": 89.7,
+        "rsi_extreme": True,
+        "reversal_against_entry": True,
+        "stake_ratio": 4.84,
+        "martingale_escalated": True,
+    }
+
+    v = featurize(rec)
+
+    assert v[FEATURES.index("pair_recent_wr")] == pytest.approx(0.51)
+    assert v[FEATURES.index("direction_wr")] == pytest.approx(0.564)
+    assert v[FEATURES.index("rsi")] == pytest.approx(0.897)
+    assert v[FEATURES.index("rsi_extreme")] == 1.0
+    assert v[FEATURES.index("reversal_against_entry")] == 1.0
+    assert v[FEATURES.index("stake_ratio")] == pytest.approx(4.84)
+    assert v[FEATURES.index("martingale_escalated")] == 1.0
+
+
 def test_unfitted_predict_falls_back_to_heuristic():
     cal = ProbabilityCalibrator(model=None)
     assert not cal.is_ready

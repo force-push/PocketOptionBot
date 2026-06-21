@@ -175,9 +175,8 @@ def create_app() -> FastAPI:
         return build_state_snapshot()
 
     @app.get("/api/history")
-    def get_history(limit: int = Query(100, ge=0, le=2000),
+    def get_history(limit: int = Query(200, ge=0, le=5000),
                     before: Optional[str] = Query(None)) -> Any:
-        # Targeted query: fetch only the page we need, not the whole table.
         records = store.recent_decisions(_decisions_db_path(), limit=limit, before=before)
         rows = analytics.history(records, limit=limit, before=before)
         next_before = rows[-1]["ts"] if rows and len(rows) >= limit and limit > 0 else None

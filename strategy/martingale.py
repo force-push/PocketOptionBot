@@ -100,12 +100,64 @@ class MartingaleTracker:
                 log.info("Martingale {}: WIN — streak reset (was level {})", pair, self._streak[pair])
                 del self._streak[pair]
         else:
-            self._streak[pair] = self._streak.get(pair, 0) + 1
-            level = min(self._streak[pair], max_level)
-            log.info(
-                "Martingale {}: LOSS — streak={} (level={}, next stake {:.2g}× base)",
-                pair, self._streak[pair], level, multiplier ** level,
-            )
+            current = self._streak.get(pair, 0)
+            if current >= max_level:
+                # Already at max level and lost again — reset rather than staying capped.
+                # Keeping max-level stake indefinitely on a losing pair compounds damage.
+                del self._streak[pair]
+                log.info(
+                    "Martingale {}: LOSS at max level {} — RESET to base (streak was {})",
+                    pair, max_level, current,
+                )
+            else:
+                self._streak[pair] = current + 1
+                level = min(self._streak[pair], max_level)
+                log.info(
+                    "Martingale {}: LOSS — streak={} (level={}, next stake {:.2g}× base)",
+                    pair, self._streak[pair], level, multiplier ** level,
+                )
+
+    def seed_from_db(self, db_path: str, *, max_level: int = 2, lookback_hours: float = 6.0) -> None:
+        """Reconstruct loss streaks and session counts from the decisions DB.
+
+        Called on startup so a restart after a crash/reconnect picks up where the
+        bot left off rather than starting every pair at level 0.
+
+        For each pair: walk the most-recent resolved trades (newest-first) and
+        count consecutive tail losses — that becomes the restored streak.
+        Session trade count is set to the total resolved trades in the window.
+        """
+        from datetime import datetime, timezone, timedelta
+        from data.decisions_store import tail_outcomes_by_pair
+
+        since = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        try:
+            tails = tail_outcomes_by_pair(db_path, since_iso=since, max_per_pair=max_level + 2)
+        except Exception as exc:
+            log.warning("MartingaleTracker.seed_from_db failed — starting fresh: {}", exc)
+            return
+
+        restored = 0
+        for pair, outcomes in tails.items():  # outcomes = newest-first
+            self._session_trades[pair] = len(outcomes)
+            streak = 0
+            for outcome in outcomes:  # newest → oldest
+                if outcome == "loss":
+                    streak += 1
+                else:
+                    break  # hit a win/draw — streak resets here
+            if streak:
+                self._streak[pair] = min(streak, max_level)
+                restored += 1
+
+        log.info(
+            "MartingaleTracker seeded from DB ({:.0f}h lookback): {} pairs with active streaks — {}",
+            lookback_hours,
+            restored,
+            {p: v for p, v in self._streak.items()},
+        )
 
     def current_level(self, pair: str, *, max_level: int = 2) -> int:
         return min(self._streak.get(pair, 0), max_level)

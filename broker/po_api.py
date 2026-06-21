@@ -109,7 +109,15 @@ class PocketOptionAPIClient:
     # ── connection ───────────────────────────────────────────────────────────
 
     async def connect(self) -> None:
-        """Instantiate and connect the underlying API client."""
+        """Instantiate and connect the underlying API client.
+
+        Retries with exponential backoff (5 → 10 → 20 → 40s) up to 5 attempts
+        before raising, so transient PocketOption WebSocket blips don't kill the
+        process. A fresh PocketOptionAsync instance is created on every attempt
+        because a timed-out instance is internally stale.
+        """
+        import asyncio as _asyncio
+
         if not _API_AVAILABLE:
             raise RuntimeError(
                 "binaryoptionstoolsv2 is not installed. "
@@ -119,12 +127,31 @@ class PocketOptionAPIClient:
             raise RuntimeError(
                 "PO_SSID must be set in .env before connecting to the API."
             )
-        self._client = PocketOptionAsync(self._ssid)
-        # wait_for_assets() blocks until the WebSocket handshake is complete and
-        # the server has sent the asset list. Without this, get_candles() hangs
-        # indefinitely because the Rust backend waits for initialization internally.
-        log.info("Waiting for PocketOption WebSocket assets (up to 60s)…")
-        await self._client.wait_for_assets(timeout=60.0)
+
+        _max_attempts = 5
+        _delay = 5.0
+        for _attempt in range(1, _max_attempts + 1):
+            try:
+                log.info(
+                    "Waiting for PocketOption WebSocket assets (attempt {}/{}, up to 60s)…",
+                    _attempt, _max_attempts,
+                )
+                # Re-create the client each attempt — a timed-out instance is stale.
+                self._client = PocketOptionAsync(self._ssid)
+                await self._client.wait_for_assets(timeout=60.0)
+                break  # connected — exit retry loop
+            except Exception as _exc:
+                if _attempt == _max_attempts:
+                    raise RuntimeError(
+                        f"PocketOption WebSocket failed after {_max_attempts} attempts: {_exc}"
+                    ) from _exc
+                log.warning(
+                    "WebSocket connect attempt {}/{} failed: {} — retrying in {:.0f}s",
+                    _attempt, _max_attempts, _exc, _delay,
+                )
+                await _asyncio.sleep(_delay)
+                _delay = min(_delay * 2, 60.0)
+
         # Validate SSID using API-native methods immediately after construction
         try:
             if not self._client.is_ssid_valid():

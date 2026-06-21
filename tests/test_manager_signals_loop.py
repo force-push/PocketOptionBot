@@ -2,6 +2,7 @@
 import json
 import pytest
 import asyncio
+import pandas as pd
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from strategy.manager_v2 import StrategyManagerV2
@@ -25,6 +26,14 @@ def _make_pairs(*pairs):
     return [{"symbol": sym, "payout": pct, "is_active": True} for sym, pct in pairs]
 
 
+def _strength_mgr(pair_wr, pair_n):
+    tracker = MagicMock()
+    tracker.pair_rate = MagicMock(return_value=(pair_wr, pair_n))
+    mgr = object.__new__(StrategyManagerV2)
+    mgr._tracker = tracker
+    return mgr
+
+
 def _make_manager(tmp_path, api, conf_result_by_pair=None, risk_allowed=True, monkeypatch=None, settings=None):
     from config.settings import settings as _settings
     if settings is None:
@@ -40,6 +49,8 @@ def _make_manager(tmp_path, api, conf_result_by_pair=None, risk_allowed=True, mo
         monkeypatch.setattr(settings, "min_signal_agreement", 1)
         monkeypatch.setattr(settings, "max_pairs_per_cycle", 0)
         monkeypatch.setattr(settings, "min_ev_samples", 100)  # disable EV gate in tests
+        monkeypatch.setattr(settings, "streaming_enabled", False)
+        monkeypatch.setattr(settings, "focus_session_enabled", False)
 
     nav = MagicMock()
     nav.start_autotrade = AsyncMock()
@@ -66,6 +77,7 @@ def _make_manager(tmp_path, api, conf_result_by_pair=None, risk_allowed=True, mo
     tracker = MagicMock()
     tracker.record = MagicMock()
     tracker.rate = MagicMock(return_value=(0.55, 0))
+    tracker.pair_rate = MagicMock(return_value=(0.55, 0))
 
     mgr = StrategyManagerV2(
         api_client=api,
@@ -74,6 +86,98 @@ def _make_manager(tmp_path, api, conf_result_by_pair=None, risk_allowed=True, mo
         tracker=tracker,
     )
     return mgr
+
+
+def test_trade_strength_blocks_marginal_overbought_reversal(monkeypatch):
+    """USDEGP-style case: marginal pair, CALL into RSI extreme, reversal, level-2 stake."""
+    monkeypatch.setattr(settings, "stake_amount", 1.5)
+    monkeypatch.setattr(settings, "min_expected_value", 0.0)
+    mgr = _strength_mgr(pair_wr=0.51, pair_n=100)
+    df = pd.DataFrame([
+        {"o": 1.00, "c": 1.02},
+        {"o": 1.02, "c": 1.01},
+    ])
+
+    strength, penalties, skip = mgr._trade_strength_adjustment(
+        pair="USDEGP_otc",
+        direction="CALL",
+        expiry=5,
+        payout_pct=92,
+        tracked_rate=0.564,
+        n_tracked=39,
+        flip_metrics={"rsi": 89.7},
+        df=df,
+        prospective_stake=7.26,
+    )
+
+    assert skip is True
+    assert strength < 1 / 1.92
+    assert "marginal_pair_wr=51.0%/n=100" in penalties
+    assert "soft_direction_wr=56.4%/n=39" in penalties
+    assert "rsi_extreme_against_entry=89.7" in penalties
+    assert "last_candle_reversed" in penalties
+    assert "escalated_stake=4.8x" in penalties
+
+
+def test_trade_strength_keeps_clean_strong_entry(monkeypatch):
+    monkeypatch.setattr(settings, "stake_amount", 1.5)
+    monkeypatch.setattr(settings, "min_expected_value", 0.0)
+    mgr = _strength_mgr(pair_wr=0.62, pair_n=100)
+    df = pd.DataFrame([
+        {"o": 1.00, "c": 1.01},
+        {"o": 1.01, "c": 1.03},
+    ])
+
+    strength, penalties, skip = mgr._trade_strength_adjustment(
+        pair="AUDUSD_otc",
+        direction="CALL",
+        expiry=5,
+        payout_pct=92,
+        tracked_rate=0.64,
+        n_tracked=40,
+        flip_metrics={"rsi": 63.0},
+        df=df,
+        prospective_stake=1.5,
+    )
+
+    assert skip is False
+    assert strength == pytest.approx(0.68)
+    assert penalties == []
+
+
+def test_signal_assessment_records_entry_context(monkeypatch):
+    monkeypatch.setattr(settings, "stake_amount", 1.5)
+    monkeypatch.setattr(settings, "min_expected_value", 0.0)
+    mgr = _strength_mgr(pair_wr=0.51, pair_n=100)
+    df = pd.DataFrame([
+        {"o": 1.00, "c": 1.02},
+        {"o": 1.02, "c": 1.01},
+    ])
+
+    assessment = mgr._assess_trade_signal(
+        pair="USDEGP_otc",
+        direction="CALL",
+        expiry=5,
+        payout_pct=92,
+        tracked_rate=0.564,
+        n_tracked=39,
+        flip_metrics={"rsi": 89.7},
+        df=df,
+        prospective_stake=7.26,
+        our_confluence=1.0,
+        agreeing_signals=3,
+        bot_is_top_pick=False,
+    )
+
+    assert assessment["skip"] is True
+    assert assessment["entry_probability"] < assessment["break_even_probability"]
+    assert assessment["pair_recent_wr"] == pytest.approx(0.51)
+    assert assessment["direction_wr"] == pytest.approx(0.564)
+    assert assessment["rsi_extreme"] is True
+    assert assessment["reversal_against_entry"] is True
+    assert assessment["martingale_escalated"] is True
+    assert "marginal_pair_wr=51.0%/n=100" in assessment["penalties"]
+    assert "rsi_extreme_against_entry=89.7" in assessment["summary"]
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ Constraints / safety:
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from broker.tick_stream import RawTickStream
@@ -31,6 +32,12 @@ _SUBSCRIPTION_CAP = 4
 _BUFFER = 200  # rolling bars kept per pair (warmup for MACD/ADX/SuperTrend)
 _MIN_BARS = 40  # minimum completed bars before evaluate_flip is called
 
+# Reconnect backoff: 5s → 10s → 20s → … → 300s cap
+_RETRY_BASE_S   = 5
+_RETRY_CAP_S    = 300
+# Halt all streams and signal the manager if any pair stays down this long
+_HALT_AFTER_S   = 600   # 10 minutes
+
 
 class FlipStreamer:
     def __init__(self, api_client: Any, manager: Any) -> None:
@@ -38,6 +45,9 @@ class FlipStreamer:
         self._mgr = manager
         self._tasks: dict[str, asyncio.Task] = {}   # pair → task
         self._running = False
+        # Tracks when the first error was seen across all streamers (reset on success)
+        self._error_since: float | None = None
+        self._halted = False
 
     @property
     def pairs(self) -> list[str]:
@@ -98,7 +108,8 @@ class FlipStreamer:
         return build_flip_params(levers)
 
     async def _consume(self, pair: str) -> None:
-        while self._running:
+        backoff = _RETRY_BASE_S
+        while self._running and not self._halted:
             stream: RawTickStream | None = None
             try:
                 # Pre-warm the accumulator from real OHLC history so indicators
@@ -112,7 +123,7 @@ class FlipStreamer:
                 await stream.start()
 
                 async for df in stream:
-                    if not self._running:
+                    if not self._running or self._halted:
                         break
                     if df.empty or len(df) < _MIN_BARS:
                         continue
@@ -125,11 +136,46 @@ class FlipStreamer:
                             pair, fd.direction, conf_score=1.0,
                             flip_metrics=fd.metrics, flip_levers=levers, payout_pct=payout,
                         )
+
+                # Clean exit from the async-for — connection was healthy
+                backoff = _RETRY_BASE_S
+                self._error_since = None
+
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                log.warning("FlipStreamer {} error: {} — retry in 5s", pair, exc)
-                await asyncio.sleep(5)
+                now = time.monotonic()
+                if self._error_since is None:
+                    self._error_since = now
+
+                elapsed = now - self._error_since
+                if elapsed >= _HALT_AFTER_S and not self._halted:
+                    log.critical(
+                        "FlipStreamer {}: connection dead for {:.0f}s — halting all streams "
+                        "and signalling restart",
+                        pair, elapsed,
+                    )
+                    await self._halt_and_signal()
+                    return
+
+                log.warning(
+                    "FlipStreamer {} error (dead {:.0f}s): {} — retry in {}s",
+                    pair, elapsed, exc, backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _RETRY_CAP_S)
             finally:
                 if stream is not None:
                     await stream.stop()
+
+    async def _halt_and_signal(self) -> None:
+        """Stop all streams and ask the main loop to exit for a supervisor restart."""
+        self._halted = True
+        self._running = False
+        # Cancel peer tasks — they're all in the same error state
+        for pair, task in list(self._tasks.items()):
+            if not task.done():
+                task.cancel()
+        # Tell the manager so it can exit cleanly
+        if hasattr(self._mgr, "request_restart"):
+            self._mgr.request_restart("FlipStreamer: broker connection dead >10 min")

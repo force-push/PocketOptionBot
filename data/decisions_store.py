@@ -183,19 +183,27 @@ def _loads(rows: list[sqlite3.Row]) -> list[dict]:
 
 
 def recent_decisions(
-    path: str | Path, *, limit: int = 100, before: Optional[str] = None
+    path: str | Path, *, limit: int = 100, before: Optional[str] = None,
+    since: Optional[str] = None,
 ) -> list[dict]:
     """Newest-first decision rows (TRADES + SKIPs), for the history view.
 
-    ``before`` is an ISO ts cursor (strictly older). Fetches only ``limit`` rows.
+    ``before`` is an ISO ts cursor (strictly older). ``since`` is a lower-bound
+    ISO ts (inclusive). Fetches only ``limit`` rows.
     """
     if not Path(path).exists():
         return []
     sql = "SELECT data FROM decisions"
     args: list[Any] = []
+    clauses: list[str] = []
     if before:
-        sql += " WHERE ts < ?"
+        clauses.append("ts < ?")
         args.append(before.strip())
+    if since:
+        clauses.append("ts >= ?")
+        args.append(since.strip())
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY ts DESC"
     if limit is not None and limit >= 0:
         sql += " LIMIT ?"
@@ -272,6 +280,40 @@ def rolling_pair_rate(
     if n == 0:
         return 0.0, 0
     return float(row["non_losses"] or 0) / n, n
+
+
+def tail_outcomes_by_pair(
+    path: str | Path,
+    *,
+    since_iso: str,
+    max_per_pair: int = 10,
+) -> dict[str, list[str]]:
+    """Return the most-recent resolved outcomes per pair since ``since_iso``.
+
+    Returns ``{pair_api: ["win"|"loss"|"draw", ...]}`` newest-first, capped at
+    ``max_per_pair``.  Shadow trades and SKIPs are excluded.  Used by
+    MartingaleTracker.seed_from_db() to reconstruct loss streaks after a restart.
+    """
+    if not Path(path).exists():
+        return {}
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT pair_api, outcome
+            FROM decisions
+            WHERE shadow = 0
+              AND outcome IN ('win', 'loss', 'draw')
+              AND ts >= ?
+            ORDER BY ts DESC
+            """,
+            (since_iso,),
+        ).fetchall()
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        pair = row["pair_api"]
+        if pair and len(result.get(pair, [])) < max_per_pair:
+            result.setdefault(pair, []).append(row["outcome"])
+    return result
 
 
 # ── full load (incremental in-process cache) ─────────────────────────────────

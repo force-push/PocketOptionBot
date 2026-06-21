@@ -30,6 +30,13 @@ from utils.logger import log
 _cycle_counter = 0
 
 
+def _break_even_probability(payout_pct: int | float | None) -> float:
+    payout = float(payout_pct or 0) / 100.0
+    if payout <= 0:
+        return 1.0
+    return 1.0 / (1.0 + payout)
+
+
 class StrategyManagerV2:
     def __init__(self, api_client, confluence_engine, risk_manager, tracker,
                  bridge=None):
@@ -76,11 +83,21 @@ class StrategyManagerV2:
         self._streamer = None
         # Focus-session manager (started lazily in run_once when enabled).
         self._focus: Any = None
+        # Set by request_restart(); checked by main loop to exit for supervisor restart.
+        self._restart_requested: str | None = None
+        # Updated each cycle by _run_once_signals(); used by FocusSession to exclude
+        # DB-confirmed negative-EV pairs from its pair picker.
+        self._db_wr_blocked: set[str] = set()
 
     @property
     def tracker(self):
         """The WinRateTracker instance (owned here; exposed for startup seeding)."""
         return self._tracker
+
+    def request_restart(self, reason: str) -> None:
+        """Signal the main loop to exit cleanly so the supervisor can restart."""
+        self._restart_requested = reason
+        log.critical("Restart requested: {}", reason)
 
     def _next_cycle_id(self) -> str:
         global _cycle_counter
@@ -145,6 +162,199 @@ class StrategyManagerV2:
             ", ".join(f"{hours:g}h={wr:.1%}/n={n}" for wr, n, hours in rates),
         )
         return pair_wr, n_wr
+
+    @staticmethod
+    def _last_candle_reversed(df, direction: str | None) -> bool:
+        """True when the newest candle moved against the intended entry."""
+        if df is None or direction not in ("CALL", "PUT"):
+            return False
+        try:
+            row = df.iloc[-1]
+            opened = float(row.get("o", row.get("open")))
+            closed = float(row.get("c", row.get("close")))
+        except Exception:
+            return False
+        return closed < opened if direction == "CALL" else closed > opened
+
+    def _trade_strength_adjustment(
+        self,
+        *,
+        pair: str,
+        direction: str | None,
+        expiry: int,
+        payout_pct: int | float | None,
+        tracked_rate: float,
+        n_tracked: int,
+        flip_metrics: dict | None,
+        df,
+        prospective_stake: float,
+    ) -> tuple[float, list[str], bool]:
+        assessment = self._assess_trade_signal(
+            pair=pair,
+            direction=direction,
+            expiry=expiry,
+            payout_pct=payout_pct,
+            tracked_rate=tracked_rate,
+            n_tracked=n_tracked,
+            flip_metrics=flip_metrics,
+            df=df,
+            prospective_stake=prospective_stake,
+            our_confluence=tracked_rate,
+            agreeing_signals=0,
+            bot_is_top_pick=False,
+        )
+        return (
+            float(assessment["entry_probability"]),
+            list(assessment["penalties"]),
+            bool(assessment["skip"]),
+        )
+
+    def _assess_trade_signal(
+        self,
+        *,
+        pair: str,
+        direction: str | None,
+        expiry: int,
+        payout_pct: int | float | None,
+        tracked_rate: float,
+        n_tracked: int,
+        flip_metrics: dict | None,
+        df,
+        prospective_stake: float,
+        our_confluence: float,
+        agreeing_signals: int,
+        bot_is_top_pick: bool,
+    ) -> dict:
+        """Live-context probability haircut for entries that are technically valid
+        but weak in the moment.
+
+        The historical direction WR remains the anchor. Penalties capture the
+        failure pattern: marginal pair, extreme RSI in the trade direction, an
+        immediate candle reversal, and escalated Martingale stake.
+        """
+        if direction not in ("CALL", "PUT"):
+            return {
+                "entry_probability": 0.0,
+                "raw_probability": 0.0,
+                "adjusted_probability": 0.0,
+                "learned_probability": None,
+                "break_even_probability": _break_even_probability(payout_pct),
+                "required_probability": _break_even_probability(payout_pct) + settings.min_expected_value,
+                "penalties": [],
+                "positives": [],
+                "skip": False,
+                "summary": "No trade direction to assess.",
+            }
+
+        try:
+            pair_wr, pair_n = self._tracker.pair_rate(pair)
+        except Exception:
+            pair_wr, pair_n = 0.0, 0
+        rsi = (flip_metrics or {}).get("rsi")
+        reversal = self._last_candle_reversed(df, direction)
+        stake_ratio = (
+            prospective_stake / settings.stake_amount
+            if settings.stake_amount > 0 and prospective_stake
+            else 1.0
+        )
+
+        strength = float(tracked_rate or 0.0)
+        penalties: list[str] = []
+        positives: list[str] = []
+
+        if pair_n >= 10 and pair_wr <= 0.53:
+            strength -= 0.03
+            penalties.append(f"marginal_pair_wr={pair_wr:.1%}/n={pair_n}")
+        elif pair_n >= 10 and pair_wr >= 0.58:
+            strength += 0.02
+            positives.append(f"strong_pair_wr={pair_wr:.1%}/n={pair_n}")
+
+        if n_tracked >= 10 and tracked_rate <= 0.58:
+            strength -= 0.02
+            penalties.append(f"soft_direction_wr={tracked_rate:.1%}/n={n_tracked}")
+        elif n_tracked >= 10 and tracked_rate >= 0.62:
+            strength += 0.02
+            positives.append(f"strong_direction_wr={tracked_rate:.1%}/n={n_tracked}")
+
+        rsi_extreme = False
+        if isinstance(rsi, (int, float)):
+            overbought_call = direction == "CALL" and rsi >= 85.0
+            oversold_put = direction == "PUT" and rsi <= 15.0
+            if overbought_call or oversold_put:
+                rsi_extreme = True
+                strength -= 0.06
+                penalties.append(f"rsi_extreme_against_entry={rsi:.1f}")
+                if reversal:
+                    strength -= 0.05
+                    penalties.append("last_candle_reversed")
+            elif (direction == "CALL" and 45.0 <= rsi <= 72.0) or (direction == "PUT" and 28.0 <= rsi <= 55.0):
+                positives.append(f"rsi_room={rsi:.1f}")
+
+        martingale_escalated = stake_ratio >= 2.0
+        if stake_ratio >= 2.0:
+            strength -= 0.04
+            penalties.append(f"escalated_stake={stake_ratio:.1f}x")
+
+        strength = max(0.0, min(1.0, strength))
+        break_even = _break_even_probability(payout_pct)
+        required = max(0.0, min(1.0, break_even + settings.min_expected_value))
+        model_features = {
+            "bot_win_rate": tracked_rate,
+            "our_confluence": our_confluence,
+            "agreement": True,
+            "agreeing_signals": agreeing_signals,
+            "payout_pct": payout_pct,
+            "bot_is_top_pick": bot_is_top_pick,
+            "pair_recent_wr": pair_wr,
+            "direction_wr": tracked_rate,
+            "rsi": rsi if isinstance(rsi, (int, float)) else None,
+            "rsi_extreme": rsi_extreme,
+            "reversal_against_entry": reversal,
+            "stake_ratio": stake_ratio,
+            "martingale_escalated": martingale_escalated,
+        }
+        calibrator = getattr(self, "_calibrator", None)
+        learned_probability = None
+        entry_probability = strength
+        if getattr(calibrator, "is_ready", False):
+            learned_probability = calibrator.predict(model_features)
+            entry_probability = min(strength, learned_probability)
+
+        skip = bool(penalties and entry_probability < required)
+        if not penalties and entry_probability < required and n_tracked >= settings.min_ev_samples:
+            skip = True
+            penalties.append(f"below_required_probability={entry_probability:.1%}<{required:.1%}")
+
+        summary_bits = []
+        if positives:
+            summary_bits.append("supports: " + ", ".join(positives))
+        if penalties:
+            summary_bits.append("risks: " + ", ".join(penalties))
+        if not summary_bits:
+            summary_bits.append("neutral setup; no major contextual penalty")
+
+        return {
+            "entry_probability": round(entry_probability, 4),
+            "raw_probability": round(float(tracked_rate or 0.0), 4),
+            "adjusted_probability": round(strength, 4),
+            "learned_probability": round(learned_probability, 4) if learned_probability is not None else None,
+            "break_even_probability": round(break_even, 4),
+            "required_probability": round(required, 4),
+            "pair_recent_wr": round(pair_wr, 4),
+            "pair_recent_n": pair_n,
+            "direction_wr": round(float(tracked_rate or 0.0), 4),
+            "direction_n": n_tracked,
+            "rsi": round(float(rsi), 2) if isinstance(rsi, (int, float)) else None,
+            "rsi_extreme": rsi_extreme,
+            "reversal_against_entry": reversal,
+            "stake_ratio": round(stake_ratio, 3),
+            "martingale_escalated": martingale_escalated,
+            "penalties": penalties,
+            "positives": positives,
+            "skip": skip,
+            "summary": "; ".join(summary_bits),
+            "model_features": model_features,
+        }
 
     def _next_profitable_hour(self) -> tuple[int, int, float]:
         """Calculate next profitable trading hour, minutes until it arrives, and its WR.
@@ -357,6 +567,10 @@ class StrategyManagerV2:
         prefetched_5s: dict = {}
         if settings.shadow_tf5s_enabled and settings.trade_mode != TradeMode.LIVE:
             prefetched_5s = await self._prefetch_candles(cid, candidates, 5)
+
+        # (DB WR gate removed — all-time data spans multiple signal eras and
+        #  incorrectly blocks pairs that are positive EV under current signals.
+        #  PERF_COOLDOWN handles dynamic per-session pair benching instead.)
 
         for pair_info in candidates:
             pair_api = pair_info["symbol"]
@@ -578,6 +792,51 @@ class StrategyManagerV2:
                     ))
                 continue
 
+            prospective_stake = self._martingale_stake(pair_api, balance_before or 0)
+            assessment = self._assess_trade_signal(
+                pair=pair_api,
+                direction=conf.direction,
+                expiry=expiry,
+                payout_pct=payout_pct,
+                tracked_rate=tracked_rate,
+                n_tracked=n_tracked,
+                flip_metrics=flip_metrics,
+                df=df,
+                prospective_stake=prospective_stake,
+                our_confluence=conf.score,
+                agreeing_signals=agreeing,
+                bot_is_top_pick=False,
+            )
+            strength = float(assessment["entry_probability"])
+            penalties = list(assessment["penalties"])
+            weak_strength = bool(assessment["skip"])
+            row.signal_assessment = assessment
+            if flip_metrics is not None:
+                row.flip_metrics = {
+                    **flip_metrics,
+                    "trade_strength": round(strength, 4),
+                    "trade_strength_penalties": penalties,
+                    "reversal_against_entry": assessment["reversal_against_entry"],
+                    "prospective_stake_ratio": assessment["stake_ratio"],
+                }
+            row.combined_probability = strength
+            row.calibrated_probability = strength
+            row.stake = prospective_stake
+
+            if weak_strength:
+                row.decision = "SKIP"
+                row.skip_reason = "weak_trade_strength: " + ", ".join(penalties)
+                write_decision(log_path, row)
+                if self._bridge:
+                    self._bridge.on_decision(asdict(row))
+                log.info(
+                    "[{}] SKIP {}  reason={}  strength={:.1%}  required={:.1%}  wr={:.1%}/n={}  stake={:.2f}",
+                    cid, pair_api, row.skip_reason, strength,
+                    assessment["required_probability"], tracked_rate, n_tracked,
+                    prospective_stake,
+                )
+                continue
+
             # Blocked-hour shadow mode: the signal gates passed, but this hour is
             # blocked by the time-of-day filter. Place a shadow instead of a real
             # trade and skip the production EV/risk/concurrency gates entirely.
@@ -669,7 +928,7 @@ class StrategyManagerV2:
             log.info(
                 "[{}] TRADE {}  {}  @{:.2f}  exp={}s  payout={}%  prob={:.2f}  id={}",
                 cid, conf.direction, pair_api, actual_stake,
-                expiry, payout_pct, d.combined_probability, row.trade_id,
+                expiry, payout_pct, row.combined_probability, row.trade_id,
             )
             trades_placed += 1
 
@@ -855,15 +1114,39 @@ class StrategyManagerV2:
                     self._open_trade_count = max(0, self._open_trade_count - 1)
                     return False
             actual_stake = self._martingale_stake(pair_api, balance or 0)
+            assessment = self._assess_trade_signal(
+                pair=pair_api,
+                direction=direction,
+                expiry=expiry,
+                payout_pct=payout_pct,
+                tracked_rate=tracked_rate,
+                n_tracked=n_tracked,
+                flip_metrics=flip_metrics,
+                df=None,
+                prospective_stake=actual_stake,
+                our_confluence=conf_score,
+                agreeing_signals=3,
+                bot_is_top_pick=False,
+            )
+            if assessment["skip"]:
+                self._open_trade_count = max(0, self._open_trade_count - 1)
+                log.info(
+                    "[{}] STREAM-SKIP {}  reason=weak_trade_strength: {}  strength={:.1%}",
+                    cid, pair_api, ", ".join(assessment["penalties"]),
+                    assessment["entry_probability"],
+                )
+                return False
             row = DecisionRow(
                 cycle_id=cid, pair_raw=pair_api, pair_api=pair_api,
                 bot_win_rate=tracked_rate, bot_is_top_pick=False,
                 bot_direction=direction, bot_setup="flip_stream", bot_indicators_raw="",
                 our_direction=direction, our_confluence_score=conf_score,
                 our_signal_breakdown={}, agreement=True,
-                combined_probability=tracked_rate, expiry_seconds=expiry,
+                combined_probability=assessment["entry_probability"], expiry_seconds=expiry,
                 decision="TRADE", skip_reason=None,
                 stake=actual_stake, balance_before=balance,
+                calibrated_probability=assessment["entry_probability"],
+                signal_assessment=assessment,
                 payout_pct=payout_pct, sentiment=None,
                 flip_metrics=flip_metrics, flip_levers=flip_levers,
             )

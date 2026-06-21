@@ -2,10 +2,10 @@
 
 Usage:
     python -m strategy.train_calibrator
-    python -m strategy.train_calibrator --data data/decisions.jsonl --out data/models/probability_calibrator_v1.pkl
+    python -m strategy.train_calibrator --data data/decisions.db --out data/models/probability_calibrator_v1.pkl
 
 Reads labelled decision rows (those with a win/loss outcome) from the decisions
-log, fits a logistic-regression calibrator with a held-out evaluation split,
+store, fits a logistic-regression calibrator with a held-out evaluation split,
 prints calibration metrics, and saves the production model. Safe to run nightly.
 """
 from __future__ import annotations
@@ -15,6 +15,8 @@ import json
 import sys
 from pathlib import Path
 
+from config.settings import settings
+from data.decisions_store import all_records, reset_cache
 from strategy.probability_calibrator import (
     DEFAULT_MODEL_PATH,
     ProbabilityCalibrator,
@@ -22,13 +24,16 @@ from strategy.probability_calibrator import (
 )
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_DATA = _PROJECT_ROOT / "data" / "decisions.jsonl"
+_DEFAULT_DATA = _PROJECT_ROOT / settings.decisions_db_path
 
 
 def _load_rows(path: Path) -> list[dict]:
     if not path.exists():
         print(f"[train_calibrator] no data file at {path}", file=sys.stderr)
         return []
+    if path.suffix == ".db":
+        reset_cache(path)
+        return all_records(path)
     rows = []
     for ln in path.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
@@ -47,7 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=DEFAULT_MODEL_PATH)
     ap.add_argument("--test-frac", type=float, default=0.2)
     ap.add_argument("--min-auc", type=float, default=0.55,
-                    help="warn (don't fail) if test AUC is below this")
+                    help="minimum test AUC required before saving")
+    ap.add_argument("--force-save", action="store_true",
+                    help="save even when held-out metrics miss the quality floor")
     args = ap.parse_args(argv)
 
     rows = _load_rows(args.data)
@@ -67,8 +74,10 @@ def main(argv: list[str] | None = None) -> int:
 
     auc = cal.metrics.auc
     if auc is not None and auc < args.min_auc:
-        print(f"[train_calibrator] ⚠ test AUC {auc:.3f} < target {args.min_auc:.2f} "
-              f"— model is weak on current data; predictions will still beat a fixed average only marginally.")
+        print(f"[train_calibrator] test AUC {auc:.3f} < target {args.min_auc:.2f} "
+              "— not saving weak production model.", file=sys.stderr)
+        if not args.force_save:
+            return 2
 
     saved = cal.save(args.out)
     print(f"[train_calibrator] saved model → {saved}")

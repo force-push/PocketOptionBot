@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# watchdog.sh — monitors PocketOptionBot and restarts it on crash.
+# watchdog.sh — DEPRECATED. DO NOT RUN THIS MANUALLY.
 #
-# Usage:
+# The bot is managed by launchd via tools/run_supervised.sh.
+# Running this script alongside launchd causes constant bot stops because
+# it kills existing bot processes (pgrep | xargs kill) on startup, and
+# each time it is killed it takes the bot with it.
+#
+# To restart the bot: tools/restart_bot.sh
+# To check status:    launchctl list | grep argussentinel
+# To reload launchd:  launchctl kickstart -k gui/$(id -u)/com.kym.argussentinel
+#
+# Original usage (historical, no longer valid):
 #   ./scripts/watchdog.sh          # run indefinitely
 #   ./scripts/watchdog.sh --once   # one restart cycle only (for testing)
 #

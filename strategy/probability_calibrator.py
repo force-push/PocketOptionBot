@@ -34,6 +34,13 @@ FEATURES: tuple[str, ...] = (
     "agreeing_signals",   # int, how many of our signals back the direction
     "payout_pct",         # broker payout %, scaled to 0-1 in featurize()
     "bot_is_top_pick",    # 0/1, was this the bot's top-ranked pair
+    "pair_recent_wr",     # 0-1, pair-level resolved WR at entry time
+    "direction_wr",       # 0-1, pair+direction+expiry resolved WR at entry time
+    "rsi",                # 0-1, RSI scaled from 0-100
+    "rsi_extreme",        # 0/1, CALL overbought or PUT oversold
+    "reversal_against_entry",  # 0/1, newest candle closed against entry
+    "stake_ratio",        # prospective stake / base stake
+    "martingale_escalated",    # 0/1, stake_ratio >= 2
 )
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "data" / "models" / "probability_calibrator_v1.pkl"
@@ -66,7 +73,22 @@ def featurize(rec: Mapping[str, Any]) -> list[float]:
             if isinstance(v, (list, tuple)) and v and v[0] == our_dir
         )
 
+    assessment = rec.get("signal_assessment") or {}
+    flip_metrics = rec.get("flip_metrics") or {}
+    rsi = rec.get("rsi")
+    if rsi is None:
+        rsi = assessment.get("rsi")
+    if rsi is None:
+        rsi = flip_metrics.get("rsi")
+    rsi_f = float(rsi) if isinstance(rsi, (int, float)) else 50.0
+
     payout = g("payout_pct")
+    stake_ratio = rec.get("stake_ratio")
+    if stake_ratio is None:
+        stake_ratio = assessment.get("stake_ratio")
+    if stake_ratio is None:
+        stake_ratio = flip_metrics.get("prospective_stake_ratio", 1.0)
+
     return [
         g("bot_win_rate"),
         g("our_confluence", "our_confluence_score"),
@@ -74,6 +96,13 @@ def featurize(rec: Mapping[str, Any]) -> list[float]:
         float(agreeing or 0),
         payout / 100.0 if payout > 1.5 else payout,   # accept 92 or 0.92
         1.0 if rec.get("bot_is_top_pick") else 0.0,
+        g("pair_recent_wr", default=float(assessment.get("pair_recent_wr") or 0.0)),
+        g("direction_wr", default=float(assessment.get("direction_wr") or rec.get("bot_win_rate") or 0.0)),
+        max(0.0, min(1.0, rsi_f / 100.0)),
+        1.0 if rec.get("rsi_extreme") or assessment.get("rsi_extreme") else 0.0,
+        1.0 if rec.get("reversal_against_entry") or assessment.get("reversal_against_entry") else 0.0,
+        float(stake_ratio or 1.0),
+        1.0 if rec.get("martingale_escalated") or assessment.get("martingale_escalated") else 0.0,
     ]
 
 

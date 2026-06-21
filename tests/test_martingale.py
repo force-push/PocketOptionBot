@@ -73,9 +73,18 @@ def test_custom_multiplier_two_losses(tracker):
 
 
 def test_max_level_3(tracker):
-    for _ in range(4):
+    # 3 losses escalate to max level (stake = 2^3 = 8×)
+    for _ in range(3):
         tracker.record_outcome("PAIR", False, multiplier=2.0, max_level=3)
     assert _stake(tracker, "PAIR", multiplier=2.0, max_level=3) == 8.0  # 2^3
+
+def test_max_level_loss_resets_to_base(tracker):
+    # Losing at max level resets the streak — no indefinite max-stake exposure
+    for _ in range(3):
+        tracker.record_outcome("PAIR", False, multiplier=2.0, max_level=3)
+    assert _stake(tracker, "PAIR", multiplier=2.0, max_level=3) == 8.0  # at max
+    tracker.record_outcome("PAIR", False, multiplier=2.0, max_level=3)   # lose at max
+    assert _stake(tracker, "PAIR", multiplier=2.0, max_level=3) == 1.0  # reset to base
 
 
 # ── WR gate ───────────────────────────────────────────────────────────────────

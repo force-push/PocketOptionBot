@@ -283,6 +283,8 @@ def _clear_pair_filters(monkeypatch):
     monkeypatch.setattr(fs_module.settings, "allowed_pair_regex", "")
     monkeypatch.setattr(fs_module.settings, "allowed_pairs", [])
     monkeypatch.setattr(fs_module.settings, "blocked_pairs", [])
+    monkeypatch.setattr(fs_module.settings, "focus_payout_floor", 90)
+    monkeypatch.setattr(fs_module.settings, "streaming_enabled", False)
 
 
 @pytest.mark.asyncio

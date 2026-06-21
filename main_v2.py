@@ -258,6 +258,15 @@ async def main(cycles: int = 0) -> None:
                 log.info("WinRateTracker seeded {} records from PO history", n)
 
         asyncio.ensure_future(_seed_win_rates())
+
+        # Restore martingale streaks from recent DB history so a restart after a
+        # crash/reconnect doesn't silently reset all loss streaks to zero.
+        db_path = str(settings.decisions_db_path)
+        manager._martingale.seed_from_db(
+            db_path,
+            max_level=settings.martingale_max_level,
+            lookback_hours=6.0,
+        )
     else:
         log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
 
@@ -288,6 +297,11 @@ async def main(cycles: int = 0) -> None:
             raise
         except Exception as exc:
             log.opt(exception=True).error("run_once error (will retry): {}", exc)
+
+        # FlipStreamer signals a clean exit when the broker connection is dead.
+        if manager._restart_requested:
+            log.critical("Exiting for supervisor restart — {}", manager._restart_requested)
+            sys.exit(1)
 
         # Heartbeat: mark the main loop alive at the end of every cycle so the
         # supervisor's hang watchdog measures real cycle progress, not log churn.
