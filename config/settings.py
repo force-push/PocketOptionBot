@@ -101,12 +101,14 @@ class BotSettings(BaseSettings):
     # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
     min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
-    # Martingale: after N consecutive losses on a pair, scale the stake on the
-    # next trade for that pair. Resets to base_stake on a win. Gated on the pair's
-    # live WR being above break-even so we only chase recoverable sequences.
+    # Martingale: after consecutive losses, scale the stake. Scope controls
+    # whether the streak is global (next trade after any loss) or per-pair
+    # (next trade on the same pair). Global mode intentionally ignores pair WR
+    # gates; pair mode can still use them.
     # All params are hot-reloadable — dashboard edits take effect immediately.
     # Default off — enable only after validating base strategy in demo.
     martingale_enabled: bool = Field(default=False, alias="MARTINGALE_ENABLED")
+    martingale_scope: str = Field(default="global", alias="MARTINGALE_SCOPE")
     martingale_multiplier: float = Field(default=2.0, alias="MARTINGALE_MULTIPLIER", ge=1.1, le=4.0)
     martingale_max_level: int = Field(default=2, alias="MARTINGALE_MAX_LEVEL", ge=1, le=6)
     martingale_min_pair_wr: float = Field(default=0.521, alias="MARTINGALE_MIN_PAIR_WR", ge=0.0, le=1.0)
@@ -329,6 +331,14 @@ class BotSettings(BaseSettings):
         if isinstance(v, str):
             return [p.strip() for p in v.split(",") if p.strip()]
         return v
+
+    @field_validator("martingale_scope", mode="before")
+    @classmethod
+    def _validate_martingale_scope(cls, v):
+        scope = str(v or "global").strip().lower()
+        if scope not in {"global", "pair"}:
+            raise SettingsError("MARTINGALE_SCOPE must be 'global' or 'pair'")
+        return scope
 
     model_config = ConfigDict(
         env_file=(

@@ -85,6 +85,9 @@ class StrategyManagerV2:
         self._focus: Any = None
         # Set by request_restart(); checked by main loop to exit for supervisor restart.
         self._restart_requested: str | None = None
+        # Detect the "alive but useless" broker failure mode: the WS still emits
+        # frames, but every candle/history request returns empty after timeouts.
+        self._consecutive_dead_candle_cycles = 0
         # Updated each cycle by _run_once_signals(); used by FocusSession to exclude
         # DB-confirmed negative-EV pairs from its pair picker.
         self._db_wr_blocked: set[str] = set()
@@ -109,16 +112,34 @@ class StrategyManagerV2:
         so dashboard edits hot-reload without a bot restart."""
         if not settings.martingale_enabled:
             return settings.stake_amount
-        pair_wr, n_wr = self._martingale_pair_rate(pair)
+
+        key = self._martingale_key(pair)
+        if settings.martingale_scope == "global":
+            # Global martingale means exactly "next trade after a loss escalates".
+            # Pair WR/session gates do not apply to a cross-pair loss streak.
+            pair_wr, n_wr = 1.0, 1_000_000
+            min_pair_wr, min_wr_samples, min_session_trades = 0.0, 0, 0
+        else:
+            pair_wr, n_wr = self._martingale_pair_rate(pair)
+            min_pair_wr = settings.martingale_min_pair_wr
+            min_wr_samples = settings.martingale_min_wr_samples
+            min_session_trades = settings.martingale_min_session_trades
+
         return self._martingale.get_stake(
-            pair, settings.stake_amount, pair_wr, n_wr,
+            key, settings.stake_amount, pair_wr, n_wr,
             balance, settings.min_balance_multiplier,
             multiplier=settings.martingale_multiplier,
             max_level=settings.martingale_max_level,
-            min_pair_wr=settings.martingale_min_pair_wr,
-            min_wr_samples=settings.martingale_min_wr_samples,
-            min_session_trades=settings.martingale_min_session_trades,
+            min_pair_wr=min_pair_wr,
+            min_wr_samples=min_wr_samples,
+            min_session_trades=min_session_trades,
         )
+
+    @staticmethod
+    def _martingale_key(pair: str) -> str:
+        if settings.martingale_scope == "global":
+            return "__global__"
+        return pair
 
     def _martingale_pair_rate(self, pair: str) -> tuple[float, int]:
         """Recent pair WR for Martingale gating.
@@ -154,12 +175,24 @@ class StrategyManagerV2:
 
         if not rates:
             return self._tracker.pair_rate(pair)
-        pair_wr = min(wr for wr, _, _ in rates)
-        n_wr = min(n for _, n, _ in rates)
+        # Exclude windows with no data — a zero-n window means "no trades yet in
+        # this window", not "0% win rate". Counting it as 0.0/0 would permanently
+        # block the gate on any pair that hasn't traded in the fast window.
+        rates_with_data = [(wr, n, hours) for wr, n, hours in rates if n > 0]
+        if not rates_with_data:
+            log.debug(
+                "Martingale {}: no resolved trades in any rolling window ({}) — tracker fallback",
+                pair,
+                ", ".join(f"{hours:g}h=n/a" for _, _, hours in rates),
+            )
+            return self._tracker.pair_rate(pair)
+        pair_wr = min(wr for wr, _, _ in rates_with_data)
+        n_wr = min(n for _, n, _ in rates_with_data)
         log.debug(
-            "Martingale {} rolling WR gate: {}",
+            "Martingale {} rolling WR gate: {} (skipped {} empty windows)",
             pair,
-            ", ".join(f"{hours:g}h={wr:.1%}/n={n}" for wr, n, hours in rates),
+            ", ".join(f"{hours:g}h={wr:.1%}/n={n}" for wr, n, hours in rates_with_data),
+            len(rates) - len(rates_with_data),
         )
         return pair_wr, n_wr
 
@@ -229,8 +262,8 @@ class StrategyManagerV2:
         but weak in the moment.
 
         The historical direction WR remains the anchor. Penalties capture the
-        failure pattern: marginal pair, extreme RSI in the trade direction, an
-        immediate candle reversal, and escalated Martingale stake.
+        failure pattern: marginal pair, extreme RSI in the trade direction, and
+        an immediate candle reversal.
         """
         if direction not in ("CALL", "PUT"):
             return {
@@ -291,9 +324,6 @@ class StrategyManagerV2:
                 positives.append(f"rsi_room={rsi:.1f}")
 
         martingale_escalated = stake_ratio >= 2.0
-        if stake_ratio >= 2.0:
-            strength -= 0.04
-            penalties.append(f"escalated_stake={stake_ratio:.1f}x")
 
         strength = max(0.0, min(1.0, strength))
         break_even = _break_even_probability(payout_pct)
@@ -567,6 +597,35 @@ class StrategyManagerV2:
         prefetched_5s: dict = {}
         if settings.shadow_tf5s_enabled and settings.trade_mode != TradeMode.LIVE:
             prefetched_5s = await self._prefetch_candles(cid, candidates, 5)
+
+        usable_candle_pairs = [
+            pair_info["symbol"]
+            for pair_info in candidates
+            if (
+                (df := prefetched.get(pair_info["symbol"])) is not None
+                and not df.empty
+                and len(df) >= 30
+            )
+        ]
+        if not usable_candle_pairs:
+            self._consecutive_dead_candle_cycles += 1
+            log.error(
+                "[{}] candle health failure: 0/{} candidates returned usable candle data "
+                "(dead cycle {}/2)",
+                cid, len(candidates), self._consecutive_dead_candle_cycles,
+            )
+            if self._consecutive_dead_candle_cycles >= 2:
+                self.request_restart(
+                    "candle RPC dead: 2 consecutive cycles with 0 usable candle datasets"
+                )
+            return
+        if self._consecutive_dead_candle_cycles:
+            log.info(
+                "[{}] candle health recovered: {}/{} candidates usable after {} dead cycle(s)",
+                cid, len(usable_candle_pairs), len(candidates),
+                self._consecutive_dead_candle_cycles,
+            )
+        self._consecutive_dead_candle_cycles = 0
 
         # (DB WR gate removed — all-time data spans multiple signal eras and
         #  incorrectly blocks pairs that are positive EV under current signals.
@@ -1328,7 +1387,7 @@ class StrategyManagerV2:
                     # Martingale streak update (real trades only, never shadows)
                     if settings.martingale_enabled:
                         self._martingale.record_outcome(
-                            row.pair_api, is_win,
+                            self._martingale_key(row.pair_api), is_win,
                             max_level=settings.martingale_max_level,
                             multiplier=settings.martingale_multiplier,
                         )

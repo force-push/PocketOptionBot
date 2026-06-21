@@ -163,7 +163,10 @@ FIELDS: list[_F] = [
     # Martingale — all hot-reload (requires_restart=False); bot picks up changes within 10s
     _F("MARTINGALE_ENABLED", "martingale_enabled", "Martingale", "bool", False, False,
        "Enabled", "toggle",
-       hint="Scale stake after consecutive losses on a pair; resets on any win"),
+       hint="Scale stake after consecutive losses; resets on any win/draw"),
+    _F("MARTINGALE_SCOPE", "martingale_scope", "Martingale", "str", False, False,
+       "Scope", "text",
+       hint="'global' = next trade after any loss escalates; 'pair' = only the same pair escalates"),
     _F("MARTINGALE_MULTIPLIER", "martingale_multiplier", "Martingale", "float", False, False,
        "Multiplier", "number",
        hint="Stake multiplier per loss level (e.g. 2.0 = double, 2.2 = 2.2× each level)",

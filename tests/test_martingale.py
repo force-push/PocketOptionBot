@@ -101,6 +101,24 @@ def test_insufficient_samples_returns_base(tracker):
     assert _stake(tracker, "PAIR", n=5) == 1.0
 
 
+def test_global_scope_can_disable_wr_gates(tracker):
+    tracker.record_outcome("__global__", False, **_RO)
+    result = tracker.get_stake(
+        "__global__",
+        1.5,
+        pair_wr=0.0,
+        n_samples=0,
+        balance=1000,
+        min_balance_multiplier=5,
+        multiplier=2.2,
+        max_level=2,
+        min_pair_wr=0.0,
+        min_wr_samples=0,
+        min_session_trades=0,
+    )
+    assert result == pytest.approx(3.3)
+
+
 def test_exactly_at_min_wr_scales(tracker):
     tracker.record_outcome("PAIR", False, **_RO)
     assert _stake(tracker, "PAIR", wr=0.521) == 2.0

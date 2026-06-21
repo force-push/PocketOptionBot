@@ -63,6 +63,11 @@ class WinRateTracker:
                 log.warning("WinRateTracker: could not load %s: %s — starting fresh", self._path, exc)
                 self._data = {}
 
+    @property
+    def has_data(self) -> bool:
+        """True if any records have been loaded or recorded."""
+        return bool(self._data)
+
     def save(self) -> None:
         """Persist current state to disk."""
         try:

@@ -316,6 +316,34 @@ def tail_outcomes_by_pair(
     return result
 
 
+def tail_outcomes(
+    path: str | Path,
+    *,
+    since_iso: str,
+    max_count: int = 10,
+) -> list[str]:
+    """Return the most-recent resolved non-shadow outcomes newest-first.
+
+    Used by global Martingale restore: one loss streak across all real trades.
+    """
+    if not Path(path).exists():
+        return []
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT outcome
+            FROM decisions
+            WHERE shadow = 0
+              AND outcome IN ('win', 'loss', 'draw')
+              AND ts >= ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (since_iso, max_count),
+        ).fetchall()
+    return [row["outcome"] for row in rows]
+
+
 # ── full load (incremental in-process cache) ─────────────────────────────────
 # The first call parses every row; later calls fetch only rows whose id is new
 # or whose updated_at advanced (outcome backfills), merging into a per-path

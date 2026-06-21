@@ -249,9 +249,15 @@ async def main(cycles: int = 0) -> None:
             log.info("Top pairs by payout: {}",
                      "  ".join(f"{a['symbol']}={a['payout']}%" for a in top))
 
-        # Seed WinRateTracker from PO closed-deals history (background, non-blocking)
+        # Seed WinRateTracker from PO closed-deals history (background, non-blocking).
+        # Skip the API fetch entirely when the tracker already has data from its JSON
+        # save file — 500 serial closed_deal() calls for a seed we don't need is wasteful.
         async def _seed_win_rates():
-            deals = await api_client.get_po_trade_history()
+            if manager.tracker.has_data:
+                log.info("WinRateTracker already loaded ({} keys) — skipping PO history seed",
+                         len(manager.tracker._data))
+                return
+            deals = await api_client.get_po_trade_history(max_deals=100)
             n = manager.tracker.seed_from_po_history(
                 deals, default_expiry_seconds=settings.default_expiry_seconds)
             if n:
@@ -266,6 +272,7 @@ async def main(cycles: int = 0) -> None:
             db_path,
             max_level=settings.martingale_max_level,
             lookback_hours=6.0,
+            scope=settings.martingale_scope,
         )
     else:
         log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")

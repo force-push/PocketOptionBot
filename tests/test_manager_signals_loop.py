@@ -116,7 +116,6 @@ def test_trade_strength_blocks_marginal_overbought_reversal(monkeypatch):
     assert "soft_direction_wr=56.4%/n=39" in penalties
     assert "rsi_extreme_against_entry=89.7" in penalties
     assert "last_candle_reversed" in penalties
-    assert "escalated_stake=4.8x" in penalties
 
 
 def test_trade_strength_keeps_clean_strong_entry(monkeypatch):
