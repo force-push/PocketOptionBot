@@ -370,7 +370,6 @@ class BotSettings(BaseSettings):
         env_file=(
             _PROJECT_ROOT / ".env.secrets",
             _PROJECT_ROOT / ".env.config",
-            _PROJECT_ROOT / ".env",  # legacy fallback — kept until .env is removed
         ),
         env_file_encoding="utf-8",
         extra="ignore",  # allow extra env vars without error

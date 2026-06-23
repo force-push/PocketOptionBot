@@ -1,6 +1,6 @@
-.env
 .env.secrets
-# .env.config is intentionally tracked (functional/strategy params, no secrets)
+# .env.config is tracked (functional/strategy params, no secrets)
+# .env.example is tracked (setup guide, no real values)
 .venv/
 __pycache__/
 *.pyc
