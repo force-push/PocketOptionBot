@@ -49,6 +49,7 @@ def _make_manager(tmp_path, api, conf_result_by_pair=None, risk_allowed=True, mo
         monkeypatch.setattr(settings, "min_signal_agreement", 1)
         monkeypatch.setattr(settings, "max_pairs_per_cycle", 0)
         monkeypatch.setattr(settings, "min_ev_samples", 100)  # disable EV gate in tests
+        monkeypatch.setattr(settings, "variable_stake_enabled", False)
         monkeypatch.setattr(settings, "streaming_enabled", False)
         monkeypatch.setattr(settings, "focus_session_enabled", False)
 
@@ -113,7 +114,10 @@ def test_trade_strength_blocks_marginal_overbought_reversal(monkeypatch):
     assert skip is True
     assert strength < 1 / 1.92
     assert "marginal_pair_wr=51.0%/n=100" in penalties
-    assert "soft_direction_wr=56.4%/n=39" in penalties
+    # 2026-06-23: soft_direction_wr threshold changed (only fires at wr<=0.50
+    # with n>=25). 56.4%/n=39 is now treated as a tradeable direction. The
+    # other penalties still combine to skip — proving the safety stack doesn't
+    # depend on the directional WR gate alone.
     assert "rsi_extreme_against_entry=89.7" in penalties
     assert "last_candle_reversed" in penalties
 
@@ -179,6 +183,73 @@ def test_signal_assessment_records_entry_context(monkeypatch):
     assert "rsi_extreme_against_entry=89.7" in assessment["summary"]
 
 
+def test_variable_stake_scales_only_proven_positive_ev(monkeypatch):
+    monkeypatch.setattr(settings, "stake_amount", 2.0)
+    monkeypatch.setattr(settings, "min_balance_multiplier", 5.0)
+    monkeypatch.setattr(settings, "variable_stake_enabled", True)
+    monkeypatch.setattr(settings, "variable_stake_min_samples", 25)
+    monkeypatch.setattr(settings, "variable_stake_min_multiplier", 0.5)
+    monkeypatch.setattr(settings, "variable_stake_min_edge", 0.03)
+    monkeypatch.setattr(settings, "variable_stake_full_edge", 0.10)
+    monkeypatch.setattr(settings, "variable_stake_max_multiplier", 2.0)
+    mgr = _strength_mgr(pair_wr=0.60, pair_n=100)
+
+    cold = mgr._variable_stake_info(
+        pair="AUDUSD_otc", direction="CALL", expiry=5, payout_pct=92,
+        tracked_rate=0.70, n_tracked=24, balance=1000,
+    )
+    weak = mgr._variable_stake_info(
+        pair="AUDUSD_otc", direction="CALL", expiry=5, payout_pct=92,
+        tracked_rate=0.54, n_tracked=100, balance=1000,
+    )
+    strong = mgr._variable_stake_info(
+        pair="AUDUSD_otc", direction="CALL", expiry=5, payout_pct=92,
+        tracked_rate=0.70, n_tracked=100, balance=1000,
+    )
+
+    assert cold.stake == pytest.approx(2.0)
+    assert cold.enabled is False
+    assert weak.stake == pytest.approx(1.0)
+    assert weak.enabled is True
+    assert strong.stake == pytest.approx(4.0)
+    assert strong.enabled is True
+    assert strong.multiplier == pytest.approx(2.0)
+
+
+def test_variable_stake_live_style_one_point_five_upside(monkeypatch):
+    """Current live policy: marginal WR cuts stake, proven upside caps at 1.5x."""
+    monkeypatch.setattr(settings, "stake_amount", 1.5)
+    monkeypatch.setattr(settings, "min_balance_multiplier", 5.0)
+    monkeypatch.setattr(settings, "variable_stake_enabled", True)
+    monkeypatch.setattr(settings, "variable_stake_min_samples", 25)
+    monkeypatch.setattr(settings, "variable_stake_min_multiplier", 0.5)
+    monkeypatch.setattr(settings, "variable_stake_min_edge", 0.05)
+    monkeypatch.setattr(settings, "variable_stake_full_edge", 0.12)
+    monkeypatch.setattr(settings, "variable_stake_max_multiplier", 1.5)
+    mgr = _strength_mgr(pair_wr=0.60, pair_n=100)
+
+    marginal = mgr._variable_stake_info(
+        pair="AUDUSD_otc", direction="CALL", expiry=5, payout_pct=92,
+        tracked_rate=0.55, n_tracked=100, balance=1000,
+    )
+    break_even_92 = 1 / 1.92
+    base = mgr._variable_stake_info(
+        pair="AUDUSD_otc", direction="CALL", expiry=5, payout_pct=92,
+        tracked_rate=break_even_92 + 0.05, n_tracked=100, balance=1000,
+    )
+    proven = mgr._variable_stake_info(
+        pair="AUDUSD_otc", direction="CALL", expiry=5, payout_pct=92,
+        tracked_rate=0.65, n_tracked=100, balance=1000,
+    )
+
+    assert marginal.stake == pytest.approx(0.75)
+    assert marginal.multiplier == pytest.approx(0.5)
+    assert base.stake == pytest.approx(1.5)
+    assert base.multiplier == pytest.approx(1.0)
+    assert proven.stake == pytest.approx(2.25)
+    assert proven.multiplier == pytest.approx(1.5)
+
+
 @pytest.mark.asyncio
 async def test_signals_loop_places_trade(tmp_path, monkeypatch):
     from config.settings import settings
@@ -204,6 +275,129 @@ async def test_signals_loop_places_trade(tmp_path, monkeypatch):
     trade_rows = [r for r in rows if r["decision"] == "TRADE"]
     assert len(trade_rows) >= 1
     assert trade_rows[0]["pair_api"] in ("EURUSD", "GBPUSD")
+
+
+@pytest.mark.asyncio
+async def test_signals_loop_uses_armed_pair_martingale_stake(tmp_path, monkeypatch):
+    api = MagicMock()
+    api.get_active_pairs = AsyncMock(return_value=_make_pairs(("EURUSD", 94)))
+    api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
+    api.balance = AsyncMock(return_value=1000.0)
+    trade = MagicMock(); trade.status = "DRY_RUN"; trade.trade_id = None
+    api.buy = AsyncMock(return_value=trade)
+    api.sell = AsyncMock(return_value=trade)
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "stake_amount", 1.5)
+    monkeypatch.setattr(settings, "martingale_enabled", True)
+    monkeypatch.setattr(settings, "martingale_scope", "pair")
+    monkeypatch.setattr(settings, "martingale_multiplier", 2.2)
+    monkeypatch.setattr(settings, "martingale_max_level", 2)
+    monkeypatch.setattr(settings, "martingale_min_pair_wr", 0.0)
+    monkeypatch.setattr(settings, "martingale_min_wr_samples", 1)
+    monkeypatch.setattr(settings, "martingale_min_session_trades", 1)
+    monkeypatch.setattr(settings, "martingale_fast_wr_window_hours", 0.0)
+    monkeypatch.setattr(settings, "martingale_slow_wr_window_hours", 0.0)
+    monkeypatch.setattr(settings, "trade_stagger_seconds", 0)
+    mgr._tracker.pair_rate.return_value = (0.60, 10)
+    mgr._martingale.record_outcome("EURUSD", False, max_level=2, multiplier=2.2)
+
+    await mgr.run_once()
+
+    api.buy.assert_awaited()
+    assert api.buy.await_args.args[1] == pytest.approx(3.3)
+    rows = _read_decisions(tmp_path)
+    trade_rows = [r for r in rows if r["decision"] == "TRADE"]
+    assert trade_rows[0]["stake"] == pytest.approx(3.3)
+    assert trade_rows[0]["martingale_enabled"] is True
+    assert trade_rows[0]["martingale_scope"] == "pair"
+    assert trade_rows[0]["martingale_key"] == "EURUSD"
+    assert trade_rows[0]["martingale_level"] == 1
+    assert trade_rows[0]["martingale_escalated"] is True
+
+
+@pytest.mark.asyncio
+async def test_signals_loop_stacks_variable_stake_before_martingale(tmp_path, monkeypatch):
+    api = MagicMock()
+    api.get_active_pairs = AsyncMock(return_value=_make_pairs(("AUDUSD", 94)))
+    api.get_candles = AsyncMock(return_value=_make_candles())
+    api.get_real_candles = AsyncMock(return_value=_make_candles())
+    api.balance = AsyncMock(return_value=1000.0)
+    trade = MagicMock(); trade.status = "DRY_RUN"; trade.trade_id = None
+    api.buy = AsyncMock(return_value=trade)
+    api.sell = AsyncMock(return_value=trade)
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "stake_amount", 2.0)
+    monkeypatch.setattr(settings, "variable_stake_enabled", True)
+    monkeypatch.setattr(settings, "variable_stake_min_samples", 25)
+    monkeypatch.setattr(settings, "variable_stake_min_multiplier", 0.5)
+    monkeypatch.setattr(settings, "variable_stake_min_edge", 0.03)
+    monkeypatch.setattr(settings, "variable_stake_full_edge", 0.10)
+    monkeypatch.setattr(settings, "variable_stake_max_multiplier", 2.0)
+    monkeypatch.setattr(settings, "martingale_enabled", True)
+    monkeypatch.setattr(settings, "martingale_scope", "pair")
+    monkeypatch.setattr(settings, "martingale_multiplier", 2.2)
+    monkeypatch.setattr(settings, "martingale_max_level", 1)
+    monkeypatch.setattr(settings, "martingale_min_pair_wr", 0.0)
+    monkeypatch.setattr(settings, "martingale_min_wr_samples", 1)
+    monkeypatch.setattr(settings, "martingale_min_session_trades", 1)
+    monkeypatch.setattr(settings, "martingale_fast_wr_window_hours", 0.0)
+    monkeypatch.setattr(settings, "martingale_slow_wr_window_hours", 0.0)
+    monkeypatch.setattr(settings, "trade_stagger_seconds", 0)
+    mgr._tracker.rate.return_value = (0.70, 100)
+    mgr._tracker.pair_rate.return_value = (0.60, 10)
+    mgr._martingale.record_outcome("AUDUSD", False, max_level=1, multiplier=2.2)
+
+    await mgr.run_once()
+
+    api.buy.assert_awaited()
+    assert api.buy.await_args.args[1] == pytest.approx(8.8)
+    rows = _read_decisions(tmp_path)
+    trade_rows = [r for r in rows if r["decision"] == "TRADE"]
+    assert trade_rows[0]["stake"] == pytest.approx(8.8)
+    assert trade_rows[0]["martingale_level"] == 1
+    assert trade_rows[0]["signal_assessment"]["variable_stake"]["enabled"] is True
+    assert trade_rows[0]["signal_assessment"]["variable_stake"]["stake"] == pytest.approx(4.0)
+
+
+@pytest.mark.asyncio
+async def test_stream_flip_respects_pair_hour_blocklist(tmp_path, monkeypatch):
+    api = MagicMock()
+    api.balance = AsyncMock(return_value=1000.0)
+    api.buy = AsyncMock()
+    api.sell = AsyncMock()
+
+    mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
+    monkeypatch.setattr(settings, "strategy_mode", "flip")
+    monkeypatch.setattr(settings, "default_expiry_seconds", 5)
+    monkeypatch.setattr(settings, "pair_hour_blocklist_enabled", True)
+    monkeypatch.setattr(settings, "min_payout_pct", 92)
+
+    from strategy.market_filters import PairHourBlocklist
+    monkeypatch.setattr(
+        PairHourBlocklist,
+        "skip_reason",
+        classmethod(lambda cls, pair, hour: f"pair_hour_block: {pair} @ {hour:02d}:00 UTC"),
+    )
+
+    placed = await mgr._place_flip_trade(
+        "USDARS_otc", "CALL",
+        conf_score=1.0,
+        flip_metrics={"rsi": 55.0},
+        flip_levers={},
+        payout_pct=92,
+    )
+
+    assert placed is False
+    api.buy.assert_not_awaited()
+    api.sell.assert_not_awaited()
+    rows = _read_decisions(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["decision"] == "SKIP"
+    assert rows[0]["skip_reason"].startswith("pair_hour_block: USDARS_otc")
+    assert rows[0]["bot_setup"] == "flip_stream"
 
 
 @pytest.mark.asyncio
@@ -369,6 +563,7 @@ async def test_tf5s_shadow_fires_when_enabled(tmp_path, monkeypatch):
 
     mgr = _make_manager(tmp_path, api, monkeypatch=monkeypatch, settings=settings)
     monkeypatch.setattr(settings, "strategy_mode", "flip")
+    monkeypatch.setattr(settings, "shadows_enabled", True)  # master switch must be on
     monkeypatch.setattr(settings, "shadow_tf5s_enabled", True)
     monkeypatch.setattr(settings, "shadow_tf5s_expiry_seconds", [15, 30])
     monkeypatch.setattr(settings, "trade_mode", TradeMode.DEMO)

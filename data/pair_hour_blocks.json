@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "generated_at": "2026-06-23",
+  "window": "48h from 2026-06-21T00:00Z",
+  "criteria": "STRICT: n>=8 AND WR<=40% AND pnl<=-$3. SEVERE: n>=5 AND WR<=46% AND pnl<=-$7. Refreshed from resolved real trades over trailing 48h.",
+  "expected_recovery_48h_usd": 174.75,
+  "blocks": {
+    "#MCD_otc":    [4, 5],
+    "AUDUSD_otc":  [8, 9, 15, 18],
+    "DOGE_otc":    [8],
+    "EURNZD_otc":  [5],
+    "GBPJPY_otc":  [6],
+    "MADUSD_otc":  [2, 7, 14, 18],
+    "MATIC_otc":   [10],
+    "SOL-USD_otc": [6, 7],
+    "USDARS_otc":  [4, 6, 7],
+    "USDCLP_otc":  [5],
+    "USDRUB_otc":  [18]
+  },
+  "notes": {
+    "USDRUB_otc.18":  "n=15 WR=38.5% pnl=-22.02",
+    "USDARS_otc.4":   "n=6 WR=16.7% pnl=-19.44",
+    "SOL-USD_otc.6":  "n=5 WR=20.0% pnl=-16.14",
+    "GBPJPY_otc.6":   "n=5 WR=0.0% pnl=-16.10",
+    "AUDUSD_otc.18":  "n=7 WR=14.3% pnl=-15.18",
+    "USDARS_otc.7":   "n=5 WR=0.0% pnl=-13.26",
+    "AUDUSD_otc.15":  "n=7 WR=28.6% pnl=-12.44",
+    "MADUSD_otc.14":  "n=5 WR=20.0% pnl=-12.18",
+    "#MCD_otc.5":     "n=6 WR=33.3% pnl=-11.42",
+    "USDCLP_otc.5":   "n=12 WR=41.7% pnl=-11.16",
+    "MADUSD_otc.18":  "n=8 WR=37.5% pnl=-9.26",
+    "#MCD_otc.4":     "n=8 WR=37.5% pnl=-9.12",
+    "MADUSD_otc.2":   "n=10 WR=40.0% pnl=-7.73",
+    "USDARS_otc.6":   "n=11 WR=45.5% pnl=-7.58",
+    "MATIC_otc.10":   "n=5 WR=40.0% pnl=-7.50",
+    "EURNZD_otc.5":   "n=9 WR=33.3% pnl=-4.86",
+    "SOL-USD_otc.7":  "n=8 WR=37.5% pnl=-3.36",
+    "MADUSD_otc.7":   "post-deploy guard: n=6 WR=33.3% pnl=-8.24",
+    "AUDUSD_otc.8":   "post-deploy guard: n=6 WR=33.3% pnl=-4.53",
+    "AUDUSD_otc.9":   "post-deploy guard: n=11 WR=45.5% pnl=-3.25",
+    "DOGE_otc.8":     "post-deploy guard: n=4 WR=25.0% pnl=-4.16"
+  }
+}

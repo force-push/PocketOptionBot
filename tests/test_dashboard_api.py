@@ -48,6 +48,7 @@ def client(tmp_path, monkeypatch):
     # import after monkeypatching so build picks up paths at request time
     from dashboard.server import create_app
     app = create_app()
+    app.state.settings_env_path = tmp_path / ".env"
     with TestClient(app) as c:
         yield c
 
@@ -107,6 +108,7 @@ def test_post_settings_token_required(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "dashboard_token", "s3cret", raising=False)
     from dashboard.server import create_app
     app = create_app()
+    app.state.settings_env_path = tmp_path / ".env"
     with TestClient(app) as c:
         # missing token → 401
         r = c.post("/api/settings", json={"fields": {"STAKE_AMOUNT": 2.0}})

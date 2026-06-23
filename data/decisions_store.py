@@ -64,6 +64,21 @@ CREATE INDEX IF NOT EXISTS idx_decisions_pair_ts   ON decisions(pair_api, ts);
 
 # ── connection ────────────────────────────────────────────────────────────────
 
+class _ClosingConnection(sqlite3.Connection):
+    """sqlite3 context manager that also closes on exit.
+
+    The stdlib Connection context manager commits/rolls back but deliberately
+    leaves the handle open. This store uses `with connect(...)` per operation,
+    so without closing we leak DB/WAL file descriptors in long-running dashboard
+    and bot processes.
+    """
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
 def connect(path: str | Path) -> sqlite3.Connection:
     """Open a WAL-mode connection with a busy timeout and Row access.
 
@@ -74,7 +89,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p), timeout=15.0)
+    conn = sqlite3.connect(str(p), timeout=15.0, factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -222,6 +237,29 @@ def records_since(path: str | Path, since_iso: Optional[str]) -> list[dict]:
         rows = conn.execute(
             "SELECT data FROM decisions WHERE ts >= ? ORDER BY ts ASC", (since_iso,)
         ).fetchall()
+    return _loads(rows)
+
+
+def resolved_trade_records_since(path: str | Path, since_iso: Optional[str]) -> list[dict]:
+    """Resolved TRADE rows only, oldest-first, without populating all_records cache.
+
+    Dashboard performance/analysis endpoints do not need hundreds of thousands
+    of SKIP rows. Loading only resolved trades keeps long-running dashboard
+    processes from pinning the full decision history in RAM.
+    """
+    if not Path(path).exists():
+        return []
+    sql = (
+        "SELECT data FROM decisions "
+        "WHERE decision = 'TRADE' AND outcome IN ('win', 'loss', 'draw')"
+    )
+    args: list[Any] = []
+    if since_iso is not None:
+        sql += " AND ts >= ?"
+        args.append(since_iso.strip())
+    sql += " ORDER BY ts ASC"
+    with connect(path) as conn:
+        rows = conn.execute(sql, args).fetchall()
     return _loads(rows)
 
 

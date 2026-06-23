@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -79,14 +79,86 @@ def _live_state_path() -> Path:
     return p if p.is_absolute() else _PROJECT_ROOT / p
 
 
+def _since_for_range(rng: str) -> str | None:
+    rng = (rng or "ALL").upper()
+    deltas = {
+        "1H": timedelta(hours=1),
+        "1D": timedelta(days=1),
+        "1W": timedelta(weeks=1),
+    }
+    delta = deltas.get(rng)
+    if delta is None:
+        return None
+    return (datetime.now(timezone.utc) - delta).isoformat()
+
+
+def _records_for_dashboard_range(rng: str) -> list[dict]:
+    since = _since_for_range(rng)
+    return store.resolved_trade_records_since(_decisions_db_path(), since)
+
+
+def _state_kpis_1d(balance: float | None, active: list[dict]) -> dict:
+    since = _since_for_range("1D") or ""
+    db = _decisions_db_path()
+    if not db.exists():
+        return analytics.kpis([], balance=balance, active=active, rng="1D")
+    with store.connect(db) as conn:
+        row = conn.execute(
+            """
+            SELECT
+              COUNT(*) AS rows_total,
+              SUM(CASE WHEN decision = 'TRADE' AND shadow = 0 THEN 1 ELSE 0 END) AS real_trades,
+              SUM(CASE WHEN decision = 'TRADE' AND shadow = 1 THEN 1 ELSE 0 END) AS shadow_trades,
+              SUM(CASE WHEN decision <> 'TRADE' THEN 1 ELSE 0 END) AS skips,
+              SUM(CASE WHEN decision = 'TRADE' AND shadow = 0 AND outcome = 'win' THEN 1 ELSE 0 END) AS wins,
+              SUM(CASE WHEN decision = 'TRADE' AND shadow = 0 AND outcome = 'loss' THEN 1 ELSE 0 END) AS losses,
+              SUM(CASE WHEN decision = 'TRADE' AND shadow = 0 AND outcome = 'draw' THEN 1 ELSE 0 END) AS draws,
+              SUM(CASE WHEN decision = 'TRADE' AND shadow = 0 THEN COALESCE(pnl, 0) ELSE 0 END) AS pnl,
+              AVG(CASE WHEN decision = 'TRADE' AND shadow = 0
+                       THEN json_extract(data, '$.our_confluence_score') END) AS avg_conf
+            FROM decisions
+            WHERE ts >= ?
+            """,
+            (since,),
+        ).fetchone()
+    wins = int(row["wins"] or 0)
+    losses = int(row["losses"] or 0)
+    draws = int(row["draws"] or 0)
+    resolved = wins + losses + draws
+    pnl = float(row["pnl"] or 0.0)
+    pnl_pct = None
+    if balance is not None:
+        opening = balance - pnl
+        if opening > 0:
+            pnl_pct = pnl / opening
+    active_count = len(active)
+    at_risk = sum(float(a.get("stake") or 0.0) for a in active)
+    return {
+        "range": "1D",
+        "today_pnl": round(pnl, 6),
+        "today_pnl_pct": round(pnl_pct, 8) if pnl_pct is not None else None,
+        "win_rate": round((wins / resolved) if resolved else 0.0, 6),
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "active_count": active_count,
+        "at_risk": round(at_risk, 6),
+        "trades_today": int(row["rows_total"] or 0),
+        "traded": int(row["real_trades"] or 0),
+        "shadow_traded": int(row["shadow_trades"] or 0),
+        "shadow_pnl": 0.0,
+        "skipped": int(row["skips"] or 0),
+        "avg_confluence": round(float(row["avg_conf"] or 0.0), 6),
+    }
+
+
 # ── snapshot builders (shared by REST + WS) ──────────────────────────────────
 
 def build_state_snapshot() -> dict:
     state = _read_live_state()
-    records = store.all_records(_decisions_db_path())
     balance = state.get("balance")
     active = state.get("active", [])
-    kpis = analytics.kpis(records, balance=balance, active=active)
+    kpis = _state_kpis_1d(balance, active)
     return {
         "mode": state.get("mode", settings.trade_mode.value),
         "dry_run": state.get("dry_run", settings.dry_run),
@@ -196,7 +268,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/performance", response_model=PerformanceResponse)
     def get_performance(range: str = Query("ALL")) -> Any:
-        records = store.all_records(_decisions_db_path())
+        records = _records_for_dashboard_range(range)
         balance = _read_live_state().get("balance")
         return analytics.performance(records, rng=range, balance=balance)
 
@@ -207,7 +279,7 @@ def create_app() -> FastAPI:
         window=SINCE5AM (the stable-bot boundary) or ALL (whole history).
         """
         since = None if window.upper() == "ALL" else analysis_mod.CUTOFF_5AM_ISO
-        records = store.records_since(_decisions_db_path(), since)
+        records = store.resolved_trade_records_since(_decisions_db_path(), since)
         return analysis_mod.analysis(records, since_iso=since)
 
     @app.get("/api/settings")
@@ -221,7 +293,7 @@ def create_app() -> FastAPI:
         token: Optional[str] = Query(None),
     ) -> Any:
         _require_token(request, token)
-        env_path = _PROJECT_ROOT / ".env"
+        env_path = getattr(app.state, "settings_env_path", _PROJECT_ROOT / ".env")
         result = settings_io.apply_update(
             body.fields,
             settings_obj=settings,

@@ -7,7 +7,11 @@ Analysis (2026-06-10, n=854 trades) showed:
 Filters are based on empirical win-rate data, not theoretical assumptions.
 """
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
+
+from utils.logger import log
 
 
 class TimeOfDayFilter:
@@ -95,6 +99,58 @@ class PairWhitelistFilter:
             return f"pair_blacklist ({pair_api}, {cls.BLACKLIST[pair_api]:.1f}% WR)"
         if pair_api not in cls.WHITELIST:
             return f"pair_not_whitelisted ({pair_api})"
+        return None
+
+
+class PairHourBlocklist:
+    """Skip (pair, UTC-hour-of-day) combinations that bled on historical data.
+
+    Sharper than the bot-wide ``TimeOfDayFilter`` because the per-pair time
+    structure can be inverted from the bot-wide trend (e.g. AUDUSD h14 = +71%
+    WR while MADUSD h14 = 20% WR over the same window).
+
+    Block list is loaded from ``data/pair_hour_blocks.json`` so updates do not
+    require a code change. Empty file / missing file = no blocks (safe default).
+    """
+
+    _CACHE: "dict[str, frozenset[int]] | None" = None
+    _PATH = Path(__file__).parent.parent / "data" / "pair_hour_blocks.json"
+
+    @classmethod
+    def _load(cls) -> "dict[str, frozenset[int]]":
+        if cls._CACHE is not None:
+            return cls._CACHE
+        try:
+            with cls._PATH.open("r", encoding="utf-8") as fh:
+                doc = json.load(fh)
+            blocks = doc.get("blocks") or {}
+            cls._CACHE = {p: frozenset(hours) for p, hours in blocks.items()}
+            log.info(
+                "PairHourBlocklist loaded {} pair entries from {} (version {})",
+                len(cls._CACHE), cls._PATH.name, doc.get("version"),
+            )
+        except FileNotFoundError:
+            log.debug("PairHourBlocklist: {} missing — no blocks active", cls._PATH)
+            cls._CACHE = {}
+        except Exception as exc:
+            log.warning("PairHourBlocklist: failed to load {} — no blocks active: {}", cls._PATH, exc)
+            cls._CACHE = {}
+        return cls._CACHE
+
+    @classmethod
+    def reload(cls) -> None:
+        """Drop the cache so the next call re-reads the JSON file. Used for
+        live updates without bot restart."""
+        cls._CACHE = None
+
+    @classmethod
+    def is_blocked(cls, pair_api: str, utc_hour: int) -> bool:
+        return utc_hour in cls._load().get(pair_api, frozenset())
+
+    @classmethod
+    def skip_reason(cls, pair_api: str, utc_hour: int) -> "str | None":
+        if cls.is_blocked(pair_api, utc_hour):
+            return f"pair_hour_block: {pair_api} @ {utc_hour:02d}:00 UTC"
         return None
 
 

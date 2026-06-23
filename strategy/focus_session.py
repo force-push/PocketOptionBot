@@ -24,6 +24,7 @@ exclude it from its own scan (avoids double-evaluation on the same symbol).
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 
 from broker.tick_stream import RawTickStream
@@ -31,6 +32,7 @@ from config.settings import settings
 from data.candles import candles_to_df
 from strategy.flip_levers import load_levers
 from strategy.flip_strategy import FlipParams, evaluate_flip
+from strategy.market_filters import PairHourBlocklist
 from utils.logger import log
 
 _WARMUP_BARS = 40        # min completed bars before evaluate_flip is called
@@ -218,6 +220,7 @@ class FocusSessionManager:
 
         floor = settings.focus_payout_floor
         now = asyncio.get_event_loop().time()
+        utc_hour = datetime.now(timezone.utc).hour
         cooling = {p for p, t in self._illiquid.items() if now - t < _ILLIQUID_COOLDOWN}
         # FX-only still applies alongside a regex allowlist; only an exact
         # allowed_pairs list bypasses it (deliberate user picks).
@@ -236,6 +239,10 @@ class FocusSessionManager:
             and p.get("symbol") not in already_streamed
             and (pc is None or not pc.is_cooling(p.get("symbol", "")))
             and (not fx_only or _is_fx_pair(p.get("symbol", "")))
+            and not (
+                settings.pair_hour_blocklist_enabled
+                and PairHourBlocklist.is_blocked(p.get("symbol", ""), utc_hour)
+            )
         ]
         if not candidates:
             if cooling:

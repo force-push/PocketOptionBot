@@ -1,5 +1,21 @@
 # Change Log
 
+## 2026-06-24 — Pair blocklist activated
+
+`BLOCKED_PAIRS` populated with 27 statistically confirmed chronic losers (WR<49%,
+flip-era Jun 9+). Previously documented in `.env` comments but never wired into the
+setting — open universe was inadvertently trading pairs with known negative EV.
+
+Blocked pairs: USDJPY, GBPUSD, USDCAD, NZDJPY, USDBDT, USDINR, YERUSD, NGNUSD,
+IRRUSD, AUDNZD, AUDCAD, USDMYR, EURCHF, UAHUSD, AUDCHF, ETHUSD, VIX, BNB-USD,
+AVAX, VISA, LINK, ADA-USD, EURGBP, FDX, BITB, LTCUSD, TNDUSD (all `_otc`).
+
+Approach: open universe at 92% payout floor + performance-cooldown + blocklist.
+`ALLOWED_PAIRS` remains `[]` (allowlist reverted 2026-06-20 — too restrictive at
+off-peak hours when <2 pairs clear the payout floor).
+
+---
+
 ## 2026-06-12 — PocketOption data-surface build-out (PO_DATA_SURFACE.md steps 1–3)
 Three new data feeds wired into the bot (discovery in PO_DATA_SURFACE.md):
 

@@ -9,7 +9,7 @@ import asyncio
 import json
 import statistics
 from collections import defaultdict
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,7 +21,7 @@ from strategy.flip_strategy import evaluate_flip
 from strategy.flip_levers import load_levers, load_levers_5s, build_flip_params
 from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
-from strategy.market_filters import TimeOfDayFilter
+from strategy.market_filters import TimeOfDayFilter, PairHourBlocklist
 from strategy.martingale import MartingaleTracker
 from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
@@ -107,14 +107,112 @@ class StrategyManagerV2:
         _cycle_counter += 1
         return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{_cycle_counter:04d}"
 
-    def _martingale_stake(self, pair: str, balance: float) -> float:
-        """Return Martingale-adjusted stake. All params read from current settings
-        so dashboard edits hot-reload without a bot restart."""
-        if not settings.martingale_enabled:
-            return settings.stake_amount
+    @dataclass(frozen=True)
+    class MartingaleStake:
+        stake: float
+        enabled: bool
+        scope: str
+        key: str
+        level: int
+        multiplier: float
+        escalated: bool
 
-        key = self._martingale_key(pair)
-        if settings.martingale_scope == "global":
+    @dataclass(frozen=True)
+    class VariableStake:
+        stake: float
+        enabled: bool
+        multiplier: float
+        reason: str
+        break_even_probability: float
+        required_probability: float
+        win_rate: float
+        samples: int
+
+    def _variable_stake_info(
+        self,
+        *,
+        pair: str,
+        direction: str | None,
+        expiry: int,
+        payout_pct: int | float | None,
+        tracked_rate: float,
+        n_tracked: int,
+        balance: float,
+    ) -> VariableStake:
+        """Return win-rate/EV-adjusted base stake for this candidate.
+
+        This scales only when the current pair/direction/expiry bucket has
+        enough resolved evidence and clears binary break-even by a configured
+        margin. It deliberately does not chase losses; Martingale can still
+        apply after this base stake if enabled.
+        """
+        base = float(settings.stake_amount)
+        break_even = _break_even_probability(payout_pct)
+        min_edge = float(settings.variable_stake_min_edge)
+        required = min(1.0, break_even + min_edge)
+        enabled = bool(settings.variable_stake_enabled)
+        if not enabled:
+            return self.VariableStake(base, False, 1.0, "disabled", break_even, required, tracked_rate, n_tracked)
+        if direction not in ("CALL", "PUT"):
+            return self.VariableStake(base, False, 1.0, "no_direction", break_even, required, tracked_rate, n_tracked)
+        if n_tracked < settings.variable_stake_min_samples:
+            return self.VariableStake(
+                base, False, 1.0,
+                f"insufficient_samples:{n_tracked}/{settings.variable_stake_min_samples}",
+                break_even, required, tracked_rate, n_tracked,
+            )
+        min_multiplier = float(settings.variable_stake_min_multiplier)
+        if tracked_rate < required:
+            stake = round(base * min_multiplier, 2)
+            return self.VariableStake(
+                stake, stake != base, round(stake / base, 4) if base else 1.0,
+                f"below_required_wr:{tracked_rate:.1%}<{required:.1%}",
+                break_even, required, tracked_rate, n_tracked,
+            )
+
+        full_edge = max(float(settings.variable_stake_full_edge), min_edge + 0.001)
+        edge = max(0.0, float(tracked_rate or 0.0) - break_even)
+        progress = max(0.0, min(1.0, (edge - min_edge) / (full_edge - min_edge)))
+        max_mult = float(settings.variable_stake_max_multiplier)
+        multiplier = 1.0 + ((max_mult - 1.0) * progress)
+        stake = round(base * multiplier, 2)
+
+        if balance > 0:
+            max_affordable = balance / settings.min_balance_multiplier
+            if stake > max_affordable:
+                return self.VariableStake(
+                    base, False, 1.0,
+                    f"balance_floor:{stake:.2f}>{max_affordable:.2f}",
+                    break_even, required, tracked_rate, n_tracked,
+                )
+
+        return self.VariableStake(
+            stake, stake > base, round(stake / base, 4) if base else 1.0,
+            f"edge_scaled:wr={tracked_rate:.1%}/n={n_tracked}",
+            break_even, required, tracked_rate, n_tracked,
+        )
+
+    def _martingale_stake_info(self, pair: str, balance: float, *, base_stake: float | None = None) -> MartingaleStake:
+        """Return Martingale-adjusted stake plus the exact settings snapshot used.
+
+        The snapshot is persisted on the trade row so the resolver updates the
+        same ladder key even if the dashboard hot-reloads settings while the
+        trade is open.
+        """
+        base = float(base_stake if base_stake is not None else settings.stake_amount)
+        enabled = bool(settings.martingale_enabled)
+        scope = str(settings.martingale_scope)
+        multiplier = float(settings.martingale_multiplier)
+        max_level = int(settings.martingale_max_level)
+        key = "__global__" if scope == "global" else pair
+        level = self._martingale.current_level(key, max_level=max_level) if enabled else 0
+        if not enabled:
+            return self.MartingaleStake(
+                stake=base, enabled=False, scope=scope, key=key, level=0,
+                multiplier=multiplier, escalated=False,
+            )
+
+        if scope == "global":
             # Global martingale means exactly "next trade after a loss escalates".
             # Pair WR/session gates do not apply to a cross-pair loss streak.
             pair_wr, n_wr = 1.0, 1_000_000
@@ -125,15 +223,38 @@ class StrategyManagerV2:
             min_wr_samples = settings.martingale_min_wr_samples
             min_session_trades = settings.martingale_min_session_trades
 
-        return self._martingale.get_stake(
-            key, settings.stake_amount, pair_wr, n_wr,
+        stake = self._martingale.get_stake(
+            key, base, pair_wr, n_wr,
             balance, settings.min_balance_multiplier,
-            multiplier=settings.martingale_multiplier,
-            max_level=settings.martingale_max_level,
+            multiplier=multiplier,
+            max_level=max_level,
             min_pair_wr=min_pair_wr,
             min_wr_samples=min_wr_samples,
             min_session_trades=min_session_trades,
         )
+        return self.MartingaleStake(
+            stake=stake,
+            enabled=True,
+            scope=scope,
+            key=key,
+            level=level,
+            multiplier=multiplier,
+            escalated=stake > base,
+        )
+
+    def _martingale_stake(self, pair: str, balance: float) -> float:
+        """Return only the stake for legacy call sites/tests."""
+        return self._martingale_stake_info(pair, balance).stake
+
+    @staticmethod
+    def _stamp_martingale(row: DecisionRow, info: MartingaleStake) -> None:
+        row.stake = info.stake
+        row.martingale_enabled = info.enabled
+        row.martingale_scope = info.scope
+        row.martingale_key = info.key
+        row.martingale_level = info.level
+        row.martingale_multiplier = info.multiplier
+        row.martingale_escalated = info.escalated
 
     @staticmethod
     def _martingale_key(pair: str) -> str:
@@ -302,10 +423,18 @@ class StrategyManagerV2:
             strength += 0.02
             positives.append(f"strong_pair_wr={pair_wr:.1%}/n={pair_n}")
 
-        if n_tracked >= 10 and tracked_rate <= 0.58:
+        # 2026-06-23: thresholds widened to break the directional lock-out trap.
+        # Old (n>=10, wr<=0.58) penalised any direction with even minimal history
+        # below "great" — the suppressed side could never update its sample
+        # because it never traded, so a single early bad streak locked the bot
+        # into the opposite direction permanently. 48h data: EURNZD/SOL-USD/MCD/
+        # USDARS/SYPUSD all 100% one-direction with sub-breakeven dominant side.
+        # New: only penalise when there's real evidence (n>=25) of sub-breakeven
+        # performance (wr<=0.50). Lets neutral 50-58% directions stay tradeable.
+        if n_tracked >= 25 and tracked_rate <= 0.50:
             strength -= 0.02
             penalties.append(f"soft_direction_wr={tracked_rate:.1%}/n={n_tracked}")
-        elif n_tracked >= 10 and tracked_rate >= 0.62:
+        elif n_tracked >= 25 and tracked_rate >= 0.60:
             strength += 0.02
             positives.append(f"strong_direction_wr={tracked_rate:.1%}/n={n_tracked}")
 
@@ -527,10 +656,15 @@ class StrategyManagerV2:
         # and dropped from the stream automatically next cycle.
         if self._streamer is not None:
             try:
+                utc_hour_now = datetime.now(timezone.utc).hour
                 best_streaming = [
                     p["symbol"] for p in all_pairs
                     if is_pair_allowed(p["symbol"])
                     and not self._pair_cooldown.is_cooling(p["symbol"])
+                    and not (
+                        settings.pair_hour_blocklist_enabled
+                        and PairHourBlocklist.is_blocked(p["symbol"], utc_hour_now)
+                    )
                     and p.get("payout", 0) >= settings.focus_payout_floor
                 ][:4]
                 await self._streamer.rotate(best_streaming)
@@ -851,7 +985,19 @@ class StrategyManagerV2:
                     ))
                 continue
 
-            prospective_stake = self._martingale_stake(pair_api, balance_before or 0)
+            prospective_var = self._variable_stake_info(
+                pair=pair_api,
+                direction=conf.direction,
+                expiry=expiry,
+                payout_pct=payout_pct,
+                tracked_rate=tracked_rate,
+                n_tracked=n_tracked,
+                balance=balance_before or 0,
+            )
+            prospective_mg = self._martingale_stake_info(
+                pair_api, balance_before or 0, base_stake=prospective_var.stake
+            )
+            prospective_stake = prospective_mg.stake
             assessment = self._assess_trade_signal(
                 pair=pair_api,
                 direction=conf.direction,
@@ -866,6 +1012,7 @@ class StrategyManagerV2:
                 agreeing_signals=agreeing,
                 bot_is_top_pick=False,
             )
+            assessment["variable_stake"] = asdict(prospective_var)
             strength = float(assessment["entry_probability"])
             penalties = list(assessment["penalties"])
             weak_strength = bool(assessment["skip"])
@@ -880,7 +1027,7 @@ class StrategyManagerV2:
                 }
             row.combined_probability = strength
             row.calibrated_probability = strength
-            row.stake = prospective_stake
+            self._stamp_martingale(row, prospective_mg)
 
             if weak_strength:
                 row.decision = "SKIP"
@@ -934,6 +1081,21 @@ class StrategyManagerV2:
                 log.info("[{}] SKIP {}  reason=post_loss_cooldown_recheck", cid, pair_api)
                 continue
 
+            # Per-pair-hour blocklist: skip (pair, hour-of-day) combinations
+            # that bled on the 48h analysis (2026-06-23). Bot-wide hour filter
+            # is too coarse — same hour can be +71% WR on AUDUSD and 20% on
+            # MADUSD. Data: data/pair_hour_blocks.json. Disable with
+            # PAIR_HOUR_BLOCKLIST_ENABLED=false in .env.
+            if settings.pair_hour_blocklist_enabled:
+                ph_reason = PairHourBlocklist.skip_reason(
+                    pair_api, datetime.now(timezone.utc).hour
+                )
+                if ph_reason:
+                    row.decision = "SKIP"; row.skip_reason = ph_reason
+                    write_decision(log_path, row)
+                    log.info("[{}] SKIP {}  reason={}", cid, pair_api, ph_reason)
+                    continue
+
             # Risk gate — session-wide block, stop scanning all pairs
             if not self._risk.is_allowed(balance_before):
                 row.decision = "SKIP"; row.skip_reason = "risk_blocked"
@@ -960,8 +1122,22 @@ class StrategyManagerV2:
             balance_at_placement = await self._api.balance()
             row.balance_before = balance_at_placement
 
-            actual_stake = self._martingale_stake(pair_api, balance_at_placement or 0)
-            row.stake = actual_stake
+            actual_var = self._variable_stake_info(
+                pair=pair_api,
+                direction=conf.direction,
+                expiry=expiry,
+                payout_pct=payout_pct,
+                tracked_rate=tracked_rate,
+                n_tracked=n_tracked,
+                balance=balance_at_placement or 0,
+            )
+            actual_mg = self._martingale_stake_info(
+                pair_api, balance_at_placement or 0, base_stake=actual_var.stake
+            )
+            actual_stake = actual_mg.stake
+            self._stamp_martingale(row, actual_mg)
+            if row.signal_assessment is not None:
+                row.signal_assessment["variable_stake"] = asdict(actual_var)
 
             api_call = self._api.buy if conf.direction == "CALL" else self._api.sell
             trade = await api_call(pair_api, actual_stake, expiry)
@@ -1150,6 +1326,28 @@ class StrategyManagerV2:
             return False
         if settings.min_payout_pct and (payout_pct or 0) < settings.min_payout_pct:
             return False
+        cid = self._next_cycle_id()
+        log_path = settings.decisions_db_path
+        expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
+        if settings.pair_hour_blocklist_enabled:
+            ph_reason = PairHourBlocklist.skip_reason(pair_api, datetime.now(timezone.utc).hour)
+            if ph_reason:
+                tracked_rate, n_tracked = self._tracker.rate(pair_api, direction, expiry)
+                row = DecisionRow(
+                    cycle_id=cid, pair_raw=pair_api, pair_api=pair_api,
+                    bot_win_rate=tracked_rate, bot_is_top_pick=False,
+                    bot_direction=direction, bot_setup="flip_stream", bot_indicators_raw="",
+                    our_direction=direction, our_confluence_score=conf_score,
+                    our_signal_breakdown={}, agreement=True,
+                    combined_probability=tracked_rate, expiry_seconds=expiry,
+                    decision="SKIP", skip_reason=ph_reason,
+                    stake=settings.stake_amount, balance_before=None,
+                    payout_pct=payout_pct, sentiment=None,
+                    flip_metrics=flip_metrics, flip_levers=flip_levers,
+                )
+                write_decision(log_path, row)
+                log.info("[{}] STREAM-SKIP {}  reason={}", cid, pair_api, ph_reason)
+                return False
         # ── atomic reservation: no await between these checks and the increment ──
         if settings.one_open_trade_per_pair:
             inflight = {info["row"].pair_api for info in self._open_trades.values()}
@@ -1159,9 +1357,6 @@ class StrategyManagerV2:
             return False
         self._open_trade_count += 1
         try:
-            cid = self._next_cycle_id()
-            expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
-            log_path = settings.decisions_db_path
             tracked_rate, n_tracked = self._tracker.rate(pair_api, direction, expiry)
             balance = await self._api.balance()
             if not self._risk.is_allowed(balance or 0):
@@ -1172,7 +1367,19 @@ class StrategyManagerV2:
                 if ev < settings.min_expected_value:
                     self._open_trade_count = max(0, self._open_trade_count - 1)
                     return False
-            actual_stake = self._martingale_stake(pair_api, balance or 0)
+            actual_var = self._variable_stake_info(
+                pair=pair_api,
+                direction=direction,
+                expiry=expiry,
+                payout_pct=payout_pct,
+                tracked_rate=tracked_rate,
+                n_tracked=n_tracked,
+                balance=balance or 0,
+            )
+            actual_mg = self._martingale_stake_info(
+                pair_api, balance or 0, base_stake=actual_var.stake
+            )
+            actual_stake = actual_mg.stake
             assessment = self._assess_trade_signal(
                 pair=pair_api,
                 direction=direction,
@@ -1187,6 +1394,7 @@ class StrategyManagerV2:
                 agreeing_signals=3,
                 bot_is_top_pick=False,
             )
+            assessment["variable_stake"] = asdict(actual_var)
             if assessment["skip"]:
                 self._open_trade_count = max(0, self._open_trade_count - 1)
                 log.info(
@@ -1204,6 +1412,12 @@ class StrategyManagerV2:
                 combined_probability=assessment["entry_probability"], expiry_seconds=expiry,
                 decision="TRADE", skip_reason=None,
                 stake=actual_stake, balance_before=balance,
+                martingale_enabled=actual_mg.enabled,
+                martingale_scope=actual_mg.scope,
+                martingale_key=actual_mg.key,
+                martingale_level=actual_mg.level,
+                martingale_multiplier=actual_mg.multiplier,
+                martingale_escalated=actual_mg.escalated,
                 calibrated_probability=assessment["entry_probability"],
                 signal_assessment=assessment,
                 payout_pct=payout_pct, sentiment=None,
@@ -1255,6 +1469,11 @@ class StrategyManagerV2:
         expiry_override: when set, bypasses select_expiry and uses this value
         directly (e.g. for tf5s shadows that need a specific expiry like 15s/30s).
         """
+        # MASTER kill-switch: no shadow of any kind is placed when disabled.
+        # Catches even hardcoded generators (e.g. majority_blocked) that have no
+        # individual toggle. 2026-06-23: shadows removed entirely.
+        if not settings.shadows_enabled:
+            return
         if settings.trade_mode == TradeMode.LIVE:
             return
         try:
@@ -1369,27 +1588,32 @@ class StrategyManagerV2:
             # tracker or risk stats, or they would contaminate live EV gating.
             if not getattr(row, "shadow", False):
                 self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
-                risk_result = {"win": "WIN", "loss": "LOSS", "draw": "WIN"}.get(outcome.lower(), "PENDING")
+                risk_result = {"win": "WIN", "loss": "LOSS", "draw": "DRAW"}.get(outcome.lower(), "PENDING")
                 self._risk.record_trade(row.bot_direction, row.stake, risk_result)
                 # Short post-loss cooldown (only on actual loss — draws don't trigger).
                 if outcome.lower() == "loss":
                     self._pair_cooldown.record_loss(row.pair_api)
                 # Performance cooldown: track rolling WR; bench for 12h if it drops
                 # below the threshold over perf_cooldown_window_hours.
-                if outcome.lower() in ("win", "loss", "draw"):
-                    is_win = outcome.lower() in ("win", "draw")
+                # Draws refund the stake — no profit, no loss. Treating them as
+                # wins (prior behaviour) reset the martingale ladder mid-recovery,
+                # locking in cumulative losses with no recovery attempt. Skip
+                # draws entirely for cooldown and martingale streak tracking.
+                if outcome.lower() in ("win", "loss"):
+                    is_win = outcome.lower() == "win"
                     triggered = self._pair_cooldown.record_outcome(row.pair_api, is_win)
                     if triggered:
                         log.warning(
                             "PERF-COOLDOWN triggered for {} — benched 12h (rolling WR below threshold)",
                             row.pair_api,
                         )
-                    # Martingale streak update (real trades only, never shadows)
-                    if settings.martingale_enabled:
+                    if getattr(row, "martingale_enabled", settings.martingale_enabled):
+                        mg_key = getattr(row, "martingale_key", None) or self._martingale_key(row.pair_api)
+                        mg_multiplier = getattr(row, "martingale_multiplier", None) or settings.martingale_multiplier
                         self._martingale.record_outcome(
-                            self._martingale_key(row.pair_api), is_win,
+                            mg_key, is_win,
                             max_level=settings.martingale_max_level,
-                            multiplier=settings.martingale_multiplier,
+                            multiplier=mg_multiplier,
                         )
 
             # Notify dashboard with complete resolved data

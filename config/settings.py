@@ -101,6 +101,16 @@ class BotSettings(BaseSettings):
     # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
     min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
+    # Variable stake sizing: scale the base stake upward only when the current
+    # pair/direction/expiry has enough resolved evidence and clears binary
+    # break-even by a probability margin. This is an edge amplifier, not a
+    # recovery ladder; Martingale, when enabled, applies after this base stake.
+    variable_stake_enabled: bool = Field(default=False, alias="VARIABLE_STAKE_ENABLED")
+    variable_stake_min_samples: int = Field(default=25, alias="VARIABLE_STAKE_MIN_SAMPLES", ge=1)
+    variable_stake_min_multiplier: float = Field(default=1.0, alias="VARIABLE_STAKE_MIN_MULTIPLIER", ge=0.1, le=1.0)
+    variable_stake_min_edge: float = Field(default=0.03, alias="VARIABLE_STAKE_MIN_EDGE", ge=0.0, le=1.0)
+    variable_stake_full_edge: float = Field(default=0.10, alias="VARIABLE_STAKE_FULL_EDGE", ge=0.001, le=1.0)
+    variable_stake_max_multiplier: float = Field(default=2.0, alias="VARIABLE_STAKE_MAX_MULTIPLIER", ge=1.0, le=10.0)
     # Martingale: after consecutive losses, scale the stake. Scope controls
     # whether the streak is global (next trade after any loss) or per-pair
     # (next trade on the same pair). Global mode intentionally ignores pair WR
@@ -223,6 +233,13 @@ class BotSettings(BaseSettings):
     # The low_payout gate is still enforced to keep demo economics comparable.
     shadow_record_mode: bool = Field(default=False, alias="SHADOW_RECORD_MODE")
 
+    # MASTER kill-switch for ALL shadow trade placement (2026-06-23). When False,
+    # _place_single_shadow returns immediately — no shadow of any kind (fade,
+    # adx_regime, tf5s, majority_blocked, time_of_day, expiry, flip_skip) is ever
+    # placed, regardless of the individual experiment toggles below. This is the
+    # single guaranteed off-switch; majority_blocked has no other toggle.
+    shadows_enabled: bool = Field(default=False, alias="SHADOWS_ENABLED")
+
     # Shadow expiry experiment (signals loop only). For each real signals-loop
     # trade, also place demo trades at these expiries (same pair + direction,
     # shadow=True, shadow_kind="expiry") to compare win rate across durations.
@@ -246,6 +263,15 @@ class BotSettings(BaseSettings):
     # Finding 5 + Addendum 3). Set true to re-enable the TimeOfDayFilter.
     time_of_day_filter_enabled: bool = Field(
         default=False, alias="TIME_OF_DAY_FILTER_ENABLED"
+    )
+
+    # Per-pair-hour blocklist (2026-06-23). Bans specific (pair, UTC-hour)
+    # combinations identified as chronic losers in the 48h analysis. Sharper
+    # than the bot-wide TimeOfDayFilter because hour effects can be inverted
+    # between pairs. Block list lives in data/pair_hour_blocks.json so updates
+    # don't require a code change. Default ON — set false to disable.
+    pair_hour_blocklist_enabled: bool = Field(
+        default=True, alias="PAIR_HOUR_BLOCKLIST_ENABLED"
     )
 
     # Shadow-trade blocked hours (signals loop only). When true, cycles during

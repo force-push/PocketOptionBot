@@ -54,6 +54,12 @@ def make_settings(*, mode="DEMO", ssid=SSID_DEMO):
         min_payout_pct=88,
         min_expected_value=0.0,
         min_ev_samples=15,
+        variable_stake_enabled=False,
+        variable_stake_min_samples=25,
+        variable_stake_min_multiplier=1.0,
+        variable_stake_min_edge=0.03,
+        variable_stake_full_edge=0.10,
+        variable_stake_max_multiplier=2.0,
         # Risk
         max_trades_per_hour=240,
         max_daily_loss_usd=20.0,

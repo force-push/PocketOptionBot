@@ -28,6 +28,12 @@ class DecisionRow:
     decision: str               # "TRADE" | "SKIP"
     skip_reason: str | None
     stake: float
+    martingale_enabled: bool = False
+    martingale_scope: str | None = None
+    martingale_key: str | None = None
+    martingale_level: int = 0
+    martingale_multiplier: float | None = None
+    martingale_escalated: bool = False
     calibrated_probability: float | None = None  # learned P(win); None until a model exists
     signal_assessment: dict | None = None         # entry-quality features, penalties, and TA notes
     shadow: bool = False                # True if traded only to collect data (would_skip_reason set)
